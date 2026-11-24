@@ -5,6 +5,7 @@ const S = {
   manageTab: 'objects',
   sysTab: 'controls',
   guideTab: 'quick',
+  ncpaOS: 'ubuntu',
   offset: 0,
   total: 0,
   autoMs: 3000,
@@ -13,9 +14,27 @@ const S = {
   summary: null,
   hostgroups: [],
   servicegroups: [],
-  managed: { enabled: false, pending_changes: false, config: { hosts:[], services:[], commands:[], contacts:[], hostgroups:[], servicegroups:[] } },
+  managed: { enabled: false, pending_changes: false, config: { hosts:[], services:[], commands:[], contacts:[], hostgroups:[], servicegroups:[], templates:[] } },
   lastItems: [],
-  catalogCmds: []
+  catalogCmds: [],
+  // Separate filter states so Inventory and Problems never leak filters into each other
+  invFilter: { state: '', unhandled: false, sort: 'severity' },
+  probFilter: { state: '', unhandled: false, sort: 'severity' },
+  // Bulk selection state
+  selectedMon: new Set(),
+  selectedManagedHosts: new Set(),
+  // Manage Objects UI state
+  manageSearch: '',
+  manageGroup: '',
+  manageStatus: '',
+  manageFlat: false,
+  expandedHosts: new Set(),
+  localhostStatus: null,
+  // Reports UI state
+  repTab: 'sla',
+  repRange: '24h',
+  repGroupByHost: true,
+  repExpandedHosts: new Set()
 };
 
 function applyTheme(t) {
@@ -28,10 +47,17 @@ function toggleTheme() { applyTheme(document.documentElement.getAttribute('data-
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 
 document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    openQuickJump();
+    return;
+  }
   if (e.key === '/' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
     e.preventDefault();
     document.getElementById('global-search').focus();
-  } else if (e.key === 'Escape') { closeDrawer(); closeModal(); }
+  } else if (e.key === 'Escape') {
+    closeDrawer(); closeModal(); closeQuickJump();
+  }
 });
 
 function toast(msg) {
@@ -39,10 +65,10 @@ function toast(msg) {
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 2800);
+  el._t = setTimeout(() => el.classList.remove('show'), 3000);
 }
 function copyText(txt) {
-  navigator.clipboard?.writeText(txt).then(() => toast('Copied: ' + txt)).catch(() => toast(txt));
+  navigator.clipboard?.writeText(txt).then(() => toast('Copied to clipboard')).catch(() => toast(txt));
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function relTime(ts) {
@@ -86,12 +112,31 @@ function openModal(html) { document.getElementById('modal-content').innerHTML = 
 function closeModal() { document.getElementById('modal-backdrop').classList.remove('open'); }
 function closeDrawer() { document.getElementById('drawer-wrap').classList.remove('open'); }
 
+function isUserInteracting() {
+  if (document.getElementById('modal-backdrop')?.classList.contains('open')) return true;
+  if (document.getElementById('drawer-wrap')?.classList.contains('open')) return true;
+  if (document.getElementById('qj-backdrop')?.classList.contains('open')) return true;
+  if (S.selectedMon.size > 0) return true;
+  return false;
+}
+
 async function sendCmd(cmd, label) {
   try {
     const res = await fetch('/api/v1/command', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command: cmd}) });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || res.statusText);
     toast(label + ' queued');
+    setTimeout(refreshAll, 700);
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+async function sendBatchCmds(commands, label) {
+  try {
+    const res = await fetch('/api/v1/commands/batch', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({commands}) });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || res.statusText);
+    toast(`${label}: ${d.count} queued`);
+    S.selectedMon.clear();
     setTimeout(refreshAll, 700);
   } catch (e) { toast('Error: ' + e.message); }
 }
@@ -107,8 +152,11 @@ const VIEW_TITLES = {
 };
 
 function setView(v, sub) {
+  // Save current monitor view filter before switching away
+  if (S.view === 'inventory' || S.view === 'problems') saveMonitorFilterState(S.view);
   S.view = v;
   S.offset = 0;
+  S.selectedMon.clear();
   document.getElementById('sidebar').classList.remove('mobile-open');
   document.getElementById('page-title').textContent = VIEW_TITLES[v] || v;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
@@ -125,11 +173,13 @@ function setView(v, sub) {
   } else if (v === 'inventory') {
     document.getElementById('sec-monitor').style.display = 'block';
     if (sub) S.invTab = sub;
+    restoreMonitorFilterState('inventory');
     renderMonitorSubtabs();
     loadMonitorView();
   } else if (v === 'problems') {
     document.getElementById('sec-monitor').style.display = 'block';
     if (sub) S.probTab = sub;
+    restoreMonitorFilterState('problems');
     renderMonitorSubtabs();
     loadMonitorView();
   } else if (v === 'reports') {
@@ -154,7 +204,11 @@ function setView(v, sub) {
 function setAutoInterval() {
   S.autoMs = Number(document.getElementById('auto-select').value);
   clearInterval(S.timer);
-  if (S.autoMs > 0) S.timer = setInterval(refreshAll, S.autoMs);
+  if (S.autoMs > 0) {
+    S.timer = setInterval(() => {
+      if (!isUserInteracting()) refreshAll();
+    }, S.autoMs);
+  }
 }
 
 async function refreshAll() {
@@ -166,4 +220,51 @@ async function refreshAll() {
     document.getElementById('conn-icon').src = '/assets/status/status-critical.svg';
     document.getElementById('conn-label').textContent = 'Offline';
   }
+}
+
+/* Quick Jump Palette (Ctrl+K) */
+let qjHostsCache = [];
+async function openQuickJump() {
+  document.getElementById('qj-backdrop').classList.add('open');
+  const inp = document.getElementById('qj-input');
+  inp.value = '';
+  inp.focus();
+  try {
+    const res = await fetch('/api/v1/hosts?limit=200');
+    qjHostsCache = (await res.json()).hosts || [];
+  } catch (e) {}
+  renderQuickJump();
+}
+function closeQuickJump() { document.getElementById('qj-backdrop').classList.remove('open'); }
+function renderQuickJump() {
+  const q = (document.getElementById('qj-input')?.value || '').trim().toLowerCase();
+  const staticItems = [
+    { label: 'Overview Dashboard', tag: 'Page', run: () => setView('overview') },
+    { label: 'Inventory — Services', tag: 'Page', run: () => setView('inventory','services') },
+    { label: 'Inventory — Hosts', tag: 'Page', run: () => setView('inventory','hosts') },
+    { label: 'Active Problems', tag: 'Page', run: () => setView('problems','active') },
+    { label: 'Historical Reports & SLA Charts', tag: 'Page', run: () => setView('reports','sla') },
+    { label: 'Manage — Hosts & Services', tag: 'Config', run: () => setView('manage','objects') },
+    { label: 'Manage — Service Templates', tag: 'Config', run: () => setView('manage','templates') },
+    { label: 'Manage — Email & Webhook Notifications', tag: 'Config', run: () => setView('manage','notifications') },
+    { label: 'Manage — Commands & Scripts', tag: 'Config', run: () => setView('manage','commands') },
+    { label: 'Manage — Secrets ($USERn$)', tag: 'Config', run: () => setView('manage','secrets') },
+    { label: 'Guide — NCPA Quick Install', tag: 'Help', run: () => setView('guide','ncpa') },
+    { label: 'Add New Host', tag: 'Action', run: () => { setView('manage','objects'); setTimeout(() => openHostForm(-1), 250); } },
+    { label: 'Add New Service', tag: 'Action', run: () => { setView('manage','objects'); setTimeout(() => openSvcForm(-1), 250); } }
+  ];
+  const hostItems = qjHostsCache.map(h => ({
+    label: `${h.name} (${h.address})`,
+    tag: 'Host',
+    run: () => {
+      document.getElementById('global-search').value = h.name;
+      setView('inventory', 'services');
+    }
+  }));
+  const all = [...staticItems, ...hostItems].filter(it => !q || it.label.toLowerCase().includes(q) || it.tag.toLowerCase().includes(q)).slice(0, 14);
+  window._qjActions = all;
+  document.getElementById('qj-list').innerHTML = all.length ? all.map((it, i) => `
+    <div class="qj-item" onclick="closeQuickJump();window._qjActions[${i}].run()">
+      <span>${esc(it.label)}</span><span class="flag-tag">${esc(it.tag)}</span>
+    </div>`).join('') : '<div class="empty" style="padding:18px">No matches</div>';
 }

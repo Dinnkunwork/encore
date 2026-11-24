@@ -11,7 +11,7 @@
 </head>
 <body>
 <div class="shell">
-  <!-- Compact 6-Item Left Sidebar -->
+  <!-- Compact Left Sidebar -->
   <aside class="sidebar" id="sidebar">
     <div class="sb-head">
       <a class="sb-brand" href="#" onclick="setView('overview');return false">
@@ -75,6 +75,7 @@
           <img src="/assets/icons/search.svg" alt="">
           <input type="search" id="global-search" placeholder="Search (/) ..." oninput="onGlobalSearch()">
         </div>
+        <button class="btn btn-sm" onclick="openQuickJump()" title="Quick Jump (Ctrl+K)">⌘K</button>
         <select id="auto-select" onchange="setAutoInterval()">
           <option value="3000" selected>Auto 3s</option>
           <option value="10000">Auto 10s</option>
@@ -85,6 +86,15 @@
         <button class="btn btn-sm" id="theme-btn" onclick="toggleTheme()">Dark</button>
       </div>
     </header>
+
+    <!-- Sticky Pending Changes Banner -->
+    <div class="pending-banner" id="pending-banner" style="display:none">
+      <div><b>Pending Configuration Changes</b> — Validate &amp; Apply agar perubahan aktif di Nagios Core.</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm" onclick="setView('manage');runValidate(false)">Validate</button>
+        <button class="btn btn-sm primary" onclick="runValidate(true)">Apply &amp; Reload</button>
+      </div>
+    </div>
 
     <main class="content">
       <!-- OVERVIEW -->
@@ -143,7 +153,7 @@
         </div>
       </section>
 
-      <!-- INVENTORY & PROBLEMS (Shared Subtabs + Table / Groups / Downtimes) -->
+      <!-- INVENTORY & PROBLEMS -->
       <section id="sec-monitor" style="display:none">
         <div class="subtabs">
           <div class="subtab-list" id="mon-subtabs"></div>
@@ -162,22 +172,24 @@
             <select id="limit-select" onchange="onFilterChange()"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select>
           </div>
         </div>
+        <div id="mon-bulk-bar" class="bulk-bar" style="display:none"></div>
         <div id="mon-body"></div>
       </section>
 
-      <!-- MANAGE (Hosts & Services | Localhost | Commands | Groups | Secrets) -->
+      <!-- MANAGE (Hosts & Services | Templates | Commands | Groups | Notifications | Secrets) -->
       <section id="sec-manage" style="display:none">
         <div class="subtabs">
           <div class="subtab-list">
-            <button class="subtab active" id="mtab-objects" onclick="setManageTab('objects')">Hosts & Services</button>
-            <button class="subtab" id="mtab-localhost" onclick="setManageTab('localhost')">Localhost</button>
+            <button class="subtab active" id="mtab-objects" onclick="setManageTab('objects')">Hosts &amp; Services</button>
+            <button class="subtab" id="mtab-templates" onclick="setManageTab('templates')">Templates</button>
             <button class="subtab" id="mtab-commands" onclick="setManageTab('commands')">Commands</button>
             <button class="subtab" id="mtab-groups" onclick="setManageTab('groups')">Groups</button>
+            <button class="subtab" id="mtab-notifications" onclick="setManageTab('notifications')">Notifications</button>
             <button class="subtab" id="mtab-secrets" onclick="setManageTab('secrets')">Secrets</button>
           </div>
           <div class="subtab-actions">
             <button class="btn btn-sm" onclick="runValidate(false)">Validate</button>
-            <button class="btn btn-sm primary" onclick="runValidate(true)">Apply & Reload</button>
+            <button class="btn btn-sm primary" onclick="runValidate(true)">Apply &amp; Reload</button>
           </div>
         </div>
         <pre class="console-out" id="validate-console"></pre>
@@ -213,7 +225,7 @@
       <section id="sec-reports" style="display:none">
         <div class="subtabs">
           <div class="subtab-list">
-            <button class="subtab active" id="rtab-sla" onclick="setReportTab('sla')">SLA</button>
+            <button class="subtab active" id="rtab-sla" onclick="setReportTab('sla')">SLA &amp; Charts</button>
             <button class="subtab" id="rtab-alerts" onclick="setReportTab('alerts')">Alerts</button>
             <button class="subtab" id="rtab-eventlog" onclick="setReportTab('eventlog')">Event Log</button>
           </div>
@@ -221,12 +233,23 @@
             <button class="btn btn-sm active" id="rr-24h" onclick="setReportRange('24h')">24h</button>
             <button class="btn btn-sm" id="rr-7d" onclick="setReportRange('7d')">7d</button>
             <button class="btn btn-sm" id="rr-30d" onclick="setReportRange('30d')">30d</button>
-            <div id="rep-sla-controls" style="display:flex;gap:6px;flex-wrap:wrap">
-              <select id="rep-target" onchange="loadReports()"><option value="services">Services</option><option value="hosts">Hosts</option></select>
-              <select id="rep-hg" onchange="loadReports()"><option value="">All Hostgroups</option></select>
-              <button class="btn btn-sm" onclick="exportReport('csv')">Export CSV</button>
-              <button class="btn btn-sm primary" onclick="exportReport('html')">Print / PDF</button>
-            </div>
+            <button class="btn btn-sm" id="rr-custom" onclick="setReportRange('custom')">Custom</button>
+          </div>
+        </div>
+        <div class="rep-filterbar" id="rep-filterbar">
+          <select id="rep-target" onchange="onReportFilterChange()"><option value="services">Services</option><option value="hosts">Hosts</option></select>
+          <select id="rep-hg" onchange="onReportFilterChange()"><option value="">All Hostgroups</option></select>
+          <select id="rep-host" onchange="onReportHostChange()"><option value="">All Hosts</option></select>
+          <select id="rep-svc" onchange="onReportFilterChange()"><option value="">All Services</option></select>
+          <div id="rep-custom-dates" style="display:none;gap:6px;align-items:center">
+            <input type="date" id="rep-from" onchange="loadReports()">
+            <span class="name-sub">to</span>
+            <input type="date" id="rep-to" onchange="loadReports()">
+          </div>
+          <div id="rep-sla-controls" style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
+            <button class="btn btn-sm active" id="rep-group-btn" onclick="toggleRepGroupByHost()">Grouped</button>
+            <button class="btn btn-sm" onclick="exportReport('csv')">CSV</button>
+            <button class="btn btn-sm primary" onclick="exportReport('html')">Print / PDF</button>
           </div>
         </div>
         <div id="reports-content"></div>
@@ -237,6 +260,12 @@
 
 <div class="drawer-wrap" id="drawer-wrap" onclick="if(event.target===this)closeDrawer()"><div class="drawer" id="drawer-body"></div></div>
 <div class="backdrop" id="modal-backdrop" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal-content"></div></div>
+<div class="backdrop" id="qj-backdrop" onclick="if(event.target===this)closeQuickJump()">
+  <div class="qj-box">
+    <input type="text" id="qj-input" placeholder="Jump to host, service, or menu (Ctrl+K)..." oninput="renderQuickJump()">
+    <div class="qj-list" id="qj-list"></div>
+  </div>
+</div>
 <div id="toast"></div>
 
 <script src="/js/core.js"></script>

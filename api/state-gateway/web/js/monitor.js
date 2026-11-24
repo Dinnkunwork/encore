@@ -12,6 +12,8 @@ async function loadMeta() {
   document.getElementById('conn-label').textContent = health.connected ? 'Live' : 'Reconnecting';
   document.getElementById('events-pill').textContent = (health.events_applied || 0).toLocaleString() + ' ev';
   document.getElementById('sb-apply-btn').style.display = health.pending_changes ? 'block' : 'none';
+  const pbBanner = document.getElementById('pending-banner');
+  if (pbBanner) pbBanner.style.display = health.pending_changes ? 'flex' : 'none';
   document.getElementById('sub-meta').textContent = `PID ${sum.program.pid} • ${sum.hosts.total} hosts, ${sum.services.total} services • ${new Date().toLocaleTimeString()}`;
 
   const totalProb = sum.hosts.down + sum.hosts.unreachable + sum.services.warning + sum.services.critical + sum.services.unknown;
@@ -29,6 +31,26 @@ function syncSelect(id, allLabel, names) {
   const cur = sel.value;
   sel.innerHTML = `<option value="">${allLabel}</option>` + names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
   if (names.includes(cur)) sel.value = cur;
+}
+
+/* Isolated filter state per view (fixes Problems -> Inventory state=2 leak) */
+function saveMonitorFilterState(v) {
+  const f = v === 'problems' ? S.probFilter : S.invFilter;
+  const st = document.getElementById('state-select');
+  const un = document.getElementById('unhandled-chk');
+  const so = document.getElementById('sort-select');
+  if (st) f.state = st.value;
+  if (un) f.unhandled = un.checked;
+  if (so) f.sort = so.value;
+}
+function restoreMonitorFilterState(v) {
+  const f = v === 'problems' ? S.probFilter : S.invFilter;
+  const mode = v === 'problems' ? 'problems' : S.invTab;
+  populateStateSelect(mode, f.state);
+  const un = document.getElementById('unhandled-chk');
+  const so = document.getElementById('sort-select');
+  if (un) un.checked = !!f.unhandled;
+  if (so) so.value = f.sort || 'severity';
 }
 
 async function loadOverview() {
@@ -112,16 +134,31 @@ function renderMonitorSubtabs() {
   }
 }
 
-function setInvTab(t) { S.invTab = t; S.offset = 0; renderMonitorSubtabs(); loadMonitorView(); }
-function setProbTab(t) { S.probTab = t; S.offset = 0; renderMonitorSubtabs(); loadMonitorView(); }
+function setInvTab(t) {
+  S.invTab = t;
+  S.invFilter.state = '';
+  S.offset = 0;
+  S.selectedMon.clear();
+  populateStateSelect(t, '');
+  renderMonitorSubtabs();
+  loadMonitorView();
+}
+function setProbTab(t) {
+  S.probTab = t;
+  S.offset = 0;
+  S.selectedMon.clear();
+  renderMonitorSubtabs();
+  loadMonitorView();
+}
 function quickUnhandled() {
-  document.getElementById('unhandled-chk').checked = true;
-  document.getElementById('state-select').value = '';
+  S.probFilter.unhandled = true;
+  S.probFilter.state = '';
   setView('problems', 'active');
 }
 function jumpToGroup(type, name) {
   document.getElementById('hg-select').value = type === 'hg' ? name : '';
   document.getElementById('sg-select').value = type === 'sg' ? name : '';
+  S.invFilter.state = '';
   setView('inventory', 'services');
 }
 function onGlobalSearch() {
@@ -133,32 +170,106 @@ function toggleGroupByHost() {
   document.getElementById('group-view-btn').classList.toggle('active', S.groupByHost);
   loadMonitorView();
 }
-function onFilterChange() { S.offset = 0; loadMonitorView(); }
+function onFilterChange() {
+  saveMonitorFilterState(S.view);
+  S.offset = 0;
+  S.selectedMon.clear();
+  loadMonitorView();
+}
 function changePage(dir) {
   const limit = Number(document.getElementById('limit-select').value);
   const next = S.offset + dir * limit;
   if (next < 0 || next >= S.total) return;
   S.offset = next;
+  S.selectedMon.clear();
   loadMonitorView();
 }
 
-function populateStateSelect(mode) {
+function populateStateSelect(mode, desiredVal) {
   const sel = document.getElementById('state-select');
-  const cur = sel.value;
+  if (!sel) return;
+  const cur = desiredVal !== undefined ? desiredVal : sel.value;
   if (mode === 'hosts') {
     sel.innerHTML = '<option value="">All States</option><option value="0">UP</option><option value="1">DOWN</option><option value="2">UNREACH</option>';
   } else if (mode === 'problems') {
-    sel.innerHTML = '<option value="2">CRITICAL</option><option value="1">WARNING</option><option value="3">UNKNOWN</option>';
+    sel.innerHTML = '<option value="">All Problems</option><option value="2">CRITICAL</option><option value="1">WARNING</option><option value="3">UNKNOWN</option>';
   } else {
     sel.innerHTML = '<option value="">All States</option><option value="0">OK</option><option value="1">WARN</option><option value="2">CRIT</option><option value="3">UNK</option>';
   }
-  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+  sel.value = [...sel.options].some(o => o.value === cur) ? cur : '';
+}
+
+/* Bulk Selection for Monitor */
+function monItemKey(mode, item) {
+  return mode === 'hosts' ? ('host::' + item.name) : ('svc::' + item.host_name + '::' + item.description);
+}
+function toggleMonSelect(key, checked) {
+  if (checked) S.selectedMon.add(key); else S.selectedMon.delete(key);
+  renderBulkBar();
+}
+function toggleMonSelectAll(checked) {
+  const mode = S.view === 'problems' ? 'problems' : S.invTab;
+  S.selectedMon.clear();
+  if (checked) {
+    S.lastItems.forEach(it => S.selectedMon.add(monItemKey(mode, it)));
+  }
+  document.querySelectorAll('.mon-row-chk').forEach(cb => cb.checked = checked);
+  renderBulkBar();
+}
+function renderBulkBar() {
+  const bar = document.getElementById('mon-bulk-bar');
+  if (!bar) return;
+  if (S.selectedMon.size === 0) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  bar.innerHTML = `
+    <div><b>${S.selectedMon.size}</b> selected</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn btn-sm primary" onclick="bulkMonitorForceCheck()">↻ Force Check All</button>
+      <button class="btn btn-sm" onclick="bulkMonitorAck()">✓ Acknowledge All</button>
+      <button class="btn btn-sm" onclick="bulkMonitorDowntime()">⏱ Schedule Downtime</button>
+      <button class="btn btn-sm" onclick="S.selectedMon.clear();renderBulkBar();loadMonitorView()">Clear</button>
+    </div>`;
+}
+function bulkMonitorForceCheck() {
+  const now = Math.floor(Date.now()/1000);
+  const cmds = [];
+  S.selectedMon.forEach(k => {
+    const p = k.split('::');
+    if (p[0] === 'host') cmds.push(`SCHEDULE_FORCED_HOST_CHECK;${p[1]};${now}`);
+    else cmds.push(`SCHEDULE_FORCED_SVC_CHECK;${p[1]};${p[2]};${now}`);
+  });
+  sendBatchCmds(cmds, 'Bulk force check');
+}
+function bulkMonitorAck() {
+  const cmt = prompt('Acknowledge comment for ' + S.selectedMon.size + ' item(s):', 'Bulk acknowledged via Encore');
+  if (!cmt) return;
+  const cmds = [];
+  S.selectedMon.forEach(k => {
+    const p = k.split('::');
+    if (p[0] === 'host') cmds.push(`ACKNOWLEDGE_HOST_PROBLEM;${p[1]};2;0;1;encore-ui;${cmt}`);
+    else cmds.push(`ACKNOWLEDGE_SVC_PROBLEM;${p[1]};${p[2]};2;0;1;encore-ui;${cmt}`);
+  });
+  sendBatchCmds(cmds, 'Bulk acknowledge');
+}
+function bulkMonitorDowntime() {
+  const minsStr = prompt('Downtime duration (minutes) for ' + S.selectedMon.size + ' item(s):', '60');
+  const mins = Math.max(1, Number(minsStr) || 0);
+  if (!minsStr || !mins) return;
+  const now = Math.floor(Date.now()/1000);
+  const cmds = [];
+  S.selectedMon.forEach(k => {
+    const p = k.split('::');
+    if (p[0] === 'host') cmds.push(`SCHEDULE_HOST_DOWNTIME;${p[1]};${now};${now+mins*60};1;0;0;encore-ui;Bulk maintenance`);
+    else cmds.push(`SCHEDULE_SVC_DOWNTIME;${p[1]};${p[2]};${now};${now+mins*60};1;0;0;encore-ui;Bulk maintenance`);
+  });
+  sendBatchCmds(cmds, 'Bulk downtime');
 }
 
 async function loadMonitorView() {
   const isGroups = S.view === 'inventory' && S.invTab === 'groups';
   const isDT = S.view === 'problems' && S.probTab === 'downtimes';
   document.getElementById('mon-filters').style.display = (isGroups || isDT) ? 'none' : 'flex';
+  if (isGroups || isDT) { S.selectedMon.clear(); renderBulkBar(); }
 
   if (isGroups) { renderGroupsView(); return; }
   if (isDT) { await renderDowntimesView(); return; }
@@ -166,7 +277,8 @@ async function loadMonitorView() {
   const mode = S.view === 'problems' ? 'problems' : S.invTab;
   document.getElementById('sg-select').style.display = mode === 'hosts' ? 'none' : '';
   document.getElementById('group-view-btn').style.display = mode === 'hosts' ? 'none' : '';
-  populateStateSelect(mode);
+  const f = S.view === 'problems' ? S.probFilter : S.invFilter;
+  populateStateSelect(mode, f.state);
 
   const q = document.getElementById('global-search').value.trim();
   const st = document.getElementById('state-select').value;
@@ -179,17 +291,20 @@ async function loadMonitorView() {
   const params = new URLSearchParams({ limit, offset: S.offset, sort });
   if (q) params.set('search', q);
   if (st !== '') params.set('state', st);
+  else if (mode === 'problems') params.set('problems', '1');
   if (hg) params.set('hostgroup', hg);
   if (sg && mode !== 'hosts') params.set('servicegroup', sg);
   if (unhandled) params.set('unhandled', '1');
 
   let rowsHTML = '', headHTML = '';
   if (mode === 'hosts') {
-    headHTML = '<tr><th>Status</th><th>Host</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
+    headHTML = '<tr><th style="width:32px"><input type="checkbox" onclick="toggleMonSelectAll(this.checked)"></th><th>Status</th><th>Host</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
     const data = await (await fetch('/api/v1/hosts?' + params)).json();
     S.total = data.total; S.lastItems = data.hosts;
-    rowsHTML = data.hosts.length ? data.hosts.map((h, idx) => `
-      <tr class="clickable" onclick="openHostDrawer(${idx})">
+    rowsHTML = data.hosts.length ? data.hosts.map((h, idx) => {
+      const k = monItemKey('hosts', h);
+      return `<tr class="clickable" onclick="openHostDrawer(${idx})">
+        <td onclick="event.stopPropagation()"><input type="checkbox" class="mon-row-chk" ${S.selectedMon.has(k)?'checked':''} onchange="toggleMonSelect('${esc(k)}',this.checked)"></td>
         <td>${hostBadge(h)}</td>
         <td><div class="name-primary">${esc(h.name)}${flagsHTML(h)}</div><div class="name-sub">${esc(h.address)}</div></td>
         <td class="mono">${durStr(h.last_state_change)}</td>
@@ -199,21 +314,24 @@ async function loadMonitorView() {
           <button class="icon-btn" title="Force check" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${esc(h.name)};'+Math.floor(Date.now()/1000),'Force check')">↻</button>
           <button class="icon-btn" title="Downtime" onclick="openDowntimeModal('host','${esc(h.name)}','')">⏱</button>
         </td>
-      </tr>`).join('') : '<tr><td colspan="6" class="empty">No matching hosts</td></tr>';
+      </tr>`;
+    }).join('') : '<tr><td colspan="7" class="empty">No matching hosts</td></tr>';
   } else {
-    headHTML = '<tr><th>Status</th><th>Host / Service</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
+    headHTML = '<tr><th style="width:32px"><input type="checkbox" onclick="toggleMonSelectAll(this.checked)"></th><th>Status</th><th>Host / Service</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
     const data = await (await fetch('/api/v1/services?' + params)).json();
     S.total = data.total; S.lastItems = data.services;
     if (!data.services.length) {
-      rowsHTML = '<tr><td colspan="6" class="empty">No matching services</td></tr>';
+      rowsHTML = '<tr><td colspan="7" class="empty">No matching services</td></tr>';
     } else {
       let lastHost = null;
       data.services.forEach((s, idx) => {
+        const k = monItemKey('services', s);
         if (S.groupByHost && s.host_name !== lastHost) {
           lastHost = s.host_name;
-          rowsHTML += `<tr class="group-row"><td colspan="6">${esc(s.host_name)}</td></tr>`;
+          rowsHTML += `<tr class="group-row"><td colspan="7">${esc(s.host_name)}</td></tr>`;
         }
         rowsHTML += `<tr class="clickable" onclick="openSvcDrawer(${idx})">
+          <td onclick="event.stopPropagation()"><input type="checkbox" class="mon-row-chk" ${S.selectedMon.has(k)?'checked':''} onchange="toggleMonSelect('${esc(k)}',this.checked)"></td>
           <td>${svcBadge(s)}</td>
           <td><div class="name-primary">${esc(s.description)}${flagsHTML(s)}</div>${S.groupByHost ? '' : `<div class="name-sub">${esc(s.host_name)}</div>`}</td>
           <td class="mono">${durStr(s.last_state_change)}</td>
@@ -229,6 +347,7 @@ async function loadMonitorView() {
     }
   }
 
+  renderBulkBar();
   const start = S.total ? S.offset + 1 : 0;
   const end = Math.min(S.offset + limit, S.total);
   document.getElementById('mon-body').innerHTML = `
@@ -310,6 +429,11 @@ function openHostDrawer(idx) {
       <button class="btn btn-sm" onclick="closeDrawer();openDowntimeModal('host','${esc(h.name)}','')">⏱ Downtime</button>
       <button class="btn btn-sm" onclick="sendCmd('DISABLE_HOST_CHECK;${esc(h.name)}','Disable check')">Disable</button>
       <button class="btn btn-sm" onclick="sendCmd('ENABLE_HOST_CHECK;${esc(h.name)}','Enable check')">Enable</button>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+      <button class="btn btn-sm" onclick="closeDrawer();openReportFor('${esc(h.name)}','')">View SLA Report ›</button>
+      <button class="btn btn-sm" onclick="closeDrawer();jumpToManageHost('${esc(h.name)}')">Edit Config ›</button>
+      <button class="btn btn-sm" onclick="closeDrawer();jumpAddServiceForHost('${esc(h.name)}')">+ Add Service</button>
     </div>`;
   document.getElementById('drawer-wrap').classList.add('open');
 }
@@ -335,6 +459,10 @@ function openSvcDrawer(idx) {
       <button class="btn btn-sm" onclick="closeDrawer();openDowntimeModal('service','${esc(s.host_name)}','${esc(s.description)}')">⏱ Downtime</button>
       <button class="btn btn-sm" onclick="sendCmd('DISABLE_SVC_CHECK;${esc(s.host_name)};${esc(s.description)}','Disable check')">Disable</button>
       <button class="btn btn-sm" onclick="sendCmd('ENABLE_SVC_CHECK;${esc(s.host_name)};${esc(s.description)}','Enable check')">Enable</button>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+      <button class="btn btn-sm" onclick="closeDrawer();openReportFor('${esc(s.host_name)}','${esc(s.description)}')">View SLA Report ›</button>
+      <button class="btn btn-sm" onclick="closeDrawer();jumpToManageHost('${esc(s.host_name)}')">Edit Config ›</button>
     </div>`;
   document.getElementById('drawer-wrap').classList.add('open');
 }
