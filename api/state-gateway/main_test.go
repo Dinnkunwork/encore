@@ -301,4 +301,28 @@ func TestReportsAndBasicAuth(t *testing.T) {
 	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("Encore Availability")) {
 		t.Fatalf("unexpected HTML export: %d", rec.Code)
 	}
+
+	// Safe public /healthz bypasses Basic Auth, returns 503 when disconnected, 200 when connected, and leaks no internal fields
+	req = httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || !bytes.Contains(rec.Body.Bytes(), []byte(`"degraded"`)) || bytes.Contains(rec.Body.Bytes(), []byte("hosts")) {
+		t.Fatalf("expected 503 minimal degraded /healthz, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	store.connected.Store(true)
+	req = httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"ok"`)) || bytes.Contains(rec.Body.Bytes(), []byte("hosts")) {
+		t.Fatalf("expected 200 minimal ok /healthz, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	// /health remains protected by Basic Auth
+	req = httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected /health to require Basic Auth, got %d", rec.Code)
+	}
 }

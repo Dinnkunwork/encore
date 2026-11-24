@@ -788,7 +788,7 @@ func basicAuthMiddleware(user, pass string, next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/favicon.ico" {
+		if r.URL.Path == "/favicon.ico" || r.URL.Path == "/healthz" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -849,6 +849,29 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
+	})
+
+	// Public, minimal, safe healthcheck endpoint (exempt from Basic Auth).
+	// Exposes only liveness/readiness status with zero internal metadata.
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
+		if store.connected.Load() {
+			w.WriteHeader(http.StatusOK)
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
+			}
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"status":"degraded"}` + "\n"))
+		}
 	})
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
