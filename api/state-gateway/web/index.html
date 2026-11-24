@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Encore — Monitoring Dashboard</title>
+<title>Encore — Monitoring & Management</title>
 <style>
   :root {
     --bg: #f6f8fa;
@@ -13,6 +13,7 @@
     --text: #0f172a;
     --muted: #64748b;
     --accent: #2563eb;
+    --accent-soft: rgba(37,99,235,0.1);
     --ok: #10b981;
     --ok-bg: #ecfdf5;
     --ok-fg: #047857;
@@ -38,6 +39,7 @@
     --text: #f1f5f9;
     --muted: #94a3b8;
     --accent: #3b82f6;
+    --accent-soft: rgba(59,130,246,0.18);
     --ok-bg: rgba(16,185,129,0.14);
     --ok-fg: #34d399;
     --warn-bg: rgba(245,158,11,0.14);
@@ -48,23 +50,20 @@
     --unk-fg: #c4b5fd;
     --pend-bg: rgba(148,163,184,0.14);
     --pend-fg: #cbd5e1;
-    --shadow: 0 1px 3px rgba(0,0,0,0.35);
+    --shadow: 0 1px 3px rgba(0,0,0,0.4);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.5;
+    background: var(--bg); color: var(--text); line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 1380px; margin: 0 auto; padding: 20px 24px 40px; }
+  .wrap { max-width: 1420px; margin: 0 auto; padding: 18px 24px 48px; }
 
-  /* Header */
   header {
     display: flex; align-items: center; justify-content: space-between;
-    gap: 16px; flex-wrap: wrap;
-    margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border);
+    gap: 14px; flex-wrap: wrap;
+    margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--border);
   }
   .brand { display: flex; align-items: center; gap: 12px; }
   .logo {
@@ -73,89 +72,100 @@
     display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 16px;
     box-shadow: 0 2px 8px rgba(37,99,235,0.28);
   }
-  .brand h1 { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; }
+  .brand h1 { font-size: 17px; font-weight: 650; letter-spacing: -0.02em; }
   .brand span { display: block; font-size: 12px; color: var(--muted); }
-  .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .pill {
     display: inline-flex; align-items: center; gap: 7px;
     padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 500;
     background: var(--surface); border: 1px solid var(--border); color: var(--muted);
   }
+  .pill.pending-pill { background: var(--warn-bg); border-color: var(--warn); color: var(--warn-fg); cursor: pointer; display: none; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
   .dot.off { background: var(--crit); }
   .btn {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 6px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 500;
     background: var(--surface); border: 1px solid var(--border); color: var(--text);
-    cursor: pointer; transition: all 0.15s ease;
+    cursor: pointer; transition: all 0.14s ease;
   }
-  .btn:hover { background: var(--surface-2); border-color: var(--muted); }
+  .btn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--muted); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn.danger { background: var(--crit-bg); border-color: var(--crit); color: var(--crit-fg); }
   .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-sm { padding: 4px 9px; font-size: 12px; }
 
   /* Summary Cards */
   .grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 14px; margin-bottom: 20px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    gap: 14px; margin-bottom: 18px;
   }
   .card {
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow);
+    border-radius: var(--radius); padding: 15px 18px; box-shadow: var(--shadow);
   }
-  .card-head {
-    display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px;
-  }
-  .card-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-  .card-total { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
-  .metrics { display: flex; gap: 8px; flex-wrap: wrap; }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+  .card-title { font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .card-total { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .metrics { display: flex; gap: 7px; flex-wrap: wrap; }
   .metric-chip {
-    flex: 1; min-width: 72px; padding: 8px 10px; border-radius: 8px;
-    border: 1px solid transparent; cursor: pointer; transition: transform 0.12s ease, border-color 0.15s ease;
+    flex: 1; min-width: 64px; padding: 7px 9px; border-radius: 8px;
+    border: 1px solid transparent; cursor: pointer; transition: transform 0.12s, border-color 0.15s;
     text-align: left; background: var(--surface-2);
   }
   .metric-chip:hover { transform: translateY(-1px); border-color: var(--border); }
-  .metric-chip .val { display: block; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .metric-chip .lbl { font-size: 11px; font-weight: 600; opacity: 0.85; }
+  .metric-chip .val { display: block; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .metric-chip .lbl { font-size: 10.5px; font-weight: 600; opacity: 0.85; }
   .c-ok { background: var(--ok-bg); color: var(--ok-fg); }
   .c-warn { background: var(--warn-bg); color: var(--warn-fg); }
   .c-crit { background: var(--crit-bg); color: var(--crit-fg); }
   .c-unk { background: var(--unk-bg); color: var(--unk-fg); }
   .c-pend { background: var(--pend-bg); color: var(--pend-fg); }
 
-  /* Panel */
+  /* Panel & Tabs */
   .panel {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
   }
   .toolbar {
     display: flex; align-items: center; justify-content: space-between;
-    gap: 12px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border);
+    gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border);
   }
-  .tabs { display: flex; gap: 4px; background: var(--surface-2); padding: 3px; border-radius: 8px; }
+  .tabs { display: flex; gap: 3px; background: var(--surface-2); padding: 3px; border-radius: 8px; flex-wrap: wrap; }
   .tab {
-    padding: 6px 13px; border: none; border-radius: 6px; font-size: 13px; font-weight: 500;
-    background: transparent; color: var(--muted); cursor: pointer; transition: all 0.15s;
+    padding: 6px 12px; border: none; border-radius: 6px; font-size: 12.5px; font-weight: 550;
+    background: transparent; color: var(--muted); cursor: pointer; transition: all 0.14s;
   }
   .tab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
-  .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  input[type="search"], select {
+  .filters { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  input[type="search"], input[type="text"], input[type="number"], select, textarea {
     padding: 6px 10px; border-radius: 8px; font-size: 13px;
     background: var(--bg); border: 1px solid var(--border); color: var(--text); outline: none;
+    font-family: inherit;
   }
-  input[type="search"] { width: 230px; }
-  input[type="search"]:focus, select:focus { border-color: var(--accent); }
+  input[type="search"] { width: 210px; }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  .chk-pill {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted);
+    padding: 5px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); cursor: pointer;
+  }
 
   /* Table */
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th {
-    text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600;
+    text-align: left; padding: 9px 13px; font-size: 11px; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
     background: var(--surface-2); border-bottom: 1px solid var(--border); white-space: nowrap;
   }
-  td {
-    padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle;
-  }
+  th.sortable { cursor: pointer; }
+  th.sortable:hover { color: var(--text); }
+  td { padding: 9px 13px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tbody tr.clickable { cursor: pointer; }
   tbody tr:hover { background: var(--surface-2); }
+  tr.group-row td { background: var(--surface-2); font-weight: 650; font-size: 12.5px; padding: 7px 13px; }
   .badge {
     display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px;
     font-size: 11px; font-weight: 700; letter-spacing: 0.03em; font-family: ui-monospace, SFMono-Regular, monospace;
@@ -163,10 +173,7 @@
   .mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; color: var(--muted); }
   .name-primary { font-weight: 600; color: var(--text); }
   .name-sub { font-size: 11.5px; color: var(--muted); }
-  .output-cell {
-    max-width: 420px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    color: var(--muted); font-size: 12.5px;
-  }
+  .output-cell { max-width: 390px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12.5px; }
   .flags { display: inline-flex; gap: 4px; margin-left: 6px; }
   .flag-tag {
     font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 4px;
@@ -179,20 +186,84 @@
     cursor: pointer; transition: all 0.12s;
   }
   .icon-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--accent); }
-
-  /* Footer / Pagination */
   .pager {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 16px; font-size: 12.5px; color: var(--muted);
+    padding: 11px 16px; font-size: 12.5px; color: var(--muted);
   }
-  .empty { text-align: center; padding: 40px 16px; color: var(--muted); }
+  .empty { text-align: center; padding: 38px 16px; color: var(--muted); }
 
-  /* Toast */
+  /* Group Overview Grid */
+  .group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; padding: 16px; }
+  .gcard {
+    border: 1px solid var(--border); border-radius: 10px; padding: 14px;
+    background: var(--bg); cursor: pointer; transition: border-color 0.15s, transform 0.12s;
+  }
+  .gcard:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .gcard h3 { font-size: 14px; font-weight: 650; margin-bottom: 2px; }
+  .gcard p { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .bar { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; display: flex; margin-bottom: 8px; }
+  .bar-ok { background: var(--ok); }
+  .bar-warn { background: var(--warn); }
+  .bar-crit { background: var(--crit); }
+  .bar-unk { background: var(--unk); }
+
+  /* Manage Section */
+  .manage-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+    padding: 12px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border);
+  }
+  .console-out {
+    margin: 12px 16px; padding: 12px; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 12px; white-space: pre-wrap; max-height: 200px; overflow: auto;
+    background: var(--bg); border: 1px solid var(--border); display: none;
+  }
+  .toggle-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; padding: 16px; }
+  .toggle-card {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 12px 14px; border-radius: 9px; border: 1px solid var(--border); background: var(--bg);
+  }
+
+  /* Drawer & Modal */
+  .backdrop {
+    position: fixed; inset: 0; background: rgba(15,23,42,0.45); z-index: 40;
+    display: none; align-items: center; justify-content: center;
+  }
+  .backdrop.open { display: flex; }
+  .modal {
+    width: min(540px, 94vw); max-height: 90vh; overflow-y: auto;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+  }
+  .modal h2 { font-size: 16px; font-weight: 650; margin-bottom: 14px; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+  .form-row.full { grid-column: 1 / -1; }
+  .form-row label { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+
+  .drawer-wrap {
+    position: fixed; inset: 0; background: rgba(15,23,42,0.35); z-index: 45; display: none; justify-content: flex-end;
+  }
+  .drawer-wrap.open { display: flex; }
+  .drawer {
+    width: min(520px, 96vw); height: 100%; overflow-y: auto;
+    background: var(--surface); border-left: 1px solid var(--border); padding: 20px 22px;
+    box-shadow: -8px 0 32px rgba(0,0,0,0.2);
+  }
+  .drawer-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+  .kv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
+  .kv-box { padding: 8px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }
+  .kv-box .k { font-size: 10.5px; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .kv-box .v { font-size: 13px; font-weight: 600; margin-top: 2px; }
+  .perf-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .perf-chip { padding: 4px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-family: ui-monospace, monospace; }
+
   #toast {
     position: fixed; right: 20px; bottom: 20px; padding: 10px 16px; border-radius: 8px;
     background: var(--text); color: var(--surface); font-size: 13px; font-weight: 500;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.2); opacity: 0; pointer-events: none;
-    transform: translateY(8px); transition: all 0.2s ease; z-index: 50;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.22); opacity: 0; pointer-events: none;
+    transform: translateY(8px); transition: all 0.2s ease; z-index: 60;
   }
   #toast.show { opacity: 1; transform: translateY(0); }
 </style>
@@ -208,6 +279,7 @@
       </div>
     </div>
     <div class="header-right">
+      <button class="pill pending-pill" id="pending-pill" onclick="setTab('manage')">Pending Changes</button>
       <div class="pill"><span id="conn-dot" class="dot"></span><span id="conn-label">Live</span></div>
       <div class="pill" id="events-pill">0 events</div>
       <button class="btn active" id="auto-btn" onclick="toggleAuto()">Auto 3s</button>
@@ -220,26 +292,44 @@
     <div class="card">
       <div class="card-head">
         <span class="card-title">Hosts</span>
-        <span class="card-total" id="h-total">-</span>
+        <div>
+          <span class="badge c-crit" id="h-unhandled-badge" style="display:none;margin-right:6px;cursor:pointer" onclick="quickUnhandled('hosts')">0 unhandled</span>
+          <span class="card-total" id="h-total">-</span>
+        </div>
       </div>
       <div class="metrics">
-        <button class="metric-chip c-ok" onclick="quickFilter('hosts', '0')"><span class="val" id="h-up">0</span><span class="lbl">UP</span></button>
-        <button class="metric-chip c-crit" onclick="quickFilter('hosts', '1')"><span class="val" id="h-down">0</span><span class="lbl">DOWN</span></button>
-        <button class="metric-chip c-warn" onclick="quickFilter('hosts', '2')"><span class="val" id="h-unreach">0</span><span class="lbl">UNREACH</span></button>
-        <button class="metric-chip c-pend" onclick="quickFilter('hosts', '')"><span class="val" id="h-pend">0</span><span class="lbl">PENDING</span></button>
+        <button class="metric-chip c-ok" onclick="quickFilter('hosts','0')"><span class="val" id="h-up">0</span><span class="lbl">UP</span></button>
+        <button class="metric-chip c-crit" onclick="quickFilter('hosts','1')"><span class="val" id="h-down">0</span><span class="lbl">DOWN</span></button>
+        <button class="metric-chip c-warn" onclick="quickFilter('hosts','2')"><span class="val" id="h-unreach">0</span><span class="lbl">UNREACH</span></button>
+        <button class="metric-chip c-pend" onclick="quickFilter('hosts','')"><span class="val" id="h-pend">0</span><span class="lbl">PENDING</span></button>
       </div>
     </div>
 
     <div class="card">
       <div class="card-head">
         <span class="card-title">Services</span>
-        <span class="card-total" id="s-total">-</span>
+        <div>
+          <span class="badge c-crit" id="s-unhandled-badge" style="display:none;margin-right:6px;cursor:pointer" onclick="quickUnhandled('services')">0 unhandled</span>
+          <span class="card-total" id="s-total">-</span>
+        </div>
       </div>
       <div class="metrics">
-        <button class="metric-chip c-ok" onclick="quickFilter('services', '0')"><span class="val" id="s-ok">0</span><span class="lbl">OK</span></button>
-        <button class="metric-chip c-warn" onclick="quickFilter('services', '1')"><span class="val" id="s-warn">0</span><span class="lbl">WARNING</span></button>
-        <button class="metric-chip c-crit" onclick="quickFilter('services', '2')"><span class="val" id="s-crit">0</span><span class="lbl">CRITICAL</span></button>
-        <button class="metric-chip c-unk" onclick="quickFilter('services', '3')"><span class="val" id="s-unk">0</span><span class="lbl">UNKNOWN</span></button>
+        <button class="metric-chip c-ok" onclick="quickFilter('services','0')"><span class="val" id="s-ok">0</span><span class="lbl">OK</span></button>
+        <button class="metric-chip c-warn" onclick="quickFilter('services','1')"><span class="val" id="s-warn">0</span><span class="lbl">WARN</span></button>
+        <button class="metric-chip c-crit" onclick="quickFilter('services','2')"><span class="val" id="s-crit">0</span><span class="lbl">CRIT</span></button>
+        <button class="metric-chip c-unk" onclick="quickFilter('services','3')"><span class="val" id="s-unk">0</span><span class="lbl">UNK</span></button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Health Overview</span>
+        <span class="card-total" id="health-pct">-</span>
+      </div>
+      <div class="bar" id="health-bar" style="height:10px;margin:8px 0 12px"></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)">
+        <span id="daemon-flags">Checks: - • Notify: -</span>
+        <span id="shortcut-hint">Press <b>/</b> to search</span>
       </div>
     </div>
   </section>
@@ -250,40 +340,114 @@
         <button class="tab active" id="tab-services" onclick="setTab('services')">Services</button>
         <button class="tab" id="tab-hosts" onclick="setTab('hosts')">Hosts</button>
         <button class="tab" id="tab-problems" onclick="setTab('problems')">Problems</button>
+        <button class="tab" id="tab-groups" onclick="setTab('groups')">Groups</button>
+        <button class="tab" id="tab-downtimes" onclick="setTab('downtimes')">Downtimes</button>
+        <button class="tab" id="tab-manage" onclick="setTab('manage')">Manage</button>
       </div>
-      <div class="filters">
-        <input type="search" id="search-input" placeholder="Search host, service, output..." oninput="onFilterChange()">
-        <select id="state-select" onchange="onFilterChange()">
-          <option value="">All States</option>
+      <div class="filters" id="monitor-filters">
+        <input type="search" id="search-input" placeholder="Search host, IP, service, output..." oninput="onFilterChange()">
+        <select id="hg-select" onchange="onFilterChange()"><option value="">All Hostgroups</option></select>
+        <select id="sg-select" onchange="onFilterChange()"><option value="">All Servicegroups</option></select>
+        <select id="state-select" onchange="onFilterChange()"><option value="">All States</option></select>
+        <select id="sort-select" onchange="onFilterChange()">
+          <option value="severity">Sort: Severity</option>
+          <option value="name">Sort: Name</option>
+          <option value="last_check">Sort: Last Check</option>
+          <option value="duration">Sort: State Age</option>
         </select>
+        <label class="chk-pill"><input type="checkbox" id="unhandled-chk" onchange="onFilterChange()"> Unhandled</label>
+        <button class="btn btn-sm" id="group-view-btn" onclick="toggleGroupByHost()" title="Group services by host">Grouped</button>
         <select id="limit-select" onchange="onFilterChange()">
-          <option value="25">25 / page</option>
-          <option value="50" selected>50 / page</option>
-          <option value="100">100 / page</option>
+          <option value="25">25</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
         </select>
       </div>
     </div>
 
-    <div class="table-wrap">
-      <table>
-        <thead id="tbl-head"></thead>
-        <tbody id="tbl-body"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
-      </table>
+    <!-- Monitoring Table View -->
+    <div id="view-table">
+      <div class="table-wrap">
+        <table>
+          <thead id="tbl-head"></thead>
+          <tbody id="tbl-body"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <span id="pager-info">-</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm" id="prev-btn" onclick="changePage(-1)">Prev</button>
+          <button class="btn btn-sm" id="next-btn" onclick="changePage(1)">Next</button>
+        </div>
+      </div>
     </div>
 
-    <div class="pager">
-      <span id="pager-info">-</span>
-      <div style="display:flex;gap:6px">
-        <button class="btn" id="prev-btn" onclick="changePage(-1)">Prev</button>
-        <button class="btn" id="next-btn" onclick="changePage(1)">Next</button>
+    <!-- Groups Overview View -->
+    <div id="view-groups" style="display:none">
+      <div style="padding:14px 16px 0;font-size:12px;font-weight:650;text-transform:uppercase;color:var(--muted)">Hostgroups</div>
+      <div class="group-grid" id="hg-cards"></div>
+      <div style="padding:4px 16px 0;font-size:12px;font-weight:650;text-transform:uppercase;color:var(--muted)">Servicegroups</div>
+      <div class="group-grid" id="sg-cards"></div>
+    </div>
+
+    <!-- Downtimes View -->
+    <div id="view-downtimes" style="display:none">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>Target</th><th>Window</th><th>Status</th><th>Author / Comment</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody id="dt-body"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
+        </table>
       </div>
+    </div>
+
+    <!-- Manage Config & System View -->
+    <div id="view-manage" style="display:none">
+      <div class="manage-bar">
+        <div class="tabs">
+          <button class="tab active" id="mtab-hosts" onclick="setManageTab('hosts')">Hosts</button>
+          <button class="tab" id="mtab-services" onclick="setManageTab('services')">Services</button>
+          <button class="tab" id="mtab-commands" onclick="setManageTab('commands')">Commands</button>
+          <button class="tab" id="mtab-groups" onclick="setManageTab('groups')">Groups & Contacts</button>
+          <button class="tab" id="mtab-system" onclick="setManageTab('system')">System & Backups</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm" id="m-add-btn" onclick="openAddModal()">+ Add New</button>
+          <button class="btn btn-sm" onclick="runValidate(false)">Validate (nagios -v)</button>
+          <button class="btn btn-sm primary" onclick="runValidate(true)">Apply & Reload</button>
+        </div>
+      </div>
+      <pre class="console-out" id="validate-console"></pre>
+      <div id="manage-content"></div>
     </div>
   </section>
 </div>
+
+<!-- Detail Slide-Over Drawer -->
+<div class="drawer-wrap" id="drawer-wrap" onclick="if(event.target===this)closeDrawer()">
+  <div class="drawer" id="drawer-body"></div>
+</div>
+
+<!-- Reusable Modal -->
+<div class="backdrop" id="modal-backdrop" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal-content"></div>
+</div>
+
 <div id="toast"></div>
 
 <script>
-const state = { tab: 'services', offset: 0, total: 0, auto: true, timer: null };
+const S = {
+  tab: 'services',
+  manageTab: 'hosts',
+  offset: 0,
+  total: 0,
+  auto: true,
+  groupByHost: false,
+  summary: null,
+  hostgroups: [],
+  servicegroups: [],
+  managed: { enabled: false, pending_changes: false, config: { hosts:[], services:[], commands:[], contacts:[], hostgroups:[], servicegroups:[] } },
+  lastItems: []
+};
 
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
@@ -291,59 +455,70 @@ function applyTheme(t) {
   localStorage.setItem('encore-theme', t);
 }
 applyTheme(localStorage.getItem('encore-theme') || 'light');
-function toggleTheme() {
-  applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
-}
+function toggleTheme() { applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); }
+
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
+    e.preventDefault();
+    const inp = document.getElementById('search-input');
+    if (inp) inp.focus();
+  } else if (e.key === 'Escape') {
+    closeDrawer();
+    closeModal();
+  }
+});
 
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 2600);
+  el._t = setTimeout(() => el.classList.remove('show'), 2800);
 }
-
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function relTime(ts) {
   if (!ts) return 'never';
-  const d = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+  const d = Math.max(0, Math.floor(Date.now()/1000) - ts);
   if (d < 60) return d + 's ago';
-  if (d < 3600) return Math.floor(d / 60) + 'm ago';
-  if (d < 86400) return Math.floor(d / 3600) + 'h ago';
-  return Math.floor(d / 86400) + 'd ago';
+  if (d < 3600) return Math.floor(d/60) + 'm ago';
+  if (d < 86400) return Math.floor(d/3600) + 'h ago';
+  return Math.floor(d/86400) + 'd ago';
 }
-
+function durStr(ts) {
+  if (!ts) return '-';
+  const d = Math.max(0, Math.floor(Date.now()/1000) - ts);
+  const days = Math.floor(d/86400), hrs = Math.floor((d%86400)/3600), mins = Math.floor((d%3600)/60);
+  if (days > 0) return `${days}d ${hrs}h`;
+  if (hrs > 0) return `${hrs}h ${mins}m`;
+  return `${mins}m ${d%60}s`;
+}
 function hostBadge(h) {
   if (!h.has_been_checked) return '<span class="badge c-pend">PENDING</span>';
-  const map = { 0: ['UP','c-ok'], 1: ['DOWN','c-crit'], 2: ['UNREACH','c-warn'] };
-  const [lbl, cls] = map[h.current_state] || ['UNK','c-unk'];
-  return `<span class="badge ${cls}">${lbl}</span>`;
+  const m = {0:['UP','c-ok'],1:['DOWN','c-crit'],2:['UNREACH','c-warn']};
+  const [l,c] = m[h.current_state] || ['UNK','c-unk'];
+  return `<span class="badge ${c}">${l}</span>`;
 }
-
 function svcBadge(s) {
   if (!s.has_been_checked) return '<span class="badge c-pend">PENDING</span>';
-  const map = { 0: ['OK','c-ok'], 1: ['WARN','c-warn'], 2: ['CRIT','c-crit'], 3: ['UNK','c-unk'] };
-  const [lbl, cls] = map[s.current_state] || ['UNK','c-unk'];
-  return `<span class="badge ${cls}">${lbl}</span>`;
+  const m = {0:['OK','c-ok'],1:['WARN','c-warn'],2:['CRIT','c-crit'],3:['UNK','c-unk']};
+  const [l,c] = m[s.current_state] || ['UNK','c-unk'];
+  return `<span class="badge ${c}">${l}</span>`;
 }
-
 function flagsHTML(o) {
   let out = '';
   if (o.acknowledged) out += '<span class="flag-tag">ACK</span>';
   if (o.downtime_depth > 0) out += '<span class="flag-tag">DT</span>';
   if (o.is_flapping) out += '<span class="flag-tag">FLAP</span>';
+  if (o.state_type === 0 && o.current_state > 0) out += '<span class="flag-tag">SOFT</span>';
   return out ? `<span class="flags">${out}</span>` : '';
 }
 
 function populateStateSelect() {
   const sel = document.getElementById('state-select');
   const cur = sel.value;
-  if (state.tab === 'hosts') {
+  if (S.tab === 'hosts') {
     sel.innerHTML = '<option value="">All Host States</option><option value="0">UP</option><option value="1">DOWN</option><option value="2">UNREACHABLE</option>';
-  } else if (state.tab === 'problems') {
+  } else if (S.tab === 'problems') {
     sel.innerHTML = '<option value="2">CRITICAL</option><option value="1">WARNING</option><option value="3">UNKNOWN</option>';
   } else {
     sel.innerHTML = '<option value="">All Service States</option><option value="0">OK</option><option value="1">WARNING</option><option value="2">CRITICAL</option><option value="3">UNKNOWN</option>';
@@ -352,168 +527,669 @@ function populateStateSelect() {
 }
 
 function setTab(tab) {
-  state.tab = tab;
-  state.offset = 0;
-  ['services','hosts','problems'].forEach(t => {
+  S.tab = tab;
+  S.offset = 0;
+  ['services','hosts','problems','groups','downtimes','manage'].forEach(t => {
     document.getElementById('tab-' + t).classList.toggle('active', t === tab);
   });
-  populateStateSelect();
-  loadTable();
+  const isTable = ['services','hosts','problems'].includes(tab);
+  document.getElementById('monitor-filters').style.display = isTable ? 'flex' : 'none';
+  document.getElementById('sg-select').style.display = tab === 'hosts' ? 'none' : '';
+  document.getElementById('group-view-btn').style.display = tab === 'hosts' ? 'none' : '';
+  document.getElementById('view-table').style.display = isTable ? 'block' : 'none';
+  document.getElementById('view-groups').style.display = tab === 'groups' ? 'block' : 'none';
+  document.getElementById('view-downtimes').style.display = tab === 'downtimes' ? 'block' : 'none';
+  document.getElementById('view-manage').style.display = tab === 'manage' ? 'block' : 'none';
+
+  if (isTable) { populateStateSelect(); loadTable(); }
+  else if (tab === 'groups') loadGroups();
+  else if (tab === 'downtimes') loadDowntimes();
+  else if (tab === 'manage') loadManage();
 }
 
 function quickFilter(tab, stateVal) {
+  document.getElementById('unhandled-chk').checked = false;
   setTab(tab);
   document.getElementById('state-select').value = stateVal;
   loadTable();
 }
-
-function onFilterChange() {
-  state.offset = 0;
+function quickUnhandled(tab) {
+  setTab(tab);
+  document.getElementById('state-select').value = '';
+  document.getElementById('unhandled-chk').checked = true;
   loadTable();
 }
-
+function jumpToGroup(type, name) {
+  document.getElementById('hg-select').value = type === 'hg' ? name : '';
+  document.getElementById('sg-select').value = type === 'sg' ? name : '';
+  setTab('services');
+}
+function toggleGroupByHost() {
+  S.groupByHost = !S.groupByHost;
+  document.getElementById('group-view-btn').classList.toggle('active', S.groupByHost);
+  loadTable();
+}
+function onFilterChange() { S.offset = 0; loadTable(); }
 function changePage(dir) {
   const limit = Number(document.getElementById('limit-select').value);
-  const next = state.offset + dir * limit;
-  if (next < 0 || next >= state.total) return;
-  state.offset = next;
+  const next = S.offset + dir * limit;
+  if (next < 0 || next >= S.total) return;
+  S.offset = next;
   loadTable();
+}
+function toggleAuto() {
+  S.auto = !S.auto;
+  const b = document.getElementById('auto-btn');
+  b.classList.toggle('active', S.auto);
+  b.textContent = S.auto ? 'Auto 3s' : 'Paused';
 }
 
 async function sendCmd(cmd, label) {
   try {
     const res = await fetch('/api/v1/command', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: cmd })
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({command: cmd})
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || res.statusText);
     toast(label + ' queued');
     setTimeout(refreshAll, 700);
-  } catch (e) {
-    toast('Command failed: ' + e.message);
-  }
-}
-
-function forceHost(name) {
-  sendCmd(`SCHEDULE_FORCED_HOST_CHECK;${name};${Math.floor(Date.now()/1000)}`, `Force check ${name}`);
-}
-function forceSvc(host, desc) {
-  sendCmd(`SCHEDULE_FORCED_SVC_CHECK;${host};${desc};${Math.floor(Date.now()/1000)}`, `Force check ${host}/${desc}`);
-}
-function ackSvc(host, desc) {
-  sendCmd(`ACKNOWLEDGE_SVC_PROBLEM;${host};${desc};1;0;1;encore-ui;Acknowledged via Encore Dashboard`, `ACK ${host}/${desc}`);
-}
-function dtSvc(host, desc) {
-  const now = Math.floor(Date.now()/1000);
-  sendCmd(`SCHEDULE_SVC_DOWNTIME;${host};${desc};${now};${now+3600};1;0;0;encore-ui;1h maintenance`, `1h downtime ${host}/${desc}`);
+  } catch (e) { toast('Error: ' + e.message); }
 }
 
 async function loadMeta() {
-  const [hRes, sRes] = await Promise.all([fetch('/health'), fetch('/api/v1/summary')]);
+  const [hRes, sRes, hgRes, sgRes] = await Promise.all([
+    fetch('/health'), fetch('/api/v1/summary'), fetch('/api/v1/hostgroups'), fetch('/api/v1/servicegroups')
+  ]);
   const health = await hRes.json();
   const sum = await sRes.json();
+  const hgData = await hgRes.json();
+  const sgData = await sgRes.json();
+  S.summary = sum;
+  S.hostgroups = hgData.hostgroups || [];
+  S.servicegroups = sgData.servicegroups || [];
 
   const dot = document.getElementById('conn-dot');
   dot.classList.toggle('off', !health.connected);
   document.getElementById('conn-label').textContent = health.connected ? 'Live' : 'Reconnecting';
   document.getElementById('events-pill').textContent = (health.events_applied || 0).toLocaleString() + ' events';
-  document.getElementById('sub-meta').textContent =
-    `PID ${sum.program.pid} • Updated ${new Date().toLocaleTimeString()}`;
+  document.getElementById('pending-pill').style.display = health.pending_changes ? 'inline-flex' : 'none';
+  document.getElementById('sub-meta').textContent = `PID ${sum.program.pid} • Updated ${new Date().toLocaleTimeString()}`;
 
   document.getElementById('h-total').textContent = sum.hosts.total;
   document.getElementById('h-up').textContent = sum.hosts.up;
   document.getElementById('h-down').textContent = sum.hosts.down;
   document.getElementById('h-unreach').textContent = sum.hosts.unreachable;
   document.getElementById('h-pend').textContent = sum.hosts.pending;
+  const hu = document.getElementById('h-unhandled-badge');
+  hu.style.display = sum.hosts.unhandled > 0 ? 'inline-flex' : 'none';
+  hu.textContent = sum.hosts.unhandled + ' unhandled';
 
   document.getElementById('s-total').textContent = sum.services.total;
   document.getElementById('s-ok').textContent = sum.services.ok;
   document.getElementById('s-warn').textContent = sum.services.warning;
   document.getElementById('s-crit').textContent = sum.services.critical;
   document.getElementById('s-unk').textContent = sum.services.unknown;
+  const su = document.getElementById('s-unhandled-badge');
+  su.style.display = sum.services.unhandled > 0 ? 'inline-flex' : 'none';
+  su.textContent = sum.services.unhandled + ' unhandled';
+
+  const tot = sum.services.total || 1;
+  const pct = Math.round((sum.services.ok / tot) * 100);
+  document.getElementById('health-pct').textContent = pct + '%';
+  document.getElementById('health-bar').innerHTML =
+    `<div class="bar-ok" style="width:${(sum.services.ok/tot)*100}%"></div>` +
+    `<div class="bar-warn" style="width:${(sum.services.warning/tot)*100}%"></div>` +
+    `<div class="bar-crit" style="width:${(sum.services.critical/tot)*100}%"></div>` +
+    `<div class="bar-unk" style="width:${(sum.services.unknown/tot)*100}%"></div>`;
+  document.getElementById('daemon-flags').textContent =
+    `Checks: ${sum.program.execute_service_checks ? 'ON' : 'OFF'} • Notify: ${sum.program.notifications_enabled ? 'ON' : 'OFF'}`;
+
+  // Sync group dropdowns without losing selection
+  syncSelect('hg-select', 'All Hostgroups', S.hostgroups.map(g => g.group_name));
+  syncSelect('sg-select', 'All Servicegroups', S.servicegroups.map(g => g.group_name));
+}
+
+function syncSelect(id, allLabel, names) {
+  const sel = document.getElementById(id);
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">${allLabel}</option>` + names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if (names.includes(cur)) sel.value = cur;
 }
 
 async function loadTable() {
   const q = document.getElementById('search-input').value.trim();
   const st = document.getElementById('state-select').value;
+  const hg = document.getElementById('hg-select').value;
+  const sg = document.getElementById('sg-select').value;
+  const sort = document.getElementById('sort-select').value;
+  const unhandled = document.getElementById('unhandled-chk').checked;
   const limit = Number(document.getElementById('limit-select').value);
-  const params = new URLSearchParams({ limit, offset: state.offset });
+
+  const params = new URLSearchParams({ limit, offset: S.offset, sort });
   if (q) params.set('search', q);
   if (st !== '') params.set('state', st);
+  if (hg) params.set('hostgroup', hg);
+  if (sg && S.tab !== 'hosts') params.set('servicegroup', sg);
+  if (unhandled) params.set('unhandled', '1');
 
   const head = document.getElementById('tbl-head');
   const body = document.getElementById('tbl-body');
 
-  if (state.tab === 'hosts') {
-    head.innerHTML = '<tr><th>Status</th><th>Host</th><th>Attempt</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
+  if (S.tab === 'hosts') {
+    head.innerHTML = '<tr><th>Status</th><th>Host</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
     const data = await (await fetch('/api/v1/hosts?' + params)).json();
-    state.total = data.total;
+    S.total = data.total;
+    S.lastItems = data.hosts;
     if (!data.hosts.length) {
       body.innerHTML = '<tr><td colspan="6" class="empty">No matching hosts</td></tr>';
     } else {
-      body.innerHTML = data.hosts.map(h => `
-        <tr>
+      body.innerHTML = data.hosts.map((h, idx) => `
+        <tr class="clickable" onclick="openHostDrawer(${idx})">
           <td>${hostBadge(h)}</td>
           <td><div class="name-primary">${esc(h.name)}${flagsHTML(h)}</div><div class="name-sub">${esc(h.address)}</div></td>
-          <td class="mono">${h.current_attempt}/${h.max_attempts}</td>
+          <td class="mono">${durStr(h.last_state_change)}</td>
           <td class="mono">${relTime(h.last_check)}</td>
           <td class="output-cell" title="${esc(h.plugin_output)}">${esc(h.plugin_output || '-')}</td>
-          <td class="actions">
-            <button class="icon-btn" title="Force check" onclick="forceHost('${esc(h.name)}')">↻</button>
+          <td class="actions" onclick="event.stopPropagation()">
+            <button class="icon-btn" title="Force check" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${esc(h.name)};'+Math.floor(Date.now()/1000),'Force check ${esc(h.name)}')">↻</button>
+            <button class="icon-btn" title="Downtime" onclick="openDowntimeModal('host','${esc(h.name)}','')">⏱</button>
           </td>
         </tr>`).join('');
     }
   } else {
-    head.innerHTML = '<tr><th>Status</th><th>Host / Service</th><th>Attempt</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
+    head.innerHTML = '<tr><th>Status</th><th>Host / Service</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
     const data = await (await fetch('/api/v1/services?' + params)).json();
-    state.total = data.total;
+    S.total = data.total;
+    S.lastItems = data.services;
     if (!data.services.length) {
       body.innerHTML = '<tr><td colspan="6" class="empty">No matching services</td></tr>';
     } else {
-      body.innerHTML = data.services.map(s => `
-        <tr>
+      let html = '';
+      let lastHost = null;
+      data.services.forEach((s, idx) => {
+        if (S.groupByHost && s.host_name !== lastHost) {
+          lastHost = s.host_name;
+          html += `<tr class="group-row"><td colspan="6">${esc(s.host_name)}</td></tr>`;
+        }
+        html += `
+        <tr class="clickable" onclick="openSvcDrawer(${idx})">
           <td>${svcBadge(s)}</td>
-          <td><div class="name-primary">${esc(s.description)}${flagsHTML(s)}</div><div class="name-sub">${esc(s.host_name)}</div></td>
-          <td class="mono">${s.current_attempt}/${s.max_attempts}</td>
+          <td><div class="name-primary">${esc(s.description)}${flagsHTML(s)}</div>${S.groupByHost ? '' : `<div class="name-sub">${esc(s.host_name)}</div>`}</td>
+          <td class="mono">${durStr(s.last_state_change)}</td>
           <td class="mono">${relTime(s.last_check)}</td>
           <td class="output-cell" title="${esc(s.plugin_output)}">${esc(s.plugin_output || '-')}</td>
-          <td class="actions">
-            <button class="icon-btn" title="Force check" onclick="forceSvc('${esc(s.host_name)}','${esc(s.description)}')">↻</button>
-            ${s.current_state > 0 && !s.acknowledged ? `<button class="icon-btn" title="Acknowledge" onclick="ackSvc('${esc(s.host_name)}','${esc(s.description)}')">✓</button>` : ''}
-            <button class="icon-btn" title="1h Downtime" onclick="dtSvc('${esc(s.host_name)}','${esc(s.description)}')">⏱</button>
+          <td class="actions" onclick="event.stopPropagation()">
+            <button class="icon-btn" title="Force check" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${esc(s.host_name)};${esc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻</button>
+            ${s.current_state > 0 && !s.acknowledged ? `<button class="icon-btn" title="Acknowledge" onclick="openAckModal('service','${esc(s.host_name)}','${esc(s.description)}')">✓</button>` : ''}
+            <button class="icon-btn" title="Downtime" onclick="openDowntimeModal('service','${esc(s.host_name)}','${esc(s.description)}')">⏱</button>
           </td>
-        </tr>`).join('');
+        </tr>`;
+      });
+      body.innerHTML = html;
     }
   }
 
-  const start = state.total ? state.offset + 1 : 0;
-  const end = Math.min(state.offset + limit, state.total);
-  document.getElementById('pager-info').textContent = `Showing ${start}–${end} of ${state.total.toLocaleString()}`;
-  document.getElementById('prev-btn').disabled = state.offset === 0;
-  document.getElementById('next-btn').disabled = end >= state.total;
+  const start = S.total ? S.offset + 1 : 0;
+  const end = Math.min(S.offset + limit, S.total);
+  document.getElementById('pager-info').textContent = `Showing ${start}–${end} of ${S.total.toLocaleString()}`;
+  document.getElementById('prev-btn').disabled = S.offset === 0;
+  document.getElementById('next-btn').disabled = end >= S.total;
+}
+
+function loadGroups() {
+  const hgEl = document.getElementById('hg-cards');
+  const sgEl = document.getElementById('sg-cards');
+  hgEl.innerHTML = S.hostgroups.length ? S.hostgroups.map(g => {
+    const t = g.services.total || 1;
+    return `<div class="gcard" onclick="jumpToGroup('hg','${esc(g.group_name)}')">
+      <h3>${esc(g.group_name)}</h3><p>${esc(g.alias || '')} • ${g.hosts.total} hosts, ${g.services.total} services</p>
+      <div class="bar"><div class="bar-ok" style="width:${(g.services.ok/t)*100}%"></div><div class="bar-warn" style="width:${(g.services.warning/t)*100}%"></div><div class="bar-crit" style="width:${(g.services.critical/t)*100}%"></div></div>
+      <div class="mono">UP:${g.hosts.up} DOWN:${g.hosts.down} | OK:${g.services.ok} WARN:${g.services.warning} CRIT:${g.services.critical}</div>
+    </div>`;
+  }).join('') : '<div class="empty">No hostgroups defined</div>';
+
+  sgEl.innerHTML = S.servicegroups.length ? S.servicegroups.map(g => {
+    const t = g.services.total || 1;
+    return `<div class="gcard" onclick="jumpToGroup('sg','${esc(g.group_name)}')">
+      <h3>${esc(g.group_name)}</h3><p>${esc(g.alias || '')} • ${g.services.total} services</p>
+      <div class="bar"><div class="bar-ok" style="width:${(g.services.ok/t)*100}%"></div><div class="bar-warn" style="width:${(g.services.warning/t)*100}%"></div><div class="bar-crit" style="width:${(g.services.critical/t)*100}%"></div></div>
+      <div class="mono">OK:${g.services.ok} WARN:${g.services.warning} CRIT:${g.services.critical} UNK:${g.services.unknown}</div>
+    </div>`;
+  }).join('') : '<div class="empty">No servicegroups defined</div>';
+}
+
+async function loadDowntimes() {
+  const data = await (await fetch('/api/v1/downtimes')).json();
+  const dts = data.downtimes || [];
+  const body = document.getElementById('dt-body');
+  if (!dts.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">No active or scheduled downtimes</td></tr>';
+    return;
+  }
+  body.innerHTML = dts.map(d => {
+    const isSvc = d.type === 1;
+    const delCmd = isSvc ? `DEL_SVC_DOWNTIME;${d.downtime_id}` : `DEL_HOST_DOWNTIME;${d.downtime_id}`;
+    return `<tr>
+      <td class="mono">#${d.downtime_id}</td>
+      <td><div class="name-primary">${esc(d.host_name)}</div>${d.service_description ? `<div class="name-sub">${esc(d.service_description)}</div>` : ''}</td>
+      <td class="mono">${new Date(d.start_time*1000).toLocaleString()} → ${new Date(d.end_time*1000).toLocaleString()}</td>
+      <td>${d.is_in_effect ? '<span class="badge c-warn">ACTIVE</span>' : '<span class="badge c-pend">SCHEDULED</span>'}</td>
+      <td><b>${esc(d.author)}</b>: ${esc(d.comment)}</td>
+      <td class="actions"><button class="btn btn-sm danger" onclick="sendCmd('${delCmd}','Cancel downtime #${d.downtime_id}')">Cancel</button></td>
+    </tr>`;
+  }).join('');
+}
+
+/* Detail Drawer */
+function parsePerfData(pd) {
+  if (!pd) return '';
+  return pd.trim().split(/\s+/).filter(Boolean).map(tok => `<span class="perf-chip">${esc(tok)}</span>`).join('');
+}
+function openHostDrawer(idx) {
+  const h = S.lastItems[idx]; if (!h) return;
+  document.getElementById('drawer-body').innerHTML = `
+    <div class="drawer-head">
+      <div>${hostBadge(h)} ${flagsHTML(h)}<h2 style="margin-top:6px">${esc(h.name)}</h2><div class="name-sub">${esc(h.address)}</div></div>
+      <button class="btn btn-sm" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="kv-grid">
+      <div class="kv-box"><div class="k">State Type</div><div class="v">${h.state_type === 1 ? 'HARD' : 'SOFT'} (${h.current_attempt}/${h.max_attempts})</div></div>
+      <div class="kv-box"><div class="k">State Duration</div><div class="v">${durStr(h.last_state_change)}</div></div>
+      <div class="kv-box"><div class="k">Last Check</div><div class="v">${relTime(h.last_check)}</div></div>
+      <div class="kv-box"><div class="k">Latency / Exec</div><div class="v">${h.latency.toFixed(3)}s / ${h.execution_time.toFixed(3)}s</div></div>
+    </div>
+    <div class="kv-box" style="margin-bottom:10px"><div class="k">Plugin Output</div><div class="mono" style="margin-top:4px;white-space:pre-wrap;color:var(--text)">${esc(h.plugin_output || '-')}</div></div>
+    ${h.perf_data ? `<div class="kv-box" style="margin-bottom:12px"><div class="k">Performance Data</div><div class="perf-chips">${parsePerfData(h.perf_data)}</div></div>` : ''}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:14px">
+      <button class="btn btn-sm primary" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${esc(h.name)};'+Math.floor(Date.now()/1000),'Force check')">↻ Force Check</button>
+      ${h.current_state > 0 && !h.acknowledged ? `<button class="btn btn-sm" onclick="closeDrawer();openAckModal('host','${esc(h.name)}','')">✓ Acknowledge</button>` : ''}
+      ${h.acknowledged ? `<button class="btn btn-sm" onclick="sendCmd('REMOVE_HOST_ACKNOWLEDGEMENT;${esc(h.name)}','Remove ACK')">Remove ACK</button>` : ''}
+      <button class="btn btn-sm" onclick="closeDrawer();openDowntimeModal('host','${esc(h.name)}','')">⏱ Schedule Downtime</button>
+      <button class="btn btn-sm" onclick="sendCmd('DISABLE_HOST_CHECK;${esc(h.name)}','Disable host check')">Disable Check</button>
+      <button class="btn btn-sm" onclick="sendCmd('ENABLE_HOST_CHECK;${esc(h.name)}','Enable host check')">Enable Check</button>
+    </div>`;
+  document.getElementById('drawer-wrap').classList.add('open');
+}
+function openSvcDrawer(idx) {
+  const s = S.lastItems[idx]; if (!s) return;
+  document.getElementById('drawer-body').innerHTML = `
+    <div class="drawer-head">
+      <div>${svcBadge(s)} ${flagsHTML(s)}<h2 style="margin-top:6px">${esc(s.description)}</h2><div class="name-sub">${esc(s.host_name)}</div></div>
+      <button class="btn btn-sm" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="kv-grid">
+      <div class="kv-box"><div class="k">State Type</div><div class="v">${s.state_type === 1 ? 'HARD' : 'SOFT'} (${s.current_attempt}/${s.max_attempts})</div></div>
+      <div class="kv-box"><div class="k">State Duration</div><div class="v">${durStr(s.last_state_change)}</div></div>
+      <div class="kv-box"><div class="k">Last Check</div><div class="v">${relTime(s.last_check)}</div></div>
+      <div class="kv-box"><div class="k">Latency / Exec</div><div class="v">${s.latency.toFixed(3)}s / ${s.execution_time.toFixed(3)}s</div></div>
+    </div>
+    <div class="kv-box" style="margin-bottom:10px"><div class="k">Plugin Output</div><div class="mono" style="margin-top:4px;white-space:pre-wrap;color:var(--text)">${esc(s.plugin_output || '-')}</div></div>
+    ${s.perf_data ? `<div class="kv-box" style="margin-bottom:12px"><div class="k">Performance Data</div><div class="perf-chips">${parsePerfData(s.perf_data)}</div></div>` : ''}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:14px">
+      <button class="btn btn-sm primary" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${esc(s.host_name)};${esc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻ Force Check</button>
+      ${s.current_state > 0 && !s.acknowledged ? `<button class="btn btn-sm" onclick="closeDrawer();openAckModal('service','${esc(s.host_name)}','${esc(s.description)}')">✓ Acknowledge</button>` : ''}
+      ${s.acknowledged ? `<button class="btn btn-sm" onclick="sendCmd('REMOVE_SVC_ACKNOWLEDGEMENT;${esc(s.host_name)};${esc(s.description)}','Remove ACK')">Remove ACK</button>` : ''}
+      <button class="btn btn-sm" onclick="closeDrawer();openDowntimeModal('service','${esc(s.host_name)}','${esc(s.description)}')">⏱ Schedule Downtime</button>
+      <button class="btn btn-sm" onclick="sendCmd('DISABLE_SVC_CHECK;${esc(s.host_name)};${esc(s.description)}','Disable check')">Disable Check</button>
+      <button class="btn btn-sm" onclick="sendCmd('ENABLE_SVC_CHECK;${esc(s.host_name)};${esc(s.description)}','Enable check')">Enable Check</button>
+    </div>`;
+  document.getElementById('drawer-wrap').classList.add('open');
+}
+function closeDrawer() { document.getElementById('drawer-wrap').classList.remove('open'); }
+
+/* Operational Modals */
+function openModal(html) {
+  document.getElementById('modal-content').innerHTML = html;
+  document.getElementById('modal-backdrop').classList.add('open');
+}
+function closeModal() { document.getElementById('modal-backdrop').classList.remove('open'); }
+
+function openAckModal(kind, host, desc) {
+  openModal(`<h2>Acknowledge ${kind === 'host' ? host : host + ' / ' + desc}</h2>
+    <div class="form-row"><label>Comment</label><input id="m-ack-cmt" type="text" value="Acknowledged via Encore Dashboard"></div>
+    <div style="display:flex;gap:14px;margin:8px 0">
+      <label class="chk-pill"><input type="checkbox" id="m-ack-sticky" checked> Sticky</label>
+      <label class="chk-pill"><input type="checkbox" id="m-ack-notify"> Send Notification</label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="submitAck('${kind}','${esc(host)}','${esc(desc)}')">Acknowledge</button>
+    </div>`);
+}
+function submitAck(kind, host, desc) {
+  const cmt = document.getElementById('m-ack-cmt').value.trim() || 'Acknowledged';
+  const sticky = document.getElementById('m-ack-sticky').checked ? 2 : 1;
+  const notify = document.getElementById('m-ack-notify').checked ? 1 : 0;
+  const cmd = kind === 'host'
+    ? `ACKNOWLEDGE_HOST_PROBLEM;${host};${sticky};${notify};1;encore-ui;${cmt}`
+    : `ACKNOWLEDGE_SVC_PROBLEM;${host};${desc};${sticky};${notify};1;encore-ui;${cmt}`;
+  closeModal();
+  sendCmd(cmd, 'Acknowledge');
+}
+
+function openDowntimeModal(kind, host, desc) {
+  openModal(`<h2>Schedule Downtime — ${kind === 'host' ? host : host + ' / ' + desc}</h2>
+    <div class="form-row"><label>Duration (minutes)</label>
+      <div class="presets">
+        <button class="btn btn-sm" onclick="document.getElementById('m-dt-min').value=30">30m</button>
+        <button class="btn btn-sm" onclick="document.getElementById('m-dt-min').value=60">1h</button>
+        <button class="btn btn-sm" onclick="document.getElementById('m-dt-min').value=240">4h</button>
+        <button class="btn btn-sm" onclick="document.getElementById('m-dt-min').value=1440">24h</button>
+      </div>
+      <input id="m-dt-min" type="number" value="60" min="1">
+    </div>
+    <div class="form-row"><label>Comment</label><input id="m-dt-cmt" type="text" value="Scheduled maintenance"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="submitDowntime('${kind}','${esc(host)}','${esc(desc)}')">Schedule</button>
+    </div>`);
+}
+function submitDowntime(kind, host, desc) {
+  const mins = Math.max(1, Number(document.getElementById('m-dt-min').value) || 60);
+  const cmt = document.getElementById('m-dt-cmt').value.trim() || 'Maintenance';
+  const now = Math.floor(Date.now()/1000);
+  const cmd = kind === 'host'
+    ? `SCHEDULE_HOST_DOWNTIME;${host};${now};${now+mins*60};1;0;0;encore-ui;${cmt}`
+    : `SCHEDULE_SVC_DOWNTIME;${host};${desc};${now};${now+mins*60};1;0;0;encore-ui;${cmt}`;
+  closeModal();
+  sendCmd(cmd, 'Schedule downtime');
+}
+
+/* Config Manager (Tahap M1 + M3 + Cloning) */
+function setManageTab(mt) {
+  S.manageTab = mt;
+  ['hosts','services','commands','groups','system'].forEach(t => {
+    document.getElementById('mtab-' + t).classList.toggle('active', t === mt);
+  });
+  document.getElementById('m-add-btn').style.display = mt === 'system' ? 'none' : 'inline-flex';
+  renderManageContent();
+}
+
+async function loadManage() {
+  const res = await fetch('/api/v1/config');
+  S.managed = await res.json();
+  renderManageContent();
+}
+
+async function renderManageContent() {
+  const el = document.getElementById('manage-content');
+  if (!S.managed.enabled && S.manageTab !== 'system') {
+    el.innerHTML = `<div class="empty">Config management is disabled.<br><br>Start <code>encore-state-gateway</code> with <code>-managed-dir /usr/local/nagios/etc/encore.d -nagios-bin /usr/local/nagios/bin/nagios -nagios-cfg /usr/local/nagios/etc/nagios.cfg</code> and add <code>cfg_dir=/usr/local/nagios/etc/encore.d</code> to <code>nagios.cfg</code>.</div>`;
+    return;
+  }
+  const c = S.managed.config;
+  if (S.manageTab === 'hosts') {
+    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Host</th><th>Address</th><th>Check Command</th><th>Hostgroups</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>` +
+      (c.hosts.length ? c.hosts.map((h, i) => `<tr>
+        <td><b>${esc(h.name)}</b><div class="name-sub">${esc(h.alias)}</div></td>
+        <td class="mono">${esc(h.address)}</td>
+        <td class="mono">${esc(h.check_command)}</td>
+        <td class="mono">${esc((h.hostgroups||[]).join(', ') || '-')}</td>
+        <td>${h.enabled ? '<span class="badge c-ok">ENABLED</span>' : '<span class="badge c-pend">DISABLED</span>'}</td>
+        <td class="actions">
+          <button class="btn btn-sm" onclick="openHostForm(${i})">Edit</button>
+          <button class="btn btn-sm" onclick="openCloneHostModal('${esc(h.name)}')">Clone</button>
+          <button class="btn btn-sm danger" onclick="deleteManagedHost('${esc(h.name)}')">Delete</button>
+        </td></tr>`).join('') : '<tr><td colspan="6" class="empty">No managed hosts yet. Click "+ Add New" to create one.</td></tr>') + '</tbody></table></div>';
+  } else if (S.manageTab === 'services') {
+    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Host</th><th>Service</th><th>Check Command</th><th>Groups</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>` +
+      (c.services.length ? c.services.map((s, i) => `<tr>
+        <td><b>${esc(s.host_name)}</b></td>
+        <td>${esc(s.service_description)}</td>
+        <td class="mono">${esc(s.check_command)}</td>
+        <td class="mono">${esc((s.servicegroups||[]).join(', ') || '-')}</td>
+        <td>${s.enabled ? '<span class="badge c-ok">ENABLED</span>' : '<span class="badge c-pend">DISABLED</span>'}</td>
+        <td class="actions">
+          <button class="btn btn-sm" onclick="openSvcForm(${i})">Edit</button>
+          <button class="btn btn-sm" onclick="openCloneSvcModal('${esc(s.host_name)}','${esc(s.service_description)}')">Clone</button>
+          <button class="btn btn-sm danger" onclick="deleteManagedSvc('${esc(s.host_name)}','${esc(s.service_description)}')">Delete</button>
+        </td></tr>`).join('') : '<tr><td colspan="6" class="empty">No managed services yet. Click "+ Add New" to create one.</td></tr>') + '</tbody></table></div>';
+  } else if (S.manageTab === 'commands') {
+    el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Command Name</th><th>Command Line</th><th style="text-align:right">Actions</th></tr></thead><tbody>` +
+      (c.commands.length ? c.commands.map((cmd, i) => `<tr>
+        <td><b>${esc(cmd.command_name)}</b></td>
+        <td class="mono">${esc(cmd.command_line)}</td>
+        <td class="actions">
+          <button class="btn btn-sm" onclick="openCmdForm(${i})">Edit</button>
+          <button class="btn btn-sm" onclick="openCmdForm(${i},true)">Clone</button>
+          <button class="btn btn-sm danger" onclick="deleteManagedItem('commands','name=${encodeURIComponent(cmd.command_name)}')">Delete</button>
+        </td></tr>`).join('') : '<tr><td colspan="3" class="empty">No managed commands yet.</td></tr>') + '</tbody></table></div>';
+  } else if (S.manageTab === 'groups') {
+    el.innerHTML = `
+      <div style="padding:14px 16px 6px;display:flex;justify-content:space-between;align-items:center"><b>Hostgroups</b><button class="btn btn-sm" onclick="openGroupForm('hostgroups')">+ Hostgroup</button></div>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Alias</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+        ${c.hostgroups.length ? c.hostgroups.map(g => `<tr><td><b>${esc(g.group_name)}</b></td><td>${esc(g.alias)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('hostgroups','name=${encodeURIComponent(g.group_name)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="3" class="empty">None</td></tr>'}
+      </tbody></table></div>
+      <div style="padding:14px 16px 6px;display:flex;justify-content:space-between;align-items:center"><b>Servicegroups</b><button class="btn btn-sm" onclick="openGroupForm('servicegroups')">+ Servicegroup</button></div>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Alias</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+        ${c.servicegroups.length ? c.servicegroups.map(g => `<tr><td><b>${esc(g.group_name)}</b></td><td>${esc(g.alias)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('servicegroups','name=${encodeURIComponent(g.group_name)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="3" class="empty">None</td></tr>'}
+      </tbody></table></div>
+      <div style="padding:14px 16px 6px;display:flex;justify-content:space-between;align-items:center"><b>Contacts</b><button class="btn btn-sm" onclick="openContactForm()">+ Contact</button></div>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Alias</th><th>Email</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+        ${c.contacts.length ? c.contacts.map(ct => `<tr><td><b>${esc(ct.contact_name)}</b></td><td>${esc(ct.alias)}</td><td class="mono">${esc(ct.email)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('contacts','name=${encodeURIComponent(ct.contact_name)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">None</td></tr>'}
+      </tbody></table></div>`;
+  } else if (S.manageTab === 'system') {
+    const [bRes, aRes] = await Promise.all([fetch('/api/v1/config/backups'), fetch('/api/v1/audit?limit=30')]);
+    const backups = (await bRes.json()).backups || [];
+    const audit = (await aRes.json()).entries || [];
+    const p = (S.summary && S.summary.program) || {};
+    el.innerHTML = `
+      <div class="toggle-grid">
+        <div class="toggle-card"><div><b>Notifications</b><div class="name-sub">${p.notifications_enabled ? 'Enabled' : 'Disabled'}</div></div>
+          <button class="btn btn-sm" onclick="sendCmd('${p.notifications_enabled ? 'DISABLE_NOTIFICATIONS' : 'ENABLE_NOTIFICATIONS'}','Toggle notifications')">${p.notifications_enabled ? 'Disable' : 'Enable'}</button></div>
+        <div class="toggle-card"><div><b>Active Service Checks</b><div class="name-sub">${p.execute_service_checks ? 'Enabled' : 'Disabled'}</div></div>
+          <button class="btn btn-sm" onclick="sendCmd('${p.execute_service_checks ? 'STOP_EXECUTING_SVC_CHECKS' : 'START_EXECUTING_SVC_CHECKS'}','Toggle service checks')">${p.execute_service_checks ? 'Stop' : 'Start'}</button></div>
+        <div class="toggle-card"><div><b>Active Host Checks</b><div class="name-sub">${p.execute_host_checks ? 'Enabled' : 'Disabled'}</div></div>
+          <button class="btn btn-sm" onclick="sendCmd('${p.execute_host_checks ? 'STOP_EXECUTING_HOST_CHECKS' : 'START_EXECUTING_HOST_CHECKS'}','Toggle host checks')">${p.execute_host_checks ? 'Stop' : 'Start'}</button></div>
+        <div class="toggle-card"><div><b>Flap Detection</b><div class="name-sub">${p.flap_detection_enabled ? 'Enabled' : 'Disabled'}</div></div>
+          <button class="btn btn-sm" onclick="sendCmd('${p.flap_detection_enabled ? 'DISABLE_FLAP_DETECTION' : 'ENABLE_FLAP_DETECTION'}','Toggle flap detection')">${p.flap_detection_enabled ? 'Disable' : 'Enable'}</button></div>
+      </div>
+      <div style="padding:8px 16px"><b>Config Backups (1-Click Rollback)</b></div>
+      <div class="table-wrap"><table><thead><tr><th>Backup File</th><th>Timestamp</th><th>Size</th><th style="text-align:right">Action</th></tr></thead><tbody>
+        ${backups.length ? backups.map(b => `<tr><td class="mono">${esc(b.name)}</td><td class="mono">${esc(b.timestamp)}</td><td class="mono">${b.size_bytes} B</td><td class="actions"><button class="btn btn-sm" onclick="rollbackBackup('${esc(b.name)}')">Rollback</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">No backups yet</td></tr>'}
+      </tbody></table></div>
+      <div style="padding:14px 16px 6px"><b>Recent Audit Log</b></div>
+      <div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead><tbody>
+        ${audit.length ? audit.map(a => `<tr><td class="mono">${esc(a.time)}</td><td><b>${esc(a.action)}</b></td><td class="mono">${esc(a.target)}</td><td class="mono">${esc(a.detail || '')}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No audit entries</td></tr>'}
+      </tbody></table></div>`;
+  }
+}
+
+function openAddModal() {
+  if (S.manageTab === 'hosts') openHostForm(-1);
+  else if (S.manageTab === 'services') openSvcForm(-1);
+  else if (S.manageTab === 'commands') openCmdForm(-1);
+  else if (S.manageTab === 'groups') openGroupForm('hostgroups');
+}
+
+function openHostForm(idx) {
+  const h = idx >= 0 ? S.managed.config.hosts[idx] : { name:'', alias:'', address:'', check_command:'check-host-alive', check_interval:5, retry_interval:1, max_check_attempts:3, check_period:'24x7', contacts:'', hostgroups:[], enabled:true };
+  openModal(`<h2>${idx >= 0 ? 'Edit Host' : 'Add Host'}</h2>
+    <div class="form-grid">
+      <div class="form-row"><label>Host Name *</label><input id="f-h-name" type="text" value="${esc(h.name)}" ${idx>=0?'readonly':''}></div>
+      <div class="form-row"><label>IP / Address *</label><input id="f-h-addr" type="text" value="${esc(h.address)}"></div>
+      <div class="form-row"><label>Alias</label><input id="f-h-alias" type="text" value="${esc(h.alias)}"></div>
+      <div class="form-row"><label>Check Command</label><input id="f-h-cmd" type="text" value="${esc(h.check_command)}"></div>
+      <div class="form-row"><label>Hostgroups (comma-separated)</label><input id="f-h-hg" type="text" value="${esc((h.hostgroups||[]).join(','))}"></div>
+      <div class="form-row"><label>Contacts</label><input id="f-h-ct" type="text" value="${esc(h.contacts)}"></div>
+      <div class="form-row"><label>Check Interval (min)</label><input id="f-h-int" type="number" value="${h.check_interval||5}"></div>
+      <div class="form-row"><label>Max Attempts</label><input id="f-h-att" type="number" value="${h.max_check_attempts||3}"></div>
+    </div>
+    <label class="chk-pill"><input type="checkbox" id="f-h-en" ${h.enabled!==false?'checked':''}> Enabled</label>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveHostForm()">Save Host</button></div>`);
+}
+async function saveHostForm() {
+  const payload = {
+    name: document.getElementById('f-h-name').value.trim(),
+    address: document.getElementById('f-h-addr').value.trim(),
+    alias: document.getElementById('f-h-alias').value.trim(),
+    check_command: document.getElementById('f-h-cmd').value.trim(),
+    hostgroups: document.getElementById('f-h-hg').value.split(',').map(x=>x.trim()).filter(Boolean),
+    contacts: document.getElementById('f-h-ct').value.trim(),
+    check_interval: Number(document.getElementById('f-h-int').value)||5,
+    retry_interval: 1,
+    max_check_attempts: Number(document.getElementById('f-h-att').value)||3,
+    check_period: '24x7',
+    enabled: document.getElementById('f-h-en').checked
+  };
+  await apiPost('/api/v1/config/hosts', payload, 'Host saved');
+}
+
+function openCloneHostModal(srcName) {
+  openModal(`<h2>Clone Host: ${esc(srcName)}</h2>
+    <div class="form-row"><label>New Host Name *</label><input id="c-h-name" type="text" placeholder="${esc(srcName)}-clone"></div>
+    <div class="form-row"><label>New IP / Address *</label><input id="c-h-addr" type="text" placeholder="10.0.0.x"></div>
+    <div class="form-row"><label>New Alias</label><input id="c-h-alias" type="text" placeholder="Optional"></div>
+    <label class="chk-pill"><input type="checkbox" id="c-h-svcs" checked> Clone all services belonging to ${esc(srcName)}</label>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitCloneHost('${esc(srcName)}')">Clone Host</button></div>`);
+}
+async function submitCloneHost(srcName) {
+  await apiPost('/api/v1/config/hosts/clone', {
+    source_name: srcName,
+    new_name: document.getElementById('c-h-name').value.trim(),
+    new_address: document.getElementById('c-h-addr').value.trim(),
+    new_alias: document.getElementById('c-h-alias').value.trim(),
+    include_services: document.getElementById('c-h-svcs').checked
+  }, 'Host cloned');
+}
+
+function openSvcForm(idx) {
+  const s = idx >= 0 ? S.managed.config.services[idx] : { host_name:'', service_description:'', check_command:'check_http', check_interval:5, retry_interval:1, max_check_attempts:3, check_period:'24x7', contacts:'', servicegroups:[], enabled:true };
+  const hostOpts = S.managed.config.hosts.map(h => `<option value="${esc(h.name)}">`).join('');
+  openModal(`<h2>${idx >= 0 ? 'Edit Service' : 'Add Service'}</h2>
+    <div class="presets">
+      <button class="btn btn-sm" onclick="applySvcPreset('HTTP','check_http')">Preset: HTTP</button>
+      <button class="btn btn-sm" onclick="applySvcPreset('TCP 443','check_tcp!443')">Preset: TCP</button>
+      <button class="btn btn-sm" onclick="applySvcPreset('PING','check_ping!100.0,20%!500.0,60%')">Preset: Ping</button>
+      <button class="btn btn-sm" onclick="applySvcPreset('SSH','check_ssh')">Preset: SSH</button>
+    </div>
+    <div class="form-grid">
+      <div class="form-row"><label>Host Name *</label><input id="f-s-host" list="managed-host-list" type="text" value="${esc(s.host_name)}"><datalist id="managed-host-list">${hostOpts}</datalist></div>
+      <div class="form-row"><label>Service Description *</label><input id="f-s-desc" type="text" value="${esc(s.service_description)}"></div>
+      <div class="form-row full"><label>Check Command *</label><input id="f-s-cmd" type="text" value="${esc(s.check_command)}"></div>
+      <div class="form-row"><label>Servicegroups (comma-separated)</label><input id="f-s-sg" type="text" value="${esc((s.servicegroups||[]).join(','))}"></div>
+      <div class="form-row"><label>Contacts</label><input id="f-s-ct" type="text" value="${esc(s.contacts)}"></div>
+      <div class="form-row"><label>Check Interval (min)</label><input id="f-s-int" type="number" value="${s.check_interval||5}"></div>
+      <div class="form-row"><label>Max Attempts</label><input id="f-s-att" type="number" value="${s.max_check_attempts||3}"></div>
+    </div>
+    <label class="chk-pill"><input type="checkbox" id="f-s-en" ${s.enabled!==false?'checked':''}> Enabled</label>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveSvcForm()">Save Service</button></div>`);
+}
+function applySvcPreset(desc, cmd) {
+  if (!document.getElementById('f-s-desc').value) document.getElementById('f-s-desc').value = desc;
+  document.getElementById('f-s-cmd').value = cmd;
+}
+async function saveSvcForm() {
+  await apiPost('/api/v1/config/services', {
+    host_name: document.getElementById('f-s-host').value.trim(),
+    service_description: document.getElementById('f-s-desc').value.trim(),
+    check_command: document.getElementById('f-s-cmd').value.trim(),
+    servicegroups: document.getElementById('f-s-sg').value.split(',').map(x=>x.trim()).filter(Boolean),
+    contacts: document.getElementById('f-s-ct').value.trim(),
+    check_interval: Number(document.getElementById('f-s-int').value)||5,
+    retry_interval: 1,
+    max_check_attempts: Number(document.getElementById('f-s-att').value)||3,
+    check_period: '24x7',
+    enabled: document.getElementById('f-s-en').checked
+  }, 'Service saved');
+}
+
+function openCloneSvcModal(srcHost, srcDesc) {
+  openModal(`<h2>Clone Service: ${esc(srcHost)} / ${esc(srcDesc)}</h2>
+    <div class="form-row"><label>Target Host Name *</label><input id="c-s-host" type="text" value="${esc(srcHost)}"></div>
+    <div class="form-row"><label>New Service Description *</label><input id="c-s-desc" type="text" value="${esc(srcDesc)}-copy"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitCloneSvc('${esc(srcHost)}','${esc(srcDesc)}')">Clone Service</button></div>`);
+}
+async function submitCloneSvc(srcHost, srcDesc) {
+  await apiPost('/api/v1/config/services/clone', {
+    source_host: srcHost, source_description: srcDesc,
+    target_host: document.getElementById('c-s-host').value.trim(),
+    target_description: document.getElementById('c-s-desc').value.trim()
+  }, 'Service cloned');
+}
+
+function openCmdForm(idx, isClone) {
+  const c = idx >= 0 ? S.managed.config.commands[idx] : { command_name:'', command_line:'$USER1$/check_http -H $HOSTADDRESS$' };
+  openModal(`<h2>${isClone ? 'Clone Command' : (idx>=0?'Edit Command':'Add Command')}</h2>
+    <div class="form-row"><label>Command Name *</label><input id="f-c-name" type="text" value="${esc(isClone ? c.command_name + '_copy' : c.command_name)}"></div>
+    <div class="form-row"><label>Command Line *</label><input id="f-c-line" type="text" value="${esc(c.command_line)}"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/commands',{command_name:document.getElementById('f-c-name').value.trim(),command_line:document.getElementById('f-c-line').value.trim()},'Command saved')">Save</button></div>`);
+}
+
+function openGroupForm(kind) {
+  openModal(`<h2>Add ${kind === 'hostgroups' ? 'Hostgroup' : 'Servicegroup'}</h2>
+    <div class="form-row"><label>Group Name *</label><input id="f-g-name" type="text"></div>
+    <div class="form-row"><label>Alias</label><input id="f-g-alias" type="text"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/${kind}',{group_name:document.getElementById('f-g-name').value.trim(),alias:document.getElementById('f-g-alias').value.trim()},'Group saved')">Save</button></div>`);
+}
+function openContactForm() {
+  openModal(`<h2>Add Contact</h2>
+    <div class="form-row"><label>Contact Name *</label><input id="f-ct-name" type="text"></div>
+    <div class="form-row"><label>Alias</label><input id="f-ct-alias" type="text"></div>
+    <div class="form-row"><label>Email</label><input id="f-ct-email" type="text"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/contacts',{contact_name:document.getElementById('f-ct-name').value.trim(),alias:document.getElementById('f-ct-alias').value.trim(),email:document.getElementById('f-ct-email').value.trim()},'Contact saved')">Save</button></div>`);
+}
+
+async function apiPost(url, payload, okMsg) {
+  try {
+    const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || res.statusText);
+    closeModal();
+    toast(okMsg + ' (click Apply & Reload to activate)');
+    await loadManage();
+    await loadMeta();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+async function deleteManagedHost(name) {
+  if (!confirm(`Delete host "${name}" and its managed services?`)) return;
+  await deleteManagedItem('hosts', 'name=' + encodeURIComponent(name));
+}
+async function deleteManagedSvc(host, desc) {
+  if (!confirm(`Delete service "${host}/${desc}"?`)) return;
+  await deleteManagedItem('services', `host=${encodeURIComponent(host)}&description=${encodeURIComponent(desc)}`);
+}
+async function deleteManagedItem(kind, qs) {
+  const res = await fetch(`/api/v1/config/${kind}?${qs}`, { method:'DELETE' });
+  const d = await res.json();
+  if (!res.ok) { toast('Error: ' + (d.error || res.statusText)); return; }
+  toast('Deleted (click Apply & Reload)');
+  await loadManage(); await loadMeta();
+}
+async function runValidate(apply) {
+  const con = document.getElementById('validate-console');
+  con.style.display = 'block';
+  con.textContent = apply ? 'Validating and applying config...' : 'Running nagios -v...';
+  const res = await fetch(apply ? '/api/v1/config/apply' : '/api/v1/config/validate', { method:'POST' });
+  const d = await res.json();
+  con.textContent = (d.error ? 'ERROR: ' + d.error + '\n\n' : 'OK\n\n') + (d.output || '');
+  toast(res.ok ? (apply ? 'Applied & Nagios reloading!' : 'Config valid!') : 'Validation failed');
+  if (res.ok && apply) { await loadManage(); setTimeout(refreshAll, 1500); }
+}
+async function rollbackBackup(name) {
+  if (!confirm(`Rollback managed config to ${name}?`)) return;
+  const res = await fetch('/api/v1/config/rollback', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({backup:name}) });
+  const d = await res.json();
+  toast(res.ok ? 'Rolled back & reloading!' : ('Rollback failed: ' + d.error));
+  if (res.ok) { await loadManage(); setTimeout(refreshAll, 1500); }
 }
 
 async function refreshAll() {
   try {
-    await Promise.all([loadMeta(), loadTable()]);
+    await loadMeta();
+    if (['services','hosts','problems'].includes(S.tab)) await loadTable();
+    else if (S.tab === 'groups') loadGroups();
+    else if (S.tab === 'downtimes') await loadDowntimes();
   } catch (e) {
     document.getElementById('conn-dot').classList.add('off');
     document.getElementById('conn-label').textContent = 'Offline';
   }
 }
 
-function toggleAuto() {
-  state.auto = !state.auto;
-  const btn = document.getElementById('auto-btn');
-  btn.classList.toggle('active', state.auto);
-  btn.textContent = state.auto ? 'Auto 3s' : 'Paused';
-}
-
 populateStateSelect();
 refreshAll();
-state.timer = setInterval(() => { if (state.auto) refreshAll(); }, 3000);
+setInterval(() => { if (S.auto) refreshAll(); }, 3000);
 </script>
 </body>
 </html>
