@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -22,6 +23,9 @@ import (
 	"syscall"
 	"time"
 )
+
+//go:embed web/index.html
+var dashboardHTML []byte
 
 type ProgramInfo struct {
 	PID          int   `json:"pid"`
@@ -417,6 +421,16 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func newHTTPHandler(store *StateStore, cmdPipePath string) http.Handler {
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(dashboardHTML)
+	})
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		sum := store.Summary()

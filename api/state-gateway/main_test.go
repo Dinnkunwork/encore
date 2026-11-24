@@ -28,9 +28,17 @@ func TestStateStoreAndHTTPAPI(t *testing.T) {
 
 	handler := newHTTPHandler(store, "")
 
-	// Test summary
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil)
+	// Test embedded dashboard HTML at /
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.Len() == 0 {
+		t.Fatalf("expected 200 HTML dashboard, got %d (len=%d)", rec.Code, rec.Body.Len())
+	}
+
+	// Test summary
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil)
+	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
