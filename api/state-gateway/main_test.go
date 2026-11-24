@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
 
@@ -36,8 +37,8 @@ func TestStateStoreAndHTTPAPI(t *testing.T) {
 	}
 	handler := newHTTPHandler(store, "", "", "", "", "", "", cs)
 
-	// Dashboard HTML + embedded assets
-	for _, p := range []string{"/", "/favicon.ico", "/assets/logo/logo.svg", "/assets/status/status-ok.svg", "/assets/icons/dashboard.svg"} {
+	// Dashboard HTML + embedded assets + modular css/js
+	for _, p := range []string{"/", "/favicon.ico", "/assets/logo/logo.svg", "/assets/status/status-ok.svg", "/assets/icons/dashboard.svg", "/css/app.css", "/js/core.js", "/js/monitor.js", "/js/manage.js", "/js/guide.js"} {
 		req := httptest.NewRequest(http.MethodGet, p, nil)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -201,5 +202,39 @@ func TestCustomScriptsAPI(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &tr)
 	if tr.ExitCode != 0 || !bytes.Contains([]byte(tr.Stdout), []byte("hello world")) {
 		t.Fatalf("unexpected script test result: %+v", tr)
+	}
+}
+
+func TestSecretsAPI(t *testing.T) {
+	dir := t.TempDir()
+	resPath := dir + "/resource.cfg"
+	if err := os.WriteFile(resPath, []byte("$USER1$=/usr/lib/nagios/plugins\n"), 0o640); err != nil {
+		t.Fatalf("write resource.cfg: %v", err)
+	}
+	cs, _ := NewConfigStore(dir, "", "", "")
+	handler := newHTTPHandler(NewStateStore(), "", "", "", "", resPath, "", cs)
+
+	// Protect $USER1$
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(`{"key":"$USER1$","value":"hack"}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when modifying $USER1$, got %d", rec.Code)
+	}
+
+	// Set $USER2$
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(`{"key":"$USER2$","value":"supersecret9876"}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set $USER2$ failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify masked GET
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if !bytes.Contains(rec.Body.Bytes(), []byte("••••••9876")) || bytes.Contains(rec.Body.Bytes(), []byte("supersecret9876")) {
+		t.Fatalf("secret was not properly masked: %s", rec.Body.String())
 	}
 }

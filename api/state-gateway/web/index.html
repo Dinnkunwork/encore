@@ -3,371 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Encore — Monitoring & Management Console</title>
+<title>Encore — Monitoring & Management</title>
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon/favicon-32.png">
 <link rel="apple-touch-icon" href="/assets/favicon/apple-touch-icon.png">
-<style>
-  :root {
-    --bg: #f4f6f9;
-    --surface: #ffffff;
-    --surface-2: #f1f5f9;
-    --sidebar-bg: #0f172a;
-    --sidebar-border: #1e293b;
-    --sidebar-text: #cbd5e1;
-    --sidebar-muted: #64748b;
-    --sidebar-active: rgba(59,130,246,0.18);
-    --sidebar-active-fg: #60a5fa;
-    --border: #e2e8f0;
-    --text: #0f172a;
-    --muted: #64748b;
-    --accent: #2563eb;
-    --accent-soft: rgba(37,99,235,0.1);
-    --ok: #10b981;
-    --ok-bg: #ecfdf5;
-    --ok-fg: #047857;
-    --warn: #f59e0b;
-    --warn-bg: #fffbeb;
-    --warn-fg: #b45309;
-    --crit: #ef4444;
-    --crit-bg: #fef2f2;
-    --crit-fg: #b91c1c;
-    --unk: #8b5cf6;
-    --unk-bg: #f5f3ff;
-    --unk-fg: #6d28d9;
-    --pend-bg: #f1f5f9;
-    --pend-fg: #475569;
-    --shadow: 0 1px 2px rgba(15,23,42,0.05), 0 6px 16px rgba(15,23,42,0.04);
-    --radius: 12px;
-    --sidebar-w: 252px;
-  }
-  [data-theme="dark"] {
-    --bg: #090e1a;
-    --surface: #111827;
-    --surface-2: #1e293b;
-    --sidebar-bg: #060a14;
-    --sidebar-border: #1e293b;
-    --border: #1f2937;
-    --text: #f1f5f9;
-    --muted: #94a3b8;
-    --accent: #3b82f6;
-    --accent-soft: rgba(59,130,246,0.18);
-    --ok-bg: rgba(16,185,129,0.14);
-    --ok-fg: #34d399;
-    --warn-bg: rgba(245,158,11,0.14);
-    --warn-fg: #fbbf24;
-    --crit-bg: rgba(239,68,68,0.14);
-    --crit-fg: #f87171;
-    --unk-bg: rgba(139,92,246,0.16);
-    --unk-fg: #c4b5fd;
-    --pend-bg: rgba(148,163,184,0.14);
-    --pend-fg: #cbd5e1;
-    --shadow: 0 2px 6px rgba(0,0,0,0.45);
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
-    background: var(--bg); color: var(--text); line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
-  }
-
-  /* App Shell */
-  .shell { display: flex; min-height: 100vh; }
-  .sidebar {
-    width: var(--sidebar-w); flex-shrink: 0;
-    background: var(--sidebar-bg); color: var(--sidebar-text);
-    border-right: 1px solid var(--sidebar-border);
-    display: flex; flex-direction: column;
-    position: fixed; inset: 0 auto 0 0; z-index: 30;
-    transition: width 0.18s ease, transform 0.2s ease;
-  }
-  .sidebar.collapsed { width: 70px; }
-  .sidebar.collapsed .nav-text, .sidebar.collapsed .brand-text, .sidebar.collapsed .nav-section,
-  .sidebar.collapsed .sb-foot-text, .sidebar.collapsed .nav-badge { display: none; }
-  .sidebar.collapsed .nav-item { justify-content: center; padding: 10px; }
-  .sidebar.collapsed .sb-head { justify-content: center; padding: 14px 10px; }
-
-  .sb-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 16px 16px 14px; border-bottom: 1px solid var(--sidebar-border);
-  }
-  .sb-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: #fff; }
-  .sb-brand img { width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0; }
-  .brand-text strong { display: block; font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
-  .brand-text span { display: block; font-size: 11px; color: var(--sidebar-muted); }
-  .sb-toggle {
-    background: transparent; border: 1px solid var(--sidebar-border); color: var(--sidebar-text);
-    border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: 12px; flex-shrink: 0;
-  }
-  .sb-toggle:hover { background: rgba(255,255,255,0.06); }
-
-  .sb-nav { flex: 1; overflow-y: auto; padding: 12px 10px; }
-  .nav-section {
-    font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
-    color: var(--sidebar-muted); padding: 12px 10px 6px;
-  }
-  .nav-item {
-    width: 100%; display: flex; align-items: center; gap: 10px;
-    padding: 8.5px 11px; margin-bottom: 2px; border-radius: 8px;
-    border: none; background: transparent; color: var(--sidebar-text);
-    font-size: 13px; font-weight: 500; cursor: pointer; text-align: left;
-    transition: all 0.14s ease;
-  }
-  .nav-item:hover { background: rgba(255,255,255,0.06); color: #fff; }
-  .nav-item.active { background: var(--sidebar-active); color: var(--sidebar-active-fg); font-weight: 600; }
-  .nav-item img { width: 17px; height: 17px; flex-shrink: 0; opacity: 0.88; }
-  .nav-item.active img { opacity: 1; }
-  .nav-badge {
-    margin-left: auto; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700;
-    background: var(--crit); color: #fff;
-  }
-
-  .sb-foot {
-    padding: 12px 14px; border-top: 1px solid var(--sidebar-border);
-    display: flex; flex-direction: column; gap: 8px; font-size: 12px;
-  }
-  .sb-status { display: flex; align-items: center; gap: 8px; color: var(--sidebar-text); }
-  .sb-status img { width: 14px; height: 14px; flex-shrink: 0; }
-  .sb-apply {
-    width: 100%; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--warn);
-    background: rgba(245,158,11,0.18); color: #fbbf24; font-size: 12px; font-weight: 600;
-    cursor: pointer; display: none;
-  }
-  .sb-apply:hover { background: rgba(245,158,11,0.28); }
-
-  /* Main Area */
-  .main { flex: 1; margin-left: var(--sidebar-w); min-width: 0; transition: margin-left 0.18s ease; display: flex; flex-direction: column; }
-  .sidebar.collapsed + .main { margin-left: 70px; }
-
-  .topbar {
-    position: sticky; top: 0; z-index: 20;
-    background: var(--surface); border-bottom: 1px solid var(--border);
-    padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
-  }
-  .topbar-left { display: flex; align-items: center; gap: 12px; }
-  .mobile-menu-btn { display: none; }
-  .page-title { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
-  .page-sub { font-size: 12px; color: var(--muted); }
-  .topbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .search-box {
-    position: relative; display: flex; align-items: center;
-  }
-  .search-box img { position: absolute; left: 10px; width: 14px; height: 14px; opacity: 0.55; pointer-events: none; }
-  .search-box input {
-    padding: 6px 10px 6px 30px; border-radius: 8px; width: 230px; font-size: 13px;
-    background: var(--bg); border: 1px solid var(--border); color: var(--text); outline: none;
-  }
-  .search-box input:focus { border-color: var(--accent); width: 270px; }
-
-  .content { padding: 20px 24px 48px; max-width: 1440px; width: 100%; margin: 0 auto; }
-
-  .btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 6px 13px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
-    background: var(--surface-2); border: 1px solid #cbd5e1; color: var(--text);
-    box-shadow: 0 1px 2px rgba(15,23,42,0.08);
-    cursor: pointer; transition: transform 0.12s ease, background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
-  }
-  [data-theme="dark"] .btn { border-color: #334155; box-shadow: 0 1px 2px rgba(0,0,0,0.35); }
-  .btn:hover:not(:disabled) { background: var(--surface); border-color: var(--accent); color: var(--accent); transform: translateY(-1px); box-shadow: 0 3px 8px rgba(37,99,235,0.14); }
-  .btn:active:not(:disabled) { transform: scale(0.98); }
-  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 2px 6px rgba(37,99,235,0.28); }
-  .btn.primary:hover:not(:disabled) { color: #fff; filter: brightness(1.08); box-shadow: 0 4px 12px rgba(37,99,235,0.35); }
-  .btn.danger { background: var(--crit-bg); border-color: var(--crit); color: var(--crit-fg); }
-  .btn.danger:hover:not(:disabled) { background: var(--crit); color: #fff; border-color: var(--crit); }
-  .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .btn-sm { padding: 4.5px 10px; font-size: 12px; }
-
-  /* KPI Grid & Split Panels */
-  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 18px; }
-  .kpi-card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 16px 18px; box-shadow: var(--shadow); cursor: pointer; position: relative;
-    transition: transform 0.14s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-  }
-  .kpi-card:hover { transform: translateY(-2px); border-color: var(--accent); box-shadow: 0 6px 18px rgba(37,99,235,0.12); }
-  .kpi-card::after { content: "View ›"; position: absolute; right: 14px; bottom: 12px; font-size: 11px; font-weight: 600; color: var(--accent); opacity: 0.72; }
-  .kpi-card:hover::after { opacity: 1; }
-  .kpi-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-  .kpi-label { font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-  .kpi-icon { width: 22px; height: 22px; }
-  .kpi-val { font-size: 28px; font-weight: 750; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
-  .kpi-sub { font-size: 12px; color: var(--muted); margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
-
-  .split-2 { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; }
-  @media (max-width: 1060px) { .split-2 { grid-template-columns: 1fr; } }
-  @media (max-width: 820px) {
-    .sidebar { transform: translateX(-100%); }
-    .sidebar.mobile-open { transform: translateX(0); }
-    .main, .sidebar.collapsed + .main { margin-left: 0; }
-    .mobile-menu-btn { display: inline-flex; }
-  }
-
-  .panel {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-bottom: 16px;
-  }
-  .panel-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
-    padding: 13px 16px; border-bottom: 1px solid var(--border);
-  }
-  .panel-title { font-size: 14px; font-weight: 650; display: flex; align-items: center; gap: 8px; }
-  .panel-title img { width: 16px; height: 16px; }
-
-  .filters { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-  input[type="text"], input[type="number"], select, textarea {
-    padding: 6px 10px; border-radius: 8px; font-size: 13px;
-    background: var(--bg); border: 1px solid var(--border); color: var(--text); outline: none;
-    font-family: inherit;
-  }
-  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
-  .chk-pill {
-    display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted);
-    padding: 5px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); cursor: pointer;
-  }
-
-  /* Table */
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th {
-    text-align: left; padding: 9px 14px; font-size: 11px; font-weight: 650;
-    text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
-    background: var(--surface-2); border-bottom: 1px solid var(--border); white-space: nowrap;
-  }
-  td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-  tbody tr.clickable { cursor: pointer; transition: background 0.12s, box-shadow 0.12s; }
-  tbody tr.clickable:hover { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
-  tbody tr:hover { background: var(--surface-2); }
-  tr.group-row td { background: var(--surface-2); font-weight: 650; font-size: 12.5px; padding: 7px 14px; }
-
-  .badge {
-    display: inline-flex; align-items: center; gap: 5px; padding: 2.5px 8px; border-radius: 6px;
-    font-size: 11px; font-weight: 700; letter-spacing: 0.03em; font-family: ui-monospace, SFMono-Regular, monospace;
-  }
-  .badge img { width: 12px; height: 12px; }
-  .c-ok { background: var(--ok-bg); color: var(--ok-fg); }
-  .c-warn { background: var(--warn-bg); color: var(--warn-fg); }
-  .c-crit { background: var(--crit-bg); color: var(--crit-fg); }
-  .c-unk { background: var(--unk-bg); color: var(--unk-fg); }
-  .c-pend { background: var(--pend-bg); color: var(--pend-fg); }
-
-  .mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; color: var(--muted); }
-  .name-primary { font-weight: 600; color: var(--text); }
-  .name-sub { font-size: 11.5px; color: var(--muted); }
-  .output-cell { max-width: 380px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12.5px; }
-  .flags { display: inline-flex; gap: 4px; margin-left: 6px; }
-  .flag-tag {
-    font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 4px;
-    background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
-  }
-  .actions { display: flex; gap: 4px; justify-content: flex-end; }
-  .icon-btn {
-    padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600;
-    background: var(--surface-2); border: 1px solid #cbd5e1; color: var(--text);
-    box-shadow: 0 1px 2px rgba(15,23,42,0.06);
-    cursor: pointer; transition: all 0.12s;
-  }
-  [data-theme="dark"] .icon-btn { border-color: #334155; }
-  .icon-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); transform: translateY(-1px); }
-  .icon-btn:active { transform: scale(0.96); }
-  .guide-tabs { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
-  .guide-body { padding: 18px 20px; }
-  .guide-body h3 { font-size: 15px; font-weight: 700; margin: 16px 0 8px; color: var(--text); }
-  .guide-body h3:first-child { margin-top: 0; }
-  .guide-body p, .guide-body li { font-size: 13.5px; color: var(--muted); margin-bottom: 6px; }
-  .guide-body ul, .guide-body ol { padding-left: 20px; margin-bottom: 12px; }
-  .guide-body code { background: var(--surface-2); padding: 2px 6px; border-radius: 5px; font-size: 12px; color: var(--text); font-family: ui-monospace, monospace; }
-  .guide-pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-family: ui-monospace, monospace; font-size: 12px; overflow-x: auto; margin: 8px 0 14px; white-space: pre; }
-  .pager { display: flex; align-items: center; justify-content: space-between; padding: 11px 16px; font-size: 12.5px; color: var(--muted); }
-  .empty { text-align: center; padding: 36px 16px; color: var(--muted); font-size: 13px; }
-
-  .bar { height: 7px; border-radius: 999px; background: var(--surface-2); overflow: hidden; display: flex; }
-  .bar-ok { background: var(--ok); }
-  .bar-warn { background: var(--warn); }
-  .bar-crit { background: var(--crit); }
-  .bar-unk { background: var(--unk); }
-
-  .group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(275px, 1fr)); gap: 12px; padding: 16px; }
-  .gcard {
-    border: 1px solid var(--border); border-radius: 10px; padding: 14px;
-    background: var(--bg); cursor: pointer; transition: border-color 0.15s, transform 0.12s;
-  }
-  .gcard:hover { border-color: var(--accent); transform: translateY(-1px); }
-  .gcard h3 { font-size: 14px; font-weight: 650; margin-bottom: 2px; }
-  .gcard p { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
-
-  .console-out {
-    margin: 12px 16px; padding: 12px; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, monospace;
-    font-size: 12px; white-space: pre-wrap; max-height: 220px; overflow: auto;
-    background: var(--bg); border: 1px solid var(--border); display: none;
-  }
-  .toggle-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; padding: 16px; }
-  .toggle-card {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 12px 14px; border-radius: 9px; border: 1px solid var(--border); background: var(--bg);
-  }
-  .raw-editor {
-    width: 100%; min-height: 320px; font-family: ui-monospace, SFMono-Regular, monospace;
-    font-size: 12.5px; line-height: 1.5; padding: 12px; border-radius: 8px;
-  }
-
-  /* Drawer & Modal */
-  .backdrop {
-    position: fixed; inset: 0; background: rgba(15,23,42,0.48); z-index: 40;
-    display: none; align-items: center; justify-content: center;
-  }
-  .backdrop.open { display: flex; }
-  .modal {
-    width: min(560px, 94vw); max-height: 90vh; overflow-y: auto;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-    padding: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.32);
-  }
-  .modal h2 { font-size: 16px; font-weight: 650; margin-bottom: 14px; }
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-  .form-row.full { grid-column: 1 / -1; }
-  .form-row label { font-size: 12px; font-weight: 600; color: var(--muted); }
-  .modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
-  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
-
-  .drawer-wrap {
-    position: fixed; inset: 0; background: rgba(15,23,42,0.38); z-index: 45; display: none; justify-content: flex-end;
-  }
-  .drawer-wrap.open { display: flex; }
-  .drawer {
-    width: min(520px, 96vw); height: 100%; overflow-y: auto;
-    background: var(--surface); border-left: 1px solid var(--border); padding: 20px 22px;
-    box-shadow: -8px 0 32px rgba(0,0,0,0.22);
-  }
-  .drawer-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
-  .kv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
-  .kv-box { padding: 8px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }
-  .kv-box .k { font-size: 10.5px; text-transform: uppercase; color: var(--muted); font-weight: 600; }
-  .kv-box .v { font-size: 13px; font-weight: 600; margin-top: 2px; }
-  .perf-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
-  .perf-chip { padding: 4px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-family: ui-monospace, monospace; }
-
-  #toast {
-    position: fixed; right: 20px; bottom: 20px; padding: 10px 16px; border-radius: 8px;
-    background: var(--text); color: var(--surface); font-size: 13px; font-weight: 500;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.25); opacity: 0; pointer-events: none;
-    transform: translateY(8px); transition: all 0.2s ease; z-index: 60;
-  }
-  #toast.show { opacity: 1; transform: translateY(0); }
-</style>
+<link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
 <div class="shell">
-  <!-- Fixed Left Sidebar -->
+  <!-- Compact 6-Item Left Sidebar -->
   <aside class="sidebar" id="sidebar">
     <div class="sb-head">
       <a class="sb-brand" href="#" onclick="setView('overview');return false">
         <img src="/assets/logo/logo.svg" alt="Encore">
-        <div class="brand-text">
-          <strong>Encore</strong>
-          <span>Monitoring Console</span>
-        </div>
+        <div class="brand-text"><strong>Encore</strong><span>Monitoring Console</span></div>
       </a>
       <button class="sb-toggle" onclick="toggleSidebar()" title="Collapse sidebar">«</button>
     </div>
@@ -377,46 +26,25 @@
       <button class="nav-item active" id="nav-overview" onclick="setView('overview')">
         <img src="/assets/icons/dashboard.svg" alt=""><span class="nav-text">Overview</span>
       </button>
-      <button class="nav-item" id="nav-hosts" onclick="setView('hosts')">
-        <img src="/assets/icons/server.svg" alt=""><span class="nav-text">Hosts</span>
-      </button>
-      <button class="nav-item" id="nav-services" onclick="setView('services')">
-        <img src="/assets/icons/cpu.svg" alt=""><span class="nav-text">Services</span>
+      <button class="nav-item" id="nav-inventory" onclick="setView('inventory')">
+        <img src="/assets/icons/server.svg" alt=""><span class="nav-text">Inventory</span>
       </button>
       <button class="nav-item" id="nav-problems" onclick="setView('problems')">
         <img src="/assets/icons/alert.svg" alt=""><span class="nav-text">Problems</span>
         <span class="nav-badge" id="nav-prob-badge" style="display:none">0</span>
       </button>
-      <button class="nav-item" id="nav-groups" onclick="setView('groups')">
-        <img src="/assets/icons/network.svg" alt=""><span class="nav-text">Groups</span>
-      </button>
-      <button class="nav-item" id="nav-downtimes" onclick="setView('downtimes')">
-        <img src="/assets/icons/bell.svg" alt=""><span class="nav-text">Downtimes</span>
-      </button>
 
-      <div class="nav-section">Management</div>
-      <button class="nav-item" id="nav-localhost" onclick="setView('localhost')">
-        <img src="/assets/icons/server.svg" alt=""><span class="nav-text">Localhost Config</span>
-      </button>
-      <button class="nav-item" id="nav-manage-hosts" onclick="setView('manage-hosts')">
-        <img src="/assets/icons/cloud.svg" alt=""><span class="nav-text">Hosts & Services</span>
-      </button>
-      <button class="nav-item" id="nav-manage-cmd" onclick="setView('manage-cmd')">
-        <img src="/assets/icons/database.svg" alt=""><span class="nav-text">Commands & Groups</span>
-      </button>
-      <button class="nav-item" id="nav-manage-contacts" onclick="setView('manage-contacts')">
-        <img src="/assets/icons/user.svg" alt=""><span class="nav-text">Contacts</span>
+      <div class="nav-section">Configuration</div>
+      <button class="nav-item" id="nav-manage" onclick="setView('manage')">
+        <img src="/assets/icons/settings.svg" alt=""><span class="nav-text">Manage</span>
       </button>
       <button class="nav-item" id="nav-system" onclick="setView('system')">
-        <img src="/assets/icons/log.svg" alt=""><span class="nav-text">System & Audit</span>
+        <img src="/assets/icons/log.svg" alt=""><span class="nav-text">System</span>
       </button>
 
-      <div class="nav-section">Docs & Scripts</div>
-      <button class="nav-item" id="nav-scripts" onclick="setView('scripts')">
-        <img src="/assets/icons/settings.svg" alt=""><span class="nav-text">Custom Scripts</span>
-      </button>
+      <div class="nav-section">Help</div>
       <button class="nav-item" id="nav-guide" onclick="setView('guide')">
-        <img src="/assets/icons/dashboard.svg" alt=""><span class="nav-text">User Guide</span>
+        <img src="/assets/icons/cloud.svg" alt=""><span class="nav-text">Guide</span>
       </button>
     </nav>
 
@@ -436,13 +64,13 @@
         <button class="btn btn-sm mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('mobile-open')">☰</button>
         <div>
           <div class="page-title" id="page-title">Overview</div>
-          <div class="page-sub" id="sub-meta">Connecting to state gateway...</div>
+          <div class="page-sub" id="sub-meta">Connecting...</div>
         </div>
       </div>
       <div class="topbar-right">
         <div class="search-box">
           <img src="/assets/icons/search.svg" alt="">
-          <input type="search" id="global-search" placeholder="Quick search (/) ..." oninput="onGlobalSearch()">
+          <input type="search" id="global-search" placeholder="Search (/) ..." oninput="onGlobalSearch()">
         </div>
         <select id="auto-select" onchange="setAutoInterval()">
           <option value="3000" selected>Auto 3s</option>
@@ -456,36 +84,35 @@
     </header>
 
     <main class="content">
-      <!-- OVERVIEW PAGE -->
+      <!-- OVERVIEW -->
       <section id="sec-overview">
         <div class="kpi-grid">
-          <div class="kpi-card" onclick="setView('hosts')">
+          <div class="kpi-card" onclick="setView('inventory','hosts')">
             <div class="kpi-top"><span class="kpi-label">Host Health</span><img class="kpi-icon" id="kpi-h-icon" src="/assets/status/status-ok.svg" alt=""></div>
             <div class="kpi-val" id="ov-h-pct">-</div>
             <div class="kpi-sub"><span id="ov-h-up">0 UP</span><span id="ov-h-down" style="color:var(--crit-fg)">0 DOWN</span><span id="ov-h-tot">0 total</span></div>
           </div>
-          <div class="kpi-card" onclick="setView('services')">
+          <div class="kpi-card" onclick="setView('inventory','services')">
             <div class="kpi-top"><span class="kpi-label">Service Health</span><img class="kpi-icon" id="kpi-s-icon" src="/assets/status/status-ok.svg" alt=""></div>
             <div class="kpi-val" id="ov-s-pct">-</div>
             <div class="kpi-sub"><span id="ov-s-ok">0 OK</span><span id="ov-s-warn" style="color:var(--warn-fg)">0 WARN</span><span id="ov-s-crit" style="color:var(--crit-fg)">0 CRIT</span></div>
           </div>
-          <div class="kpi-card" onclick="quickUnhandled('services')">
-            <div class="kpi-top"><span class="kpi-label">Unhandled Problems</span><img class="kpi-icon" id="kpi-u-icon" src="/assets/status/status-info.svg" alt=""></div>
+          <div class="kpi-card" onclick="quickUnhandled()">
+            <div class="kpi-top"><span class="kpi-label">Unhandled</span><img class="kpi-icon" id="kpi-u-icon" src="/assets/status/status-info.svg" alt=""></div>
             <div class="kpi-val" id="ov-unhandled">0</div>
             <div class="kpi-sub"><span id="ov-u-sub">All clear</span></div>
           </div>
           <div class="kpi-card" onclick="setView('system')">
-            <div class="kpi-top"><span class="kpi-label">Engine Status</span><img class="kpi-icon" src="/assets/icons/settings.svg" alt=""></div>
+            <div class="kpi-top"><span class="kpi-label">Engine</span><img class="kpi-icon" src="/assets/icons/settings.svg" alt=""></div>
             <div class="kpi-val" id="ov-pid">-</div>
             <div class="kpi-sub"><span id="ov-flags">Checks: - • Notify: -</span></div>
           </div>
         </div>
-
         <div class="split-2">
           <div class="panel">
             <div class="panel-head">
-              <div class="panel-title"><img src="/assets/icons/alert.svg" alt="">Active & Unhandled Problems</div>
-              <button class="btn btn-sm" onclick="setView('problems')">View All</button>
+              <div class="panel-title"><img src="/assets/icons/alert.svg" alt="">Unhandled Problems</div>
+              <button class="btn btn-sm" onclick="setView('problems')">All Problems ›</button>
             </div>
             <div class="table-wrap">
               <table>
@@ -494,20 +121,18 @@
               </table>
             </div>
           </div>
-
           <div>
             <div class="panel">
               <div class="panel-head">
-                <div class="panel-title"><img src="/assets/icons/network.svg" alt="">Hostgroup Health</div>
-                <button class="btn btn-sm" onclick="setView('groups')">All Groups</button>
+                <div class="panel-title"><img src="/assets/icons/network.svg" alt="">Hostgroups</div>
+                <button class="btn btn-sm" onclick="setView('inventory','groups')">View All ›</button>
               </div>
               <div id="ov-hg-list" style="padding:12px 16px"></div>
             </div>
-
             <div class="panel">
               <div class="panel-head">
-                <div class="panel-title"><img src="/assets/icons/log.svg" alt="">Recent Management Activity</div>
-                <button class="btn btn-sm" onclick="setView('system')">Audit Log</button>
+                <div class="panel-title"><img src="/assets/icons/log.svg" alt="">Recent Activity</div>
+                <button class="btn btn-sm" onclick="setView('system','audit')">Audit ›</button>
               </div>
               <div id="ov-audit-list" style="padding:10px 16px"></div>
             </div>
@@ -515,1180 +140,86 @@
         </div>
       </section>
 
-      <!-- MONITORING TABLE (Hosts / Services / Problems) -->
-      <section id="sec-table" style="display:none">
-        <div class="panel">
-          <div class="panel-head">
-            <div class="filters">
-              <select id="hg-select" onchange="onFilterChange()"><option value="">All Hostgroups</option></select>
-              <select id="sg-select" onchange="onFilterChange()"><option value="">All Servicegroups</option></select>
-              <select id="state-select" onchange="onFilterChange()"><option value="">All States</option></select>
-              <select id="sort-select" onchange="onFilterChange()">
-                <option value="severity">Sort: Severity</option>
-                <option value="name">Sort: Name</option>
-                <option value="last_check">Sort: Last Check</option>
-                <option value="duration">Sort: State Age</option>
-              </select>
-              <label class="chk-pill"><input type="checkbox" id="unhandled-chk" onchange="onFilterChange()"> Unhandled</label>
-              <button class="btn btn-sm" id="group-view-btn" onclick="toggleGroupByHost()">Grouped by Host</button>
-              <select id="limit-select" onchange="onFilterChange()">
-                <option value="25">25 / page</option>
-                <option value="50" selected>50 / page</option>
-                <option value="100">100 / page</option>
-              </select>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead id="tbl-head"></thead>
-              <tbody id="tbl-body"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
-            </table>
-          </div>
-          <div class="pager">
-            <span id="pager-info">-</span>
-            <div style="display:flex;gap:6px">
-              <button class="btn btn-sm" id="prev-btn" onclick="changePage(-1)">Prev</button>
-              <button class="btn btn-sm" id="next-btn" onclick="changePage(1)">Next</button>
-            </div>
+      <!-- INVENTORY & PROBLEMS (Shared Subtabs + Table / Groups / Downtimes) -->
+      <section id="sec-monitor" style="display:none">
+        <div class="subtabs">
+          <div class="subtab-list" id="mon-subtabs"></div>
+          <div class="subtab-actions" id="mon-filters">
+            <select id="hg-select" onchange="onFilterChange()"><option value="">All Hostgroups</option></select>
+            <select id="sg-select" onchange="onFilterChange()"><option value="">All Servicegroups</option></select>
+            <select id="state-select" onchange="onFilterChange()"><option value="">All States</option></select>
+            <select id="sort-select" onchange="onFilterChange()">
+              <option value="severity">Severity</option>
+              <option value="name">Name</option>
+              <option value="last_check">Last Check</option>
+              <option value="duration">State Age</option>
+            </select>
+            <label class="chk-pill"><input type="checkbox" id="unhandled-chk" onchange="onFilterChange()"> Unhandled</label>
+            <button class="btn btn-sm" id="group-view-btn" onclick="toggleGroupByHost()">Grouped</button>
+            <select id="limit-select" onchange="onFilterChange()"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select>
           </div>
         </div>
+        <div id="mon-body"></div>
       </section>
 
-      <!-- GROUPS OVERVIEW -->
-      <section id="sec-groups" style="display:none">
-        <div class="panel">
-          <div class="panel-head"><div class="panel-title"><img src="/assets/icons/network.svg" alt="">Hostgroups</div></div>
-          <div class="group-grid" id="hg-cards"></div>
-        </div>
-        <div class="panel">
-          <div class="panel-head"><div class="panel-title"><img src="/assets/icons/cpu.svg" alt="">Servicegroups</div></div>
-          <div class="group-grid" id="sg-cards"></div>
-        </div>
-      </section>
-
-      <!-- DOWNTIMES -->
-      <section id="sec-downtimes" style="display:none">
-        <div class="panel">
-          <div class="panel-head"><div class="panel-title"><img src="/assets/icons/bell.svg" alt="">Active & Scheduled Downtimes</div></div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>ID</th><th>Target</th><th>Window</th><th>Status</th><th>Author / Comment</th><th style="text-align:right">Actions</th></tr></thead>
-              <tbody id="dt-body"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- LOCALHOST CONFIG MANAGER -->
-      <section id="sec-localhost" style="display:none">
-        <div class="panel">
-          <div class="panel-head">
-            <div class="panel-title"><img src="/assets/icons/server.svg" alt="">Localhost Configuration Manager</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button class="btn btn-sm primary" id="lh-adopt-btn" onclick="adoptLocalhost()">1-Click Adopt to Managed Config</button>
-              <button class="btn btn-sm" onclick="saveLocalhostRaw()">Save Raw & Reload</button>
-            </div>
-          </div>
-          <pre class="console-out" id="lh-console"></pre>
-          <div id="lh-body" style="padding:16px">Loading...</div>
-        </div>
-      </section>
-
-      <!-- MANAGEMENT SECTION -->
+      <!-- MANAGE (Hosts & Services | Localhost | Commands | Groups | Secrets) -->
       <section id="sec-manage" style="display:none">
-        <div class="panel">
-          <div class="panel-head">
-            <div class="panel-title" id="manage-title"><img src="/assets/icons/settings.svg" alt="">Configuration Manager</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button class="btn btn-sm" id="m-add-host-btn" onclick="openHostForm(-1)">+ Add Host</button>
-              <button class="btn btn-sm" id="m-add-svc-btn" onclick="openSvcForm(-1)">+ Add Service</button>
-              <button class="btn btn-sm" onclick="runValidate(false)">Validate (nagios -v)</button>
-              <button class="btn btn-sm primary" onclick="runValidate(true)">Apply & Reload</button>
-            </div>
+        <div class="subtabs">
+          <div class="subtab-list">
+            <button class="subtab active" id="mtab-objects" onclick="setManageTab('objects')">Hosts & Services</button>
+            <button class="subtab" id="mtab-localhost" onclick="setManageTab('localhost')">Localhost</button>
+            <button class="subtab" id="mtab-commands" onclick="setManageTab('commands')">Commands</button>
+            <button class="subtab" id="mtab-groups" onclick="setManageTab('groups')">Groups</button>
+            <button class="subtab" id="mtab-secrets" onclick="setManageTab('secrets')">Secrets</button>
           </div>
-          <pre class="console-out" id="validate-console"></pre>
-          <div id="manage-content"></div>
+          <div class="subtab-actions">
+            <button class="btn btn-sm" onclick="runValidate(false)">Validate</button>
+            <button class="btn btn-sm primary" onclick="runValidate(true)">Apply & Reload</button>
+          </div>
         </div>
+        <pre class="console-out" id="validate-console"></pre>
+        <div id="manage-content"></div>
       </section>
 
-      <!-- CUSTOM SCRIPTS MANAGER -->
-      <section id="sec-scripts" style="display:none">
-        <div class="panel">
-          <div class="panel-head">
-            <div class="panel-title"><img src="/assets/icons/settings.svg" alt="">Custom Check Scripts</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button class="btn btn-sm primary" onclick="openScriptModal('','bash')">+ New Bash Script</button>
-              <button class="btn btn-sm" onclick="openScriptModal('','python')">+ New Python Script</button>
-            </div>
+      <!-- SYSTEM (Controls | Backups | Audit) -->
+      <section id="sec-system" style="display:none">
+        <div class="subtabs">
+          <div class="subtab-list">
+            <button class="subtab active" id="stab-controls" onclick="setSysTab('controls')">Controls</button>
+            <button class="subtab" id="stab-backups" onclick="setSysTab('backups')">Backups</button>
+            <button class="subtab" id="stab-audit" onclick="setSysTab('audit')">Audit</button>
           </div>
-          <div id="scripts-content" style="padding:14px 16px">Loading...</div>
         </div>
+        <div id="system-content"></div>
       </section>
 
-      <!-- INTERACTIVE USER GUIDE -->
+      <!-- GUIDE (Quick Start | NCPA | Catalog | Paths) -->
       <section id="sec-guide" style="display:none">
-        <div class="panel">
-          <div class="guide-tabs">
-            <button class="btn btn-sm active" id="gtab-ops" onclick="setGuideTab('ops')">1. Operasional & Status</button>
-            <button class="btn btn-sm" id="gtab-sop" onclick="setGuideTab('sop')">2. SOP Config & NCPA</button>
-            <button class="btn btn-sm" id="gtab-catalog" onclick="setGuideTab('catalog')">3. Katalog Command & Plugin (Live)</button>
-            <button class="btn btn-sm" id="gtab-paths" onclick="setGuideTab('paths')">4. Lokasi File & Standar Script</button>
+        <div class="subtabs">
+          <div class="subtab-list">
+            <button class="subtab active" id="gtab-quick" onclick="setGuideTab('quick')">Quick Start</button>
+            <button class="subtab" id="gtab-ncpa" onclick="setGuideTab('ncpa')">NCPA</button>
+            <button class="subtab" id="gtab-catalog" onclick="setGuideTab('catalog')">Catalog</button>
+            <button class="subtab" id="gtab-paths" onclick="setGuideTab('paths')">Paths</button>
           </div>
-          <div class="guide-body" id="guide-body">Loading...</div>
         </div>
+        <div id="guide-content"></div>
       </section>
     </main>
   </div>
 </div>
 
-<!-- Detail Slide-Over Drawer -->
-<div class="drawer-wrap" id="drawer-wrap" onclick="if(event.target===this)closeDrawer()">
-  <div class="drawer" id="drawer-body"></div>
-</div>
-
-<!-- Reusable Modal -->
-<div class="backdrop" id="modal-backdrop" onclick="if(event.target===this)closeModal()">
-  <div class="modal" id="modal-content"></div>
-</div>
-
+<div class="drawer-wrap" id="drawer-wrap" onclick="if(event.target===this)closeDrawer()"><div class="drawer" id="drawer-body"></div></div>
+<div class="backdrop" id="modal-backdrop" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal-content"></div></div>
 <div id="toast"></div>
 
+<script src="/js/core.js"></script>
+<script src="/js/monitor.js"></script>
+<script src="/js/manage.js"></script>
+<script src="/js/guide.js"></script>
 <script>
-const S = {
-  view: 'overview',
-  offset: 0,
-  total: 0,
-  autoMs: 3000,
-  timer: null,
-  groupByHost: false,
-  summary: null,
-  hostgroups: [],
-  servicegroups: [],
-  managed: { enabled: false, pending_changes: false, config: { hosts:[], services:[], commands:[], contacts:[], hostgroups:[], servicegroups:[] } },
-  lastItems: []
-};
-
-function applyTheme(t) {
-  document.documentElement.setAttribute('data-theme', t);
-  document.getElementById('theme-btn').textContent = t === 'dark' ? 'Light' : 'Dark';
-  localStorage.setItem('encore-theme', t);
-}
-applyTheme(localStorage.getItem('encore-theme') || 'light');
-function toggleTheme() { applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); }
-function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
-
-document.addEventListener('keydown', e => {
-  if (e.key === '/' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
-    e.preventDefault();
-    document.getElementById('global-search').focus();
-  } else if (e.key === 'Escape') { closeDrawer(); closeModal(); }
-});
-
-function toast(msg) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 2800);
-}
-function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function relTime(ts) {
-  if (!ts) return 'never';
-  const d = Math.max(0, Math.floor(Date.now()/1000) - ts);
-  if (d < 60) return d + 's ago';
-  if (d < 3600) return Math.floor(d/60) + 'm ago';
-  if (d < 86400) return Math.floor(d/3600) + 'h ago';
-  return Math.floor(d/86400) + 'd ago';
-}
-function durStr(ts) {
-  if (!ts) return '-';
-  const d = Math.max(0, Math.floor(Date.now()/1000) - ts);
-  const days = Math.floor(d/86400), hrs = Math.floor((d%86400)/3600), mins = Math.floor((d%3600)/60);
-  if (days > 0) return `${days}d ${hrs}h`;
-  if (hrs > 0) return `${hrs}h ${mins}m`;
-  return `${mins}m ${d%60}s`;
-}
-function hostBadge(h) {
-  if (!h.has_been_checked) return '<span class="badge c-pend"><img src="/assets/status/status-offline.svg">PENDING</span>';
-  const m = {0:['UP','c-ok','status-ok.svg'],1:['DOWN','c-crit','status-critical.svg'],2:['UNREACH','c-warn','status-warn.svg']};
-  const [l,c,ic] = m[h.current_state] || ['UNK','c-unk','status-info.svg'];
-  return `<span class="badge ${c}"><img src="/assets/status/${ic}">${l}</span>`;
-}
-function svcBadge(s) {
-  if (!s.has_been_checked) return '<span class="badge c-pend"><img src="/assets/status/status-offline.svg">PENDING</span>';
-  const m = {0:['OK','c-ok','status-ok.svg'],1:['WARN','c-warn','status-warn.svg'],2:['CRIT','c-crit','status-critical.svg'],3:['UNK','c-unk','status-info.svg']};
-  const [l,c,ic] = m[s.current_state] || ['UNK','c-unk','status-info.svg'];
-  return `<span class="badge ${c}"><img src="/assets/status/${ic}">${l}</span>`;
-}
-function flagsHTML(o) {
-  let out = '';
-  if (o.acknowledged) out += '<span class="flag-tag">ACK</span>';
-  if (o.downtime_depth > 0) out += '<span class="flag-tag">DT</span>';
-  if (o.is_flapping) out += '<span class="flag-tag">FLAP</span>';
-  if (o.state_type === 0 && o.current_state > 0) out += '<span class="flag-tag">SOFT</span>';
-  return out ? `<span class="flags">${out}</span>` : '';
-}
-
-const VIEW_TITLES = {
-  'overview': 'Tactical Overview',
-  'hosts': 'Hosts Monitoring',
-  'services': 'Services Monitoring',
-  'problems': 'Active Problems',
-  'groups': 'Hostgroups & Servicegroups',
-  'downtimes': 'Scheduled Downtimes',
-  'localhost': 'Localhost Configuration',
-  'manage-hosts': 'Manage Hosts & Services',
-  'manage-cmd': 'Manage Commands & Groups',
-  'manage-contacts': 'Manage Contacts',
-  'system': 'System Controls, Backups & Audit',
-  'scripts': 'Custom Check Scripts',
-  'guide': 'Encore User Guide & Command Reference'
-};
-
-function populateStateSelect() {
-  const sel = document.getElementById('state-select');
-  const cur = sel.value;
-  if (S.view === 'hosts') {
-    sel.innerHTML = '<option value="">All Host States</option><option value="0">UP</option><option value="1">DOWN</option><option value="2">UNREACHABLE</option>';
-  } else if (S.view === 'problems') {
-    sel.innerHTML = '<option value="2">CRITICAL</option><option value="1">WARNING</option><option value="3">UNKNOWN</option>';
-  } else {
-    sel.innerHTML = '<option value="">All Service States</option><option value="0">OK</option><option value="1">WARNING</option><option value="2">CRITICAL</option><option value="3">UNKNOWN</option>';
-  }
-  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
-}
-
-function setView(v) {
-  S.view = v;
-  S.offset = 0;
-  document.getElementById('sidebar').classList.remove('mobile-open');
-  document.getElementById('page-title').textContent = VIEW_TITLES[v] || v;
-  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const activeNav = document.getElementById('nav-' + v);
-  if (activeNav) activeNav.classList.add('active');
-
-  ['sec-overview','sec-table','sec-groups','sec-downtimes','sec-localhost','sec-manage','sec-scripts','sec-guide'].forEach(id => {
-    document.getElementById(id).style.display = 'none';
-  });
-
-  if (v === 'overview') {
-    document.getElementById('sec-overview').style.display = 'block';
-    loadOverview();
-  } else if (['hosts','services','problems'].includes(v)) {
-    document.getElementById('sec-table').style.display = 'block';
-    document.getElementById('sg-select').style.display = v === 'hosts' ? 'none' : '';
-    document.getElementById('group-view-btn').style.display = v === 'hosts' ? 'none' : '';
-    populateStateSelect();
-    loadTable();
-  } else if (v === 'groups') {
-    document.getElementById('sec-groups').style.display = 'block';
-    loadGroups();
-  } else if (v === 'downtimes') {
-    document.getElementById('sec-downtimes').style.display = 'block';
-    loadDowntimes();
-  } else if (v === 'localhost') {
-    document.getElementById('sec-localhost').style.display = 'block';
-    loadLocalhost();
-  } else if (v === 'scripts') {
-    document.getElementById('sec-scripts').style.display = 'block';
-    loadScripts();
-  } else if (v === 'guide') {
-    document.getElementById('sec-guide').style.display = 'block';
-    renderGuide();
-  } else {
-    document.getElementById('sec-manage').style.display = 'block';
-    document.getElementById('m-add-host-btn').style.display = v === 'manage-hosts' ? 'inline-flex' : 'none';
-    document.getElementById('m-add-svc-btn').style.display = v === 'manage-hosts' ? 'inline-flex' : 'none';
-    loadManage();
-  }
-}
-
-function onGlobalSearch() {
-  if (!['hosts','services','problems'].includes(S.view)) {
-    setView('services');
-  } else {
-    S.offset = 0;
-    loadTable();
-  }
-}
-function quickUnhandled(view) {
-  setView(view);
-  document.getElementById('state-select').value = '';
-  document.getElementById('unhandled-chk').checked = true;
-  loadTable();
-}
-function jumpToGroup(type, name) {
-  document.getElementById('hg-select').value = type === 'hg' ? name : '';
-  document.getElementById('sg-select').value = type === 'sg' ? name : '';
-  setView('services');
-}
-function toggleGroupByHost() {
-  S.groupByHost = !S.groupByHost;
-  document.getElementById('group-view-btn').classList.toggle('active', S.groupByHost);
-  loadTable();
-}
-function onFilterChange() { S.offset = 0; loadTable(); }
-function changePage(dir) {
-  const limit = Number(document.getElementById('limit-select').value);
-  const next = S.offset + dir * limit;
-  if (next < 0 || next >= S.total) return;
-  S.offset = next;
-  loadTable();
-}
-function setAutoInterval() {
-  S.autoMs = Number(document.getElementById('auto-select').value);
-  clearInterval(S.timer);
-  if (S.autoMs > 0) S.timer = setInterval(refreshAll, S.autoMs);
-}
-
-async function sendCmd(cmd, label) {
-  try {
-    const res = await fetch('/api/v1/command', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({command: cmd})
-    });
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.error || res.statusText);
-    toast(label + ' queued');
-    setTimeout(refreshAll, 700);
-  } catch (e) { toast('Error: ' + e.message); }
-}
-
-async function loadMeta() {
-  const [hRes, sRes, hgRes, sgRes] = await Promise.all([
-    fetch('/health'), fetch('/api/v1/summary'), fetch('/api/v1/hostgroups'), fetch('/api/v1/servicegroups')
-  ]);
-  const health = await hRes.json();
-  const sum = await sRes.json();
-  S.summary = sum;
-  S.hostgroups = (await hgRes.json()).hostgroups || [];
-  S.servicegroups = (await sgRes.json()).servicegroups || [];
-
-  document.getElementById('conn-icon').src = health.connected ? '/assets/status/status-ok.svg' : '/assets/status/status-critical.svg';
-  document.getElementById('conn-label').textContent = health.connected ? 'Live' : 'Reconnecting';
-  document.getElementById('events-pill').textContent = (health.events_applied || 0).toLocaleString() + ' ev';
-  document.getElementById('sb-apply-btn').style.display = health.pending_changes ? 'block' : 'none';
-  document.getElementById('sub-meta').textContent = `PID ${sum.program.pid} • ${sum.hosts.total} hosts, ${sum.services.total} services • Updated ${new Date().toLocaleTimeString()}`;
-
-  const totalProb = sum.hosts.down + sum.hosts.unreachable + sum.services.warning + sum.services.critical + sum.services.unknown;
-  const pb = document.getElementById('nav-prob-badge');
-  pb.style.display = totalProb > 0 ? 'inline-block' : 'none';
-  pb.textContent = totalProb;
-
-  syncSelect('hg-select', 'All Hostgroups', S.hostgroups.map(g => g.group_name));
-  syncSelect('sg-select', 'All Servicegroups', S.servicegroups.map(g => g.group_name));
-}
-
-function syncSelect(id, allLabel, names) {
-  const sel = document.getElementById(id);
-  const cur = sel.value;
-  sel.innerHTML = `<option value="">${allLabel}</option>` + names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
-  if (names.includes(cur)) sel.value = cur;
-}
-
-async function loadOverview() {
-  const sum = S.summary;
-  if (!sum) return;
-
-  const hPct = sum.hosts.total ? Math.round((sum.hosts.up / sum.hosts.total) * 100) : 100;
-  const sPct = sum.services.total ? Math.round((sum.services.ok / sum.services.total) * 100) : 100;
-  const unhand = sum.hosts.unhandled + sum.services.unhandled;
-
-  document.getElementById('ov-h-pct').textContent = hPct + '%';
-  document.getElementById('ov-h-up').textContent = sum.hosts.up + ' UP';
-  document.getElementById('ov-h-down').textContent = sum.hosts.down + ' DOWN';
-  document.getElementById('ov-h-tot').textContent = sum.hosts.total + ' total';
-  document.getElementById('kpi-h-icon').src = sum.hosts.down > 0 ? '/assets/status/status-critical.svg' : '/assets/status/status-ok.svg';
-
-  document.getElementById('ov-s-pct').textContent = sPct + '%';
-  document.getElementById('ov-s-ok').textContent = sum.services.ok + ' OK';
-  document.getElementById('ov-s-warn').textContent = sum.services.warning + ' WARN';
-  document.getElementById('ov-s-crit').textContent = sum.services.critical + ' CRIT';
-  document.getElementById('kpi-s-icon').src = sum.services.critical > 0 ? '/assets/status/status-critical.svg' : (sum.services.warning > 0 ? '/assets/status/status-warn.svg' : '/assets/status/status-ok.svg');
-
-  document.getElementById('ov-unhandled').textContent = unhand;
-  document.getElementById('ov-u-sub').textContent = unhand > 0 ? `${sum.hosts.unhandled} hosts, ${sum.services.unhandled} services` : 'All problems handled';
-  document.getElementById('kpi-u-icon').src = unhand > 0 ? '/assets/status/status-critical.svg' : '/assets/status/status-ok.svg';
-
-  document.getElementById('ov-pid').textContent = 'PID ' + sum.program.pid;
-  document.getElementById('ov-flags').textContent = `Checks: ${sum.program.execute_service_checks ? 'ON' : 'OFF'} • Notify: ${sum.program.notifications_enabled ? 'ON' : 'OFF'}`;
-
-  // Top problems feed
-  const [pRes, aRes] = await Promise.all([
-    fetch('/api/v1/services?unhandled=1&sort=severity&limit=10'),
-    fetch('/api/v1/audit?limit=5')
-  ]);
-  const probs = (await pRes.json()).services || [];
-  const pBody = document.getElementById('ov-prob-body');
-  if (!probs.length) {
-    pBody.innerHTML = '<tr><td colspan="5" class="empty"><img src="/assets/status/status-ok.svg" style="width:18px;vertical-align:middle;margin-right:6px">No unhandled service problems right now.</td></tr>';
-  } else {
-    S.lastItems = probs;
-    pBody.innerHTML = probs.map((s, idx) => `
-      <tr class="clickable" onclick="openSvcDrawer(${idx})">
-        <td>${svcBadge(s)}</td>
-        <td><div class="name-primary">${esc(s.description)}</div><div class="name-sub">${esc(s.host_name)}</div></td>
-        <td class="mono">${durStr(s.last_state_change)}</td>
-        <td class="output-cell" title="${esc(s.plugin_output)}">${esc(s.plugin_output)}</td>
-        <td class="actions" onclick="event.stopPropagation()">
-          <button class="icon-btn" title="Force check" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${esc(s.host_name)};${esc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻</button>
-          <button class="icon-btn" title="Acknowledge" onclick="openAckModal('service','${esc(s.host_name)}','${esc(s.description)}')">✓</button>
-        </td>
-      </tr>`).join('');
-  }
-
-  // Hostgroups summary
-  const hgList = document.getElementById('ov-hg-list');
-  hgList.innerHTML = S.hostgroups.length ? S.hostgroups.slice(0, 6).map(g => {
-    const t = g.services.total || 1;
-    return `<div style="margin-bottom:12px;cursor:pointer" onclick="jumpToGroup('hg','${esc(g.group_name)}')">
-      <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px">
-        <b>${esc(g.group_name)}</b><span class="mono">${g.hosts.up}/${g.hosts.total} UP • ${g.services.ok}/${g.services.total} OK</span>
-      </div>
-      <div class="bar"><div class="bar-ok" style="width:${(g.services.ok/t)*100}%"></div><div class="bar-warn" style="width:${(g.services.warning/t)*100}%"></div><div class="bar-crit" style="width:${(g.services.critical/t)*100}%"></div></div>
-    </div>`;
-  }).join('') : '<div class="empty" style="padding:14px">No hostgroups defined</div>';
-
-  // Recent audit
-  const audits = (await aRes.json()).entries || [];
-  const aList = document.getElementById('ov-audit-list');
-  aList.innerHTML = audits.length ? audits.map(a => `
-    <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
-      <div><b>${esc(a.action)}</b> <span class="mono">${esc(a.target)}</span></div>
-      <span class="mono">${relTime(Math.floor(Date.parse(a.time)/1000))}</span>
-    </div>`).join('') : '<div class="empty" style="padding:14px">No management activity yet</div>';
-}
-
-async function loadTable() {
-  const q = document.getElementById('global-search').value.trim();
-  const st = document.getElementById('state-select').value;
-  const hg = document.getElementById('hg-select').value;
-  const sg = document.getElementById('sg-select').value;
-  const sort = document.getElementById('sort-select').value;
-  const unhandled = document.getElementById('unhandled-chk').checked;
-  const limit = Number(document.getElementById('limit-select').value);
-
-  const params = new URLSearchParams({ limit, offset: S.offset, sort });
-  if (q) params.set('search', q);
-  if (st !== '') params.set('state', st);
-  if (hg) params.set('hostgroup', hg);
-  if (sg && S.view !== 'hosts') params.set('servicegroup', sg);
-  if (unhandled) params.set('unhandled', '1');
-
-  const head = document.getElementById('tbl-head');
-  const body = document.getElementById('tbl-body');
-
-  if (S.view === 'hosts') {
-    head.innerHTML = '<tr><th>Status</th><th>Host</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
-    const data = await (await fetch('/api/v1/hosts?' + params)).json();
-    S.total = data.total;
-    S.lastItems = data.hosts;
-    body.innerHTML = data.hosts.length ? data.hosts.map((h, idx) => `
-      <tr class="clickable" onclick="openHostDrawer(${idx})">
-        <td>${hostBadge(h)}</td>
-        <td><div class="name-primary">${esc(h.name)}${flagsHTML(h)}</div><div class="name-sub">${esc(h.address)}</div></td>
-        <td class="mono">${durStr(h.last_state_change)}</td>
-        <td class="mono">${relTime(h.last_check)}</td>
-        <td class="output-cell" title="${esc(h.plugin_output)}">${esc(h.plugin_output || '-')}</td>
-        <td class="actions" onclick="event.stopPropagation()">
-          <button class="icon-btn" title="Force check" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${esc(h.name)};'+Math.floor(Date.now()/1000),'Force check ${esc(h.name)}')">↻</button>
-          <button class="icon-btn" title="Downtime" onclick="openDowntimeModal('host','${esc(h.name)}','')">⏱</button>
-        </td>
-      </tr>`).join('') : '<tr><td colspan="6" class="empty">No matching hosts</td></tr>';
-  } else {
-    head.innerHTML = '<tr><th>Status</th><th>Host / Service</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
-    const data = await (await fetch('/api/v1/services?' + params)).json();
-    S.total = data.total;
-    S.lastItems = data.services;
-    if (!data.services.length) {
-      body.innerHTML = '<tr><td colspan="6" class="empty">No matching services</td></tr>';
-    } else {
-      let html = '', lastHost = null;
-      data.services.forEach((s, idx) => {
-        if (S.groupByHost && s.host_name !== lastHost) {
-          lastHost = s.host_name;
-          html += `<tr class="group-row"><td colspan="6">${esc(s.host_name)}</td></tr>`;
-        }
-        html += `<tr class="clickable" onclick="openSvcDrawer(${idx})">
-          <td>${svcBadge(s)}</td>
-          <td><div class="name-primary">${esc(s.description)}${flagsHTML(s)}</div>${S.groupByHost ? '' : `<div class="name-sub">${esc(s.host_name)}</div>`}</td>
-          <td class="mono">${durStr(s.last_state_change)}</td>
-          <td class="mono">${relTime(s.last_check)}</td>
-          <td class="output-cell" title="${esc(s.plugin_output)}">${esc(s.plugin_output || '-')}</td>
-          <td class="actions" onclick="event.stopPropagation()">
-            <button class="icon-btn" title="Force check" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${esc(s.host_name)};${esc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻</button>
-            ${s.current_state > 0 && !s.acknowledged ? `<button class="icon-btn" title="Acknowledge" onclick="openAckModal('service','${esc(s.host_name)}','${esc(s.description)}')">✓</button>` : ''}
-            <button class="icon-btn" title="Downtime" onclick="openDowntimeModal('service','${esc(s.host_name)}','${esc(s.description)}')">⏱</button>
-          </td>
-        </tr>`;
-      });
-      body.innerHTML = html;
-    }
-  }
-  const start = S.total ? S.offset + 1 : 0;
-  const end = Math.min(S.offset + limit, S.total);
-  document.getElementById('pager-info').textContent = `Showing ${start}–${end} of ${S.total.toLocaleString()}`;
-  document.getElementById('prev-btn').disabled = S.offset === 0;
-  document.getElementById('next-btn').disabled = end >= S.total;
-}
-
-function loadGroups() {
-  document.getElementById('hg-cards').innerHTML = S.hostgroups.length ? S.hostgroups.map(g => {
-    const t = g.services.total || 1;
-    return `<div class="gcard" onclick="jumpToGroup('hg','${esc(g.group_name)}')">
-      <h3>${esc(g.group_name)}</h3><p>${esc(g.alias || '')} • ${g.hosts.total} hosts, ${g.services.total} services</p>
-      <div class="bar" style="margin-bottom:8px"><div class="bar-ok" style="width:${(g.services.ok/t)*100}%"></div><div class="bar-warn" style="width:${(g.services.warning/t)*100}%"></div><div class="bar-crit" style="width:${(g.services.critical/t)*100}%"></div></div>
-      <div class="mono">UP:${g.hosts.up} DOWN:${g.hosts.down} | OK:${g.services.ok} WARN:${g.services.warning} CRIT:${g.services.critical}</div>
-    </div>`;
-  }).join('') : '<div class="empty">No hostgroups defined</div>';
-
-  document.getElementById('sg-cards').innerHTML = S.servicegroups.length ? S.servicegroups.map(g => {
-    const t = g.services.total || 1;
-    return `<div class="gcard" onclick="jumpToGroup('sg','${esc(g.group_name)}')">
-      <h3>${esc(g.group_name)}</h3><p>${esc(g.alias || '')} • ${g.services.total} services</p>
-      <div class="bar" style="margin-bottom:8px"><div class="bar-ok" style="width:${(g.services.ok/t)*100}%"></div><div class="bar-warn" style="width:${(g.services.warning/t)*100}%"></div><div class="bar-crit" style="width:${(g.services.critical/t)*100}%"></div></div>
-      <div class="mono">OK:${g.services.ok} WARN:${g.services.warning} CRIT:${g.services.critical} UNK:${g.services.unknown}</div>
-    </div>`;
-  }).join('') : '<div class="empty">No servicegroups defined</div>';
-}
-
-async function loadDowntimes() {
-  const dts = (await (await fetch('/api/v1/downtimes')).json()).downtimes || [];
-  const body = document.getElementById('dt-body');
-  if (!dts.length) { body.innerHTML = '<tr><td colspan="6" class="empty">No active or scheduled downtimes</td></tr>'; return; }
-  body.innerHTML = dts.map(d => {
-    const delCmd = d.type === 1 ? `DEL_SVC_DOWNTIME;${d.downtime_id}` : `DEL_HOST_DOWNTIME;${d.downtime_id}`;
-    return `<tr>
-      <td class="mono">#${d.downtime_id}</td>
-      <td><div class="name-primary">${esc(d.host_name)}</div>${d.service_description ? `<div class="name-sub">${esc(d.service_description)}</div>` : ''}</td>
-      <td class="mono">${new Date(d.start_time*1000).toLocaleString()} → ${new Date(d.end_time*1000).toLocaleString()}</td>
-      <td>${d.is_in_effect ? '<span class="badge c-warn">ACTIVE</span>' : '<span class="badge c-pend">SCHEDULED</span>'}</td>
-      <td><b>${esc(d.author)}</b>: ${esc(d.comment)}</td>
-      <td class="actions"><button class="btn btn-sm danger" onclick="sendCmd('${delCmd}','Cancel downtime #${d.downtime_id}')">Cancel</button></td>
-    </tr>`;
-  }).join('');
-}
-
-/* Localhost Config Manager */
-async function loadLocalhost() {
-  const data = await (await fetch('/api/v1/config/localhost')).json();
-  const el = document.getElementById('lh-body');
-  document.getElementById('lh-adopt-btn').style.display = (!data.adopted && data.exists && (data.parsed_hosts.length || data.parsed_services.length)) ? 'inline-flex' : 'none';
-
-  if (!data.configured || !data.exists) {
-    el.innerHTML = `<div class="empty">File <code>${esc(data.path || 'localhost.cfg')}</code> not found.<br>Pass <code>-localhost-cfg /usr/local/nagios/etc/objects/localhost.cfg</code> to <code>encore-state-gateway</code>.</div>`;
-    return;
-  }
-
-  let statusBanner = data.adopted
-    ? `<div class="kv-box" style="margin-bottom:14px;border-color:var(--ok)"><div class="k">Status</div><div class="v" style="color:var(--ok-fg)">Adopted into Managed Config — edit/clone localhost and its services directly in "Hosts & Services"</div></div>`
-    : `<div class="kv-box" style="margin-bottom:14px;border-color:var(--warn)"><div class="k">Standalone File (${esc(data.path)})</div><div class="v">Detected ${data.parsed_hosts.length} host, ${data.parsed_hostgroups.length} hostgroup, ${data.parsed_services.length} services. Click <b>1-Click Adopt</b> to manage with forms & cloning, or edit raw below.</div></div>`;
-
-  let parsedTable = '';
-  if (data.parsed_services.length) {
-    parsedTable = `<div class="table-wrap" style="margin-bottom:16px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-      <table><thead><tr><th>Host</th><th>Service</th><th>Check Command</th></tr></thead><tbody>` +
-      data.parsed_services.map(s => `<tr><td><b>${esc(s.host_name)}</b></td><td>${esc(s.service_description)}</td><td class="mono">${esc(s.check_command)}</td></tr>`).join('') +
-      `</tbody></table></div>`;
-  }
-
-  el.innerHTML = statusBanner + parsedTable +
-    `<div class="form-row"><label>Raw ${esc(data.path)} (validated automatically with <code>nagios -v</code> before saving)</label>
-     <textarea id="lh-raw-editor" class="raw-editor">${esc(data.raw)}</textarea></div>`;
-}
-
-async function adoptLocalhost() {
-  if (!confirm('Adopt localhost.cfg into Encore Managed Config? A backup of the original file will be saved automatically.')) return;
-  const con = document.getElementById('lh-console');
-  con.style.display = 'block';
-  con.textContent = 'Adopting localhost.cfg and validating with nagios -v...';
-  const res = await fetch('/api/v1/config/localhost/adopt', { method: 'POST' });
-  const d = await res.json();
-  con.textContent = (d.error ? 'ERROR: ' + d.error + '\n\n' : `ADOPTED (${d.hosts} hosts, ${d.services} services)\n\n`) + (d.output || '');
-  toast(res.ok ? 'Localhost adopted & Nagios reloading!' : ('Adopt failed: ' + d.error));
-  if (res.ok) { await loadLocalhost(); setTimeout(refreshAll, 1200); }
-}
-
-async function saveLocalhostRaw() {
-  const ta = document.getElementById('lh-raw-editor');
-  if (!ta) return;
-  const con = document.getElementById('lh-console');
-  con.style.display = 'block';
-  con.textContent = 'Validating localhost.cfg with nagios -v...';
-  const res = await fetch('/api/v1/config/localhost', {
-    method: 'PUT', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ raw: ta.value })
-  });
-  const d = await res.json();
-  con.textContent = (d.error ? 'ERROR: ' + d.error + '\n\n' : 'SAVED & RELOADING\n\n') + (d.output || '');
-  toast(res.ok ? 'localhost.cfg saved & reloaded!' : ('Save failed: ' + d.error));
-  if (res.ok) setTimeout(refreshAll, 1200);
-}
-
-/* Detail Drawer */
-function parsePerfData(pd) {
-  if (!pd) return '';
-  return pd.trim().split(/\s+/).filter(Boolean).map(tok => `<span class="perf-chip">${esc(tok)}</span>`).join('');
-}
-function openHostDrawer(idx) {
-  const h = S.lastItems[idx]; if (!h) return;
-  document.getElementById('drawer-body').innerHTML = `
-    <div class="drawer-head">
-      <div>${hostBadge(h)} ${flagsHTML(h)}<h2 style="margin-top:6px">${esc(h.name)}</h2><div class="name-sub">${esc(h.address)}</div></div>
-      <button class="btn btn-sm" onclick="closeDrawer()">✕</button>
-    </div>
-    <div class="kv-grid">
-      <div class="kv-box"><div class="k">State Type</div><div class="v">${h.state_type === 1 ? 'HARD' : 'SOFT'} (${h.current_attempt}/${h.max_attempts})</div></div>
-      <div class="kv-box"><div class="k">State Duration</div><div class="v">${durStr(h.last_state_change)}</div></div>
-      <div class="kv-box"><div class="k">Last Check</div><div class="v">${relTime(h.last_check)}</div></div>
-      <div class="kv-box"><div class="k">Latency / Exec</div><div class="v">${h.latency.toFixed(3)}s / ${h.execution_time.toFixed(3)}s</div></div>
-    </div>
-    <div class="kv-box" style="margin-bottom:10px"><div class="k">Plugin Output</div><div class="mono" style="margin-top:4px;white-space:pre-wrap;color:var(--text)">${esc(h.plugin_output || '-')}</div></div>
-    ${h.perf_data ? `<div class="kv-box" style="margin-bottom:12px"><div class="k">Performance Data</div><div class="perf-chips">${parsePerfData(h.perf_data)}</div></div>` : ''}
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:14px">
-      <button class="btn btn-sm primary" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${esc(h.name)};'+Math.floor(Date.now()/1000),'Force check')">↻ Force Check</button>
-      ${h.current_state > 0 && !h.acknowledged ? `<button class="btn btn-sm" onclick="closeDrawer();openAckModal('host','${esc(h.name)}','')">✓ Acknowledge</button>` : ''}
-      ${h.acknowledged ? `<button class="btn btn-sm" onclick="sendCmd('REMOVE_HOST_ACKNOWLEDGEMENT;${esc(h.name)}','Remove ACK')">Remove ACK</button>` : ''}
-      <button class="btn btn-sm" onclick="closeDrawer();openDowntimeModal('host','${esc(h.name)}','')">⏱ Downtime</button>
-      <button class="btn btn-sm" onclick="sendCmd('DISABLE_HOST_CHECK;${esc(h.name)}','Disable check')">Disable Check</button>
-      <button class="btn btn-sm" onclick="sendCmd('ENABLE_HOST_CHECK;${esc(h.name)}','Enable check')">Enable Check</button>
-    </div>`;
-  document.getElementById('drawer-wrap').classList.add('open');
-}
-function openSvcDrawer(idx) {
-  const s = S.lastItems[idx]; if (!s) return;
-  document.getElementById('drawer-body').innerHTML = `
-    <div class="drawer-head">
-      <div>${svcBadge(s)} ${flagsHTML(s)}<h2 style="margin-top:6px">${esc(s.description)}</h2><div class="name-sub">${esc(s.host_name)}</div></div>
-      <button class="btn btn-sm" onclick="closeDrawer()">✕</button>
-    </div>
-    <div class="kv-grid">
-      <div class="kv-box"><div class="k">State Type</div><div class="v">${s.state_type === 1 ? 'HARD' : 'SOFT'} (${s.current_attempt}/${s.max_attempts})</div></div>
-      <div class="kv-box"><div class="k">State Duration</div><div class="v">${durStr(s.last_state_change)}</div></div>
-      <div class="kv-box"><div class="k">Last Check</div><div class="v">${relTime(s.last_check)}</div></div>
-      <div class="kv-box"><div class="k">Latency / Exec</div><div class="v">${s.latency.toFixed(3)}s / ${s.execution_time.toFixed(3)}s</div></div>
-    </div>
-    <div class="kv-box" style="margin-bottom:10px"><div class="k">Plugin Output</div><div class="mono" style="margin-top:4px;white-space:pre-wrap;color:var(--text)">${esc(s.plugin_output || '-')}</div></div>
-    ${s.perf_data ? `<div class="kv-box" style="margin-bottom:12px"><div class="k">Performance Data</div><div class="perf-chips">${parsePerfData(s.perf_data)}</div></div>` : ''}
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:14px">
-      <button class="btn btn-sm primary" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${esc(s.host_name)};${esc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻ Force Check</button>
-      ${s.current_state > 0 && !s.acknowledged ? `<button class="btn btn-sm" onclick="closeDrawer();openAckModal('service','${esc(s.host_name)}','${esc(s.description)}')">✓ Acknowledge</button>` : ''}
-      ${s.acknowledged ? `<button class="btn btn-sm" onclick="sendCmd('REMOVE_SVC_ACKNOWLEDGEMENT;${esc(s.host_name)};${esc(s.description)}','Remove ACK')">Remove ACK</button>` : ''}
-      <button class="btn btn-sm" onclick="closeDrawer();openDowntimeModal('service','${esc(s.host_name)}','${esc(s.description)}')">⏱ Downtime</button>
-      <button class="btn btn-sm" onclick="sendCmd('DISABLE_SVC_CHECK;${esc(s.host_name)};${esc(s.description)}','Disable check')">Disable Check</button>
-      <button class="btn btn-sm" onclick="sendCmd('ENABLE_SVC_CHECK;${esc(s.host_name)};${esc(s.description)}','Enable check')">Enable Check</button>
-    </div>`;
-  document.getElementById('drawer-wrap').classList.add('open');
-}
-function closeDrawer() { document.getElementById('drawer-wrap').classList.remove('open'); }
-
-/* Modals */
-function openModal(html) { document.getElementById('modal-content').innerHTML = html; document.getElementById('modal-backdrop').classList.add('open'); }
-function closeModal() { document.getElementById('modal-backdrop').classList.remove('open'); }
-
-function openAckModal(kind, host, desc) {
-  openModal(`<h2>Acknowledge ${kind === 'host' ? host : host + ' / ' + desc}</h2>
-    <div class="form-row"><label>Comment</label><input id="m-ack-cmt" type="text" value="Acknowledged via Encore Dashboard"></div>
-    <div style="display:flex;gap:14px;margin:8px 0">
-      <label class="chk-pill"><input type="checkbox" id="m-ack-sticky" checked> Sticky</label>
-      <label class="chk-pill"><input type="checkbox" id="m-ack-notify"> Send Notification</label>
-    </div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitAck('${kind}','${esc(host)}','${esc(desc)}')">Acknowledge</button></div>`);
-}
-function submitAck(kind, host, desc) {
-  const cmt = document.getElementById('m-ack-cmt').value.trim() || 'Acknowledged';
-  const sticky = document.getElementById('m-ack-sticky').checked ? 2 : 1;
-  const notify = document.getElementById('m-ack-notify').checked ? 1 : 0;
-  const cmd = kind === 'host' ? `ACKNOWLEDGE_HOST_PROBLEM;${host};${sticky};${notify};1;encore-ui;${cmt}` : `ACKNOWLEDGE_SVC_PROBLEM;${host};${desc};${sticky};${notify};1;encore-ui;${cmt}`;
-  closeModal(); sendCmd(cmd, 'Acknowledge');
-}
-function openDowntimeModal(kind, host, desc) {
-  openModal(`<h2>Schedule Downtime — ${kind === 'host' ? host : host + ' / ' + desc}</h2>
-    <div class="form-row"><label>Duration (minutes)</label>
-      <div class="presets">
-        <button class="btn btn-sm" onclick="document.getElementById('m-dt-min').value=30">30m</button>
-        <button class="btn btn-sm" onclick="document.getElementById('m-dt-min').value=60">1h</button>
-        <button class="btn btn-sm" onclick="document.getElementById('m-dt-min').value=240">4h</button>
-        <button class="btn btn-sm" onclick="document.getElementById('m-dt-min').value=1440">24h</button>
-      </div>
-      <input id="m-dt-min" type="number" value="60" min="1">
-    </div>
-    <div class="form-row"><label>Comment</label><input id="m-dt-cmt" type="text" value="Scheduled maintenance"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitDowntime('${kind}','${esc(host)}','${esc(desc)}')">Schedule</button></div>`);
-}
-function submitDowntime(kind, host, desc) {
-  const mins = Math.max(1, Number(document.getElementById('m-dt-min').value) || 60);
-  const cmt = document.getElementById('m-dt-cmt').value.trim() || 'Maintenance';
-  const now = Math.floor(Date.now()/1000);
-  const cmd = kind === 'host' ? `SCHEDULE_HOST_DOWNTIME;${host};${now};${now+mins*60};1;0;0;encore-ui;${cmt}` : `SCHEDULE_SVC_DOWNTIME;${host};${desc};${now};${now+mins*60};1;0;0;encore-ui;${cmt}`;
-  closeModal(); sendCmd(cmd, 'Schedule downtime');
-}
-
-/* Management Views */
-async function loadManage() {
-  S.managed = await (await fetch('/api/v1/config')).json();
-  const el = document.getElementById('manage-content');
-  if (!S.managed.enabled && S.view !== 'system') {
-    el.innerHTML = `<div class="empty">Config management disabled. Start gateway with <code>-managed-dir /usr/local/nagios/etc/encore.d</code>.</div>`;
-    return;
-  }
-  const c = S.managed.config;
-
-  if (S.view === 'manage-hosts') {
-    el.innerHTML = `
-      <div style="padding:12px 16px 6px;font-weight:650;font-size:13px">Managed Hosts (${c.hosts.length})</div>
-      <div class="table-wrap"><table><thead><tr><th>Host</th><th>Address</th><th>Check Command</th><th>Hostgroups</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${c.hosts.length ? c.hosts.map((h, i) => `<tr>
-          <td><b>${esc(h.name)}</b><div class="name-sub">${esc(h.alias)}</div></td>
-          <td class="mono">${esc(h.address)}</td><td class="mono">${esc(h.check_command)}</td>
-          <td class="mono">${esc((h.hostgroups||[]).join(', ')||'-')}</td>
-          <td>${h.enabled ? '<span class="badge c-ok">ENABLED</span>' : '<span class="badge c-pend">DISABLED</span>'}</td>
-          <td class="actions">
-            <button class="btn btn-sm" onclick="openHostForm(${i})">Edit</button>
-            <button class="btn btn-sm" onclick="openCloneHostModal('${esc(h.name)}')">Clone</button>
-            <button class="btn btn-sm danger" onclick="deleteManagedHost('${esc(h.name)}')">Delete</button>
-          </td></tr>`).join('') : '<tr><td colspan="6" class="empty">No managed hosts yet.</td></tr>'}
-      </tbody></table></div>
-      <div style="padding:16px 16px 6px;font-weight:650;font-size:13px">Managed Services (${c.services.length})</div>
-      <div class="table-wrap"><table><thead><tr><th>Host</th><th>Service</th><th>Check Command</th><th>Groups</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${c.services.length ? c.services.map((s, i) => `<tr>
-          <td><b>${esc(s.host_name)}</b></td><td>${esc(s.service_description)}</td>
-          <td class="mono">${esc(s.check_command)}</td><td class="mono">${esc((s.servicegroups||[]).join(', ')||'-')}</td>
-          <td>${s.enabled ? '<span class="badge c-ok">ENABLED</span>' : '<span class="badge c-pend">DISABLED</span>'}</td>
-          <td class="actions">
-            <button class="btn btn-sm" onclick="openSvcForm(${i})">Edit</button>
-            <button class="btn btn-sm" onclick="openCloneSvcModal('${esc(s.host_name)}','${esc(s.service_description)}')">Clone</button>
-            <button class="btn btn-sm danger" onclick="deleteManagedSvc('${esc(s.host_name)}','${esc(s.service_description)}')">Delete</button>
-          </td></tr>`).join('') : '<tr><td colspan="6" class="empty">No managed services yet.</td></tr>'}
-      </tbody></table></div>`;
-  } else if (S.view === 'manage-cmd') {
-    el.innerHTML = `
-      <div style="padding:12px 16px 6px;display:flex;justify-content:space-between;align-items:center"><b>Commands</b><button class="btn btn-sm" onclick="openCmdForm(-1)">+ Command</button></div>
-      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Command Line</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${c.commands.length ? c.commands.map((cmd, i) => `<tr><td><b>${esc(cmd.command_name)}</b></td><td class="mono">${esc(cmd.command_line)}</td>
-          <td class="actions"><button class="btn btn-sm" onclick="openCmdForm(${i})">Edit</button><button class="btn btn-sm" onclick="openCmdForm(${i},true)">Clone</button><button class="btn btn-sm danger" onclick="deleteManagedItem('commands','name=${encodeURIComponent(cmd.command_name)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="3" class="empty">None</td></tr>'}
-      </tbody></table></div>
-      <div style="padding:14px 16px 6px;display:flex;justify-content:space-between;align-items:center"><b>Hostgroups</b><button class="btn btn-sm" onclick="openGroupForm('hostgroups')">+ Hostgroup</button></div>
-      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Alias</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${c.hostgroups.length ? c.hostgroups.map(g => `<tr><td><b>${esc(g.group_name)}</b></td><td>${esc(g.alias)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('hostgroups','name=${encodeURIComponent(g.group_name)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="3" class="empty">None</td></tr>'}
-      </tbody></table></div>
-      <div style="padding:14px 16px 6px;display:flex;justify-content:space-between;align-items:center"><b>Servicegroups</b><button class="btn btn-sm" onclick="openGroupForm('servicegroups')">+ Servicegroup</button></div>
-      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Alias</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${c.servicegroups.length ? c.servicegroups.map(g => `<tr><td><b>${esc(g.group_name)}</b></td><td>${esc(g.alias)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('servicegroups','name=${encodeURIComponent(g.group_name)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="3" class="empty">None</td></tr>'}
-      </tbody></table></div>`;
-  } else if (S.view === 'manage-contacts') {
-    el.innerHTML = `
-      <div style="padding:12px 16px 6px;display:flex;justify-content:space-between;align-items:center"><b>Contacts</b><button class="btn btn-sm" onclick="openContactForm()">+ Contact</button></div>
-      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Alias</th><th>Email</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${c.contacts.length ? c.contacts.map(ct => `<tr><td><b>${esc(ct.contact_name)}</b></td><td>${esc(ct.alias)}</td><td class="mono">${esc(ct.email)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('contacts','name=${encodeURIComponent(ct.contact_name)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">None</td></tr>'}
-      </tbody></table></div>`;
-  } else if (S.view === 'system') {
-    const [bRes, aRes] = await Promise.all([fetch('/api/v1/config/backups'), fetch('/api/v1/audit?limit=40')]);
-    const backups = (await bRes.json()).backups || [];
-    const audit = (await aRes.json()).entries || [];
-    const p = (S.summary && S.summary.program) || {};
-    el.innerHTML = `
-      <div class="toggle-grid">
-        <div class="toggle-card"><div><b>Notifications</b><div class="name-sub">${p.notifications_enabled ? 'Enabled' : 'Disabled'}</div></div>
-          <button class="btn btn-sm" onclick="sendCmd('${p.notifications_enabled ? 'DISABLE_NOTIFICATIONS' : 'ENABLE_NOTIFICATIONS'}','Toggle notifications')">${p.notifications_enabled ? 'Disable' : 'Enable'}</button></div>
-        <div class="toggle-card"><div><b>Active Service Checks</b><div class="name-sub">${p.execute_service_checks ? 'Enabled' : 'Disabled'}</div></div>
-          <button class="btn btn-sm" onclick="sendCmd('${p.execute_service_checks ? 'STOP_EXECUTING_SVC_CHECKS' : 'START_EXECUTING_SVC_CHECKS'}','Toggle service checks')">${p.execute_service_checks ? 'Stop' : 'Start'}</button></div>
-        <div class="toggle-card"><div><b>Active Host Checks</b><div class="name-sub">${p.execute_host_checks ? 'Enabled' : 'Disabled'}</div></div>
-          <button class="btn btn-sm" onclick="sendCmd('${p.execute_host_checks ? 'STOP_EXECUTING_HOST_CHECKS' : 'START_EXECUTING_HOST_CHECKS'}','Toggle host checks')">${p.execute_host_checks ? 'Stop' : 'Start'}</button></div>
-        <div class="toggle-card"><div><b>Flap Detection</b><div class="name-sub">${p.flap_detection_enabled ? 'Enabled' : 'Disabled'}</div></div>
-          <button class="btn btn-sm" onclick="sendCmd('${p.flap_detection_enabled ? 'DISABLE_FLAP_DETECTION' : 'ENABLE_FLAP_DETECTION'}','Toggle flap')">${p.flap_detection_enabled ? 'Disable' : 'Enable'}</button></div>
-      </div>
-      <div style="padding:8px 16px"><b>Config Backups (1-Click Rollback)</b></div>
-      <div class="table-wrap"><table><thead><tr><th>Backup</th><th>Timestamp</th><th>Size</th><th style="text-align:right">Action</th></tr></thead><tbody>
-        ${backups.length ? backups.map(b => `<tr><td class="mono">${esc(b.name)}</td><td class="mono">${esc(b.timestamp)}</td><td class="mono">${b.size_bytes} B</td><td class="actions"><button class="btn btn-sm" onclick="rollbackBackup('${esc(b.name)}')">Rollback</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">No backups yet</td></tr>'}
-      </tbody></table></div>
-      <div style="padding:14px 16px 6px"><b>Audit Log</b></div>
-      <div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead><tbody>
-        ${audit.length ? audit.map(a => `<tr><td class="mono">${esc(a.time)}</td><td><b>${esc(a.action)}</b></td><td class="mono">${esc(a.target)}</td><td class="mono">${esc(a.detail || '')}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No audit entries</td></tr>'}
-      </tbody></table></div>`;
-  }
-}
-
-/* CRUD & Clone Forms */
-function openHostForm(idx) {
-  const h = idx >= 0 ? S.managed.config.hosts[idx] : { name:'', alias:'', address:'', check_command:'check-host-alive', check_interval:5, retry_interval:1, max_check_attempts:3, check_period:'24x7', contacts:'', hostgroups:[], enabled:true };
-  openModal(`<h2>${idx >= 0 ? 'Edit Host' : 'Add Host'}</h2>
-    <div class="form-grid">
-      <div class="form-row"><label>Host Name *</label><input id="f-h-name" type="text" value="${esc(h.name)}" ${idx>=0?'readonly':''}></div>
-      <div class="form-row"><label>IP / Address *</label><input id="f-h-addr" type="text" value="${esc(h.address)}"></div>
-      <div class="form-row"><label>Alias</label><input id="f-h-alias" type="text" value="${esc(h.alias)}"></div>
-      <div class="form-row"><label>Check Command</label><input id="f-h-cmd" type="text" value="${esc(h.check_command)}"></div>
-      <div class="form-row"><label>Hostgroups (comma-separated)</label><input id="f-h-hg" type="text" value="${esc((h.hostgroups||[]).join(','))}"></div>
-      <div class="form-row"><label>Contacts</label><input id="f-h-ct" type="text" value="${esc(h.contacts)}"></div>
-      <div class="form-row"><label>Check Interval (min)</label><input id="f-h-int" type="number" value="${h.check_interval||5}"></div>
-      <div class="form-row"><label>Max Attempts</label><input id="f-h-att" type="number" value="${h.max_check_attempts||3}"></div>
-    </div>
-    <label class="chk-pill"><input type="checkbox" id="f-h-en" ${h.enabled!==false?'checked':''}> Enabled</label>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveHostForm()">Save Host</button></div>`);
-}
-async function saveHostForm() {
-  await apiPost('/api/v1/config/hosts', {
-    name: document.getElementById('f-h-name').value.trim(),
-    address: document.getElementById('f-h-addr').value.trim(),
-    alias: document.getElementById('f-h-alias').value.trim(),
-    check_command: document.getElementById('f-h-cmd').value.trim(),
-    hostgroups: document.getElementById('f-h-hg').value.split(',').map(x=>x.trim()).filter(Boolean),
-    contacts: document.getElementById('f-h-ct').value.trim(),
-    check_interval: Number(document.getElementById('f-h-int').value)||5,
-    retry_interval: 1, max_check_attempts: Number(document.getElementById('f-h-att').value)||3,
-    check_period: '24x7', enabled: document.getElementById('f-h-en').checked
-  }, 'Host saved');
-}
-function openCloneHostModal(srcName) {
-  openModal(`<h2>Clone Host: ${esc(srcName)}</h2>
-    <div class="form-row"><label>New Host Name *</label><input id="c-h-name" type="text" placeholder="${esc(srcName)}-clone"></div>
-    <div class="form-row"><label>New IP / Address *</label><input id="c-h-addr" type="text" placeholder="10.0.0.x"></div>
-    <div class="form-row"><label>New Alias</label><input id="c-h-alias" type="text" placeholder="Optional"></div>
-    <label class="chk-pill"><input type="checkbox" id="c-h-svcs" checked> Clone all services belonging to ${esc(srcName)}</label>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitCloneHost('${esc(srcName)}')">Clone Host</button></div>`);
-}
-async function submitCloneHost(srcName) {
-  await apiPost('/api/v1/config/hosts/clone', {
-    source_name: srcName, new_name: document.getElementById('c-h-name').value.trim(),
-    new_address: document.getElementById('c-h-addr').value.trim(),
-    new_alias: document.getElementById('c-h-alias').value.trim(),
-    include_services: document.getElementById('c-h-svcs').checked
-  }, 'Host cloned');
-}
-function openSvcForm(idx) {
-  const s = idx >= 0 ? S.managed.config.services[idx] : { host_name:'', service_description:'', check_command:'check_http', check_interval:5, retry_interval:1, max_check_attempts:3, check_period:'24x7', contacts:'', servicegroups:[], enabled:true };
-  const hostOpts = S.managed.config.hosts.map(h => `<option value="${esc(h.name)}">`).join('');
-  openModal(`<h2>${idx >= 0 ? 'Edit Service' : 'Add Service'}</h2>
-    <div class="presets">
-      <button class="btn btn-sm" onclick="applySvcPreset('HTTP','check_http')">HTTP</button>
-      <button class="btn btn-sm" onclick="applySvcPreset('TCP 443','check_tcp!443')">TCP</button>
-      <button class="btn btn-sm" onclick="applySvcPreset('PING','check_ping!100.0,20%!500.0,60%')">Ping</button>
-      <button class="btn btn-sm" onclick="applySvcPreset('SSH','check_ssh')">SSH</button>
-      <button class="btn btn-sm" onclick="applySvcPreset('Disk /','check_local_disk!20%!10%!/')">Disk</button>
-      <button class="btn btn-sm" onclick="applySvcPreset('NCPA CPU','check_ncpa!MY_TOKEN!cpu/percent!-w 80 -c 90')">NCPA CPU</button>
-      <button class="btn btn-sm" onclick="applySvcPreset('NCPA Memory','check_ncpa!MY_TOKEN!memory/virtual!-w 80 -c 90')">NCPA RAM</button>
-      <button class="btn btn-sm" onclick="applySvcPreset('NCPA Disk /','check_ncpa!MY_TOKEN!disk/logical/|/used_percent!-w 80 -c 90')">NCPA Disk</button>
-      <button class="btn btn-sm" onclick="applySvcPreset('NCPA Procs','check_ncpa!MY_TOKEN!processes!-w 250 -c 400')">NCPA Procs</button>
-    </div>
-    <div class="form-grid">
-      <div class="form-row"><label>Host Name *</label><input id="f-s-host" list="managed-host-list" type="text" value="${esc(s.host_name)}"><datalist id="managed-host-list">${hostOpts}</datalist></div>
-      <div class="form-row"><label>Service Description *</label><input id="f-s-desc" type="text" value="${esc(s.service_description)}"></div>
-      <div class="form-row full"><label>Check Command *</label><input id="f-s-cmd" type="text" value="${esc(s.check_command)}"></div>
-      <div class="form-row"><label>Servicegroups</label><input id="f-s-sg" type="text" value="${esc((s.servicegroups||[]).join(','))}"></div>
-      <div class="form-row"><label>Contacts</label><input id="f-s-ct" type="text" value="${esc(s.contacts)}"></div>
-      <div class="form-row"><label>Interval (min)</label><input id="f-s-int" type="number" value="${s.check_interval||5}"></div>
-      <div class="form-row"><label>Max Attempts</label><input id="f-s-att" type="number" value="${s.max_check_attempts||3}"></div>
-    </div>
-    <label class="chk-pill"><input type="checkbox" id="f-s-en" ${s.enabled!==false?'checked':''}> Enabled</label>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveSvcForm()">Save Service</button></div>`);
-}
-function applySvcPreset(desc, cmd) {
-  if (!document.getElementById('f-s-desc').value) document.getElementById('f-s-desc').value = desc;
-  document.getElementById('f-s-cmd').value = cmd;
-}
-async function saveSvcForm() {
-  await apiPost('/api/v1/config/services', {
-    host_name: document.getElementById('f-s-host').value.trim(),
-    service_description: document.getElementById('f-s-desc').value.trim(),
-    check_command: document.getElementById('f-s-cmd').value.trim(),
-    servicegroups: document.getElementById('f-s-sg').value.split(',').map(x=>x.trim()).filter(Boolean),
-    contacts: document.getElementById('f-s-ct').value.trim(),
-    check_interval: Number(document.getElementById('f-s-int').value)||5,
-    retry_interval: 1, max_check_attempts: Number(document.getElementById('f-s-att').value)||3,
-    check_period: '24x7', enabled: document.getElementById('f-s-en').checked
-  }, 'Service saved');
-}
-function openCloneSvcModal(srcHost, srcDesc) {
-  openModal(`<h2>Clone Service: ${esc(srcHost)} / ${esc(srcDesc)}</h2>
-    <div class="form-row"><label>Target Host Name *</label><input id="c-s-host" type="text" value="${esc(srcHost)}"></div>
-    <div class="form-row"><label>New Service Description *</label><input id="c-s-desc" type="text" value="${esc(srcDesc)}-copy"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitCloneSvc('${esc(srcHost)}','${esc(srcDesc)}')">Clone Service</button></div>`);
-}
-async function submitCloneSvc(srcHost, srcDesc) {
-  await apiPost('/api/v1/config/services/clone', {
-    source_host: srcHost, source_description: srcDesc,
-    target_host: document.getElementById('c-s-host').value.trim(),
-    target_description: document.getElementById('c-s-desc').value.trim()
-  }, 'Service cloned');
-}
-function openCmdForm(idx, isClone) {
-  const c = idx >= 0 ? S.managed.config.commands[idx] : { command_name:'', command_line:'$USER1$/check_http -H $HOSTADDRESS$' };
-  openModal(`<h2>${isClone ? 'Clone Command' : (idx>=0?'Edit Command':'Add Command')}</h2>
-    <div class="form-row"><label>Command Name *</label><input id="f-c-name" type="text" value="${esc(isClone ? c.command_name + '_copy' : c.command_name)}"></div>
-    <div class="form-row"><label>Command Line *</label><input id="f-c-line" type="text" value="${esc(c.command_line)}"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/commands',{command_name:document.getElementById('f-c-name').value.trim(),command_line:document.getElementById('f-c-line').value.trim()},'Command saved')">Save</button></div>`);
-}
-function openGroupForm(kind) {
-  openModal(`<h2>Add ${kind === 'hostgroups' ? 'Hostgroup' : 'Servicegroup'}</h2>
-    <div class="form-row"><label>Group Name *</label><input id="f-g-name" type="text"></div>
-    <div class="form-row"><label>Alias</label><input id="f-g-alias" type="text"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/${kind}',{group_name:document.getElementById('f-g-name').value.trim(),alias:document.getElementById('f-g-alias').value.trim()},'Group saved')">Save</button></div>`);
-}
-function openContactForm() {
-  openModal(`<h2>Add Contact</h2>
-    <div class="form-row"><label>Contact Name *</label><input id="f-ct-name" type="text"></div>
-    <div class="form-row"><label>Alias</label><input id="f-ct-alias" type="text"></div>
-    <div class="form-row"><label>Email</label><input id="f-ct-email" type="text"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/contacts',{contact_name:document.getElementById('f-ct-name').value.trim(),alias:document.getElementById('f-ct-alias').value.trim(),email:document.getElementById('f-ct-email').value.trim()},'Contact saved')">Save</button></div>`);
-}
-
-async function apiPost(url, payload, okMsg) {
-  try {
-    const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.error || res.statusText);
-    closeModal();
-    toast(okMsg + ' (click Apply Changes to reload)');
-    await loadManage(); await loadMeta();
-  } catch (e) { toast('Error: ' + e.message); }
-}
-async function deleteManagedHost(name) { if (confirm(`Delete host "${name}" and its managed services?`)) await deleteManagedItem('hosts', 'name=' + encodeURIComponent(name)); }
-async function deleteManagedSvc(host, desc) { if (confirm(`Delete service "${host}/${desc}"?`)) await deleteManagedItem('services', `host=${encodeURIComponent(host)}&description=${encodeURIComponent(desc)}`); }
-async function deleteManagedItem(kind, qs) {
-  const res = await fetch(`/api/v1/config/${kind}?${qs}`, { method:'DELETE' });
-  const d = await res.json();
-  if (!res.ok) { toast('Error: ' + (d.error || res.statusText)); return; }
-  toast('Deleted (click Apply Changes)');
-  await loadManage(); await loadMeta();
-}
-async function runValidate(apply) {
-  const con = document.getElementById('validate-console');
-  if (con) { con.style.display = 'block'; con.textContent = apply ? 'Validating and applying config...' : 'Running nagios -v...'; }
-  const res = await fetch(apply ? '/api/v1/config/apply' : '/api/v1/config/validate', { method:'POST' });
-  const d = await res.json();
-  if (con) con.textContent = (d.error ? 'ERROR: ' + d.error + '\n\n' : 'OK\n\n') + (d.output || '');
-  toast(res.ok ? (apply ? 'Applied & Nagios reloading!' : 'Config valid!') : 'Validation failed');
-  if (res.ok && apply) { if (S.view.startsWith('manage') || S.view === 'system') await loadManage(); setTimeout(refreshAll, 1400); }
-}
-async function rollbackBackup(name) {
-  if (!confirm(`Rollback managed config to ${name}?`)) return;
-  const res = await fetch('/api/v1/config/rollback', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({backup:name}) });
-  const d = await res.json();
-  toast(res.ok ? 'Rolled back & reloading!' : ('Rollback failed: ' + d.error));
-  if (res.ok) { await loadManage(); setTimeout(refreshAll, 1400); }
-}
-
-/* Custom Scripts Manager */
-async function loadScripts() {
-  const data = await (await fetch('/api/v1/scripts')).json();
-  const el = document.getElementById('scripts-content');
-  if (!data.enabled) {
-    el.innerHTML = '<div class="empty">Custom scripts require <code>-managed-dir</code> to be configured on <code>encore-state-gateway</code>.</div>';
-    return;
-  }
-  const list = data.scripts || [];
-  el.innerHTML = `<div class="kv-box" style="margin-bottom:14px"><div class="k">Scripts Directory (auto chmod +x)</div><div class="mono" style="margin-top:3px;color:var(--text)">${esc(data.dir)}</div></div>` +
-    (list.length ? `<div class="table-wrap"><table><thead><tr><th>Script Name</th><th>Full Path</th><th>Size</th><th>Modified</th><th style="text-align:right">Actions</th></tr></thead><tbody>` +
-      list.map(sc => `<tr>
-        <td><b>${esc(sc.name)}</b></td>
-        <td class="mono">${esc(sc.path)}</td>
-        <td class="mono">${sc.size_bytes} B</td>
-        <td class="mono">${esc(sc.mod_time)}</td>
-        <td class="actions">
-          <button class="btn btn-sm" onclick="openScriptModal('${esc(sc.name)}')">Edit</button>
-          <button class="btn btn-sm" onclick="openTestScriptModal('${esc(sc.name)}')">Test Run</button>
-          <button class="btn btn-sm primary" onclick="registerScriptAsCmd('${esc(sc.name)}','${esc(sc.path)}')">Register Command</button>
-          <button class="btn btn-sm danger" onclick="deleteScript('${esc(sc.name)}')">Delete</button>
-        </td></tr>`).join('') + `</tbody></table></div>`
-    : '<div class="empty">Belum ada custom script. Klik <b>+ New Bash Script</b> atau <b>+ New Python Script</b> untuk membuat check custom langsung dari dashboard.</div>');
-}
-
-async function openScriptModal(name, kind) {
-  let content = '';
-  if (name) {
-    const d = await (await fetch('/api/v1/scripts/content?name=' + encodeURIComponent(name))).json();
-    content = d.content || '';
-  } else if (kind === 'python') {
-    content = `#!/usr/bin/env python3\nimport sys\n# Exit codes: 0=OK, 1=WARNING, 2=CRITICAL, 3=UNKNOWN\nhost = sys.argv[1] if len(sys.argv) > 1 else "localhost"\nprint(f"OK - custom python check on {host} | metric=1;5;10;0;100")\nsys.exit(0)\n`;
-  } else {
-    content = `#!/bin/sh\n# Exit codes: 0=OK, 1=WARNING, 2=CRITICAL, 3=UNKNOWN\nHOST="\${1:-localhost}"\necho "OK - custom check on \$HOST | latency=1.2ms;50;100;0;200"\nexit 0\n`;
-  }
-  openModal(`<h2>${name ? 'Edit Script: ' + esc(name) : 'New Custom Check Script'}</h2>
-    <div class="form-row"><label>Filename (e.g. check_app.sh or check_api.py)</label><input id="sc-name" type="text" value="${esc(name || (kind==='python'?'check_custom.py':'check_custom.sh'))}" ${name?'readonly':''}></div>
-    <div class="form-row"><label>Script Content (auto chmod 0755 on save)</label><textarea id="sc-body" class="raw-editor">${esc(content)}</textarea></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveScriptModal()">Save Script</button></div>`);
-}
-async function saveScriptModal() {
-  const name = document.getElementById('sc-name').value.trim();
-  const content = document.getElementById('sc-body').value;
-  const res = await fetch('/api/v1/scripts', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, content}) });
-  const d = await res.json();
-  if (!res.ok) { toast('Error: ' + (d.error || res.statusText)); return; }
-  closeModal(); toast('Script saved (chmod +x): ' + name); loadScripts();
-}
-async function deleteScript(name) {
-  if (!confirm(`Delete custom script "${name}"?`)) return;
-  const res = await fetch('/api/v1/scripts?name=' + encodeURIComponent(name), { method:'DELETE' });
-  if (res.ok) { toast('Script deleted'); loadScripts(); }
-}
-function openTestScriptModal(name) {
-  openModal(`<h2>Test Run: ${esc(name)}</h2>
-    <div class="form-row"><label>Arguments (optional, e.g. 127.0.0.1 8080)</label><input id="sc-test-args" type="text" placeholder="127.0.0.1"></div>
-    <pre class="console-out" id="sc-test-out" style="display:block;margin:8px 0">Click "Run Test" to execute (10s timeout)...</pre>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Close</button><button class="btn primary" onclick="runScriptTest('${esc(name)}')">Run Test</button></div>`);
-}
-async function runScriptTest(name) {
-  const outEl = document.getElementById('sc-test-out');
-  outEl.textContent = 'Running...';
-  const args = document.getElementById('sc-test-args').value.trim();
-  const res = await fetch('/api/v1/scripts/test', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, args}) });
-  const d = await res.json();
-  const stMap = {0:'OK',1:'WARNING',2:'CRITICAL',3:'UNKNOWN'};
-  outEl.textContent = `Exit Code: ${d.exit_code} (${stMap[d.exit_code]||'ERR'}) • Duration: ${d.duration_ms}ms\n--- STDOUT ---\n${d.stdout || '(empty)'}\n--- STDERR ---\n${d.stderr || '(empty)'}`;
-}
-function registerScriptAsCmd(name, fullPath) {
-  const cmdName = name.replace(/\.(sh|py|pl)$/, '');
-  openModal(`<h2>Register Script as Nagios Command</h2>
-    <div class="form-row"><label>Command Name *</label><input id="f-c-name" type="text" value="${esc(cmdName)}"></div>
-    <div class="form-row"><label>Command Line *</label><input id="f-c-line" type="text" value="${esc(fullPath)} $HOSTADDRESS$ $ARG1$"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/commands',{command_name:document.getElementById('f-c-name').value.trim(),command_line:document.getElementById('f-c-line').value.trim()},'Command registered')">Register Command</button></div>`);
-}
-async function quickRegisterNCPA() {
-  await apiPost('/api/v1/config/commands', {
-    command_name: 'check_ncpa',
-    command_line: "$USER1$/check_ncpa.py -H $HOSTADDRESS$ -t '$ARG1$' -P 5693 -M $ARG2$ $ARG3$"
-  }, 'Command check_ncpa registered');
-}
-
-/* Interactive User Guide */
-S.guideTab = 'ops';
-S.catalogCmds = [];
-function setGuideTab(t) {
-  S.guideTab = t;
-  ['ops','sop','catalog','paths'].forEach(k => document.getElementById('gtab-'+k).classList.toggle('active', k===t));
-  renderGuide();
-}
-function copyText(txt) {
-  navigator.clipboard?.writeText(txt).then(() => toast('Copied: ' + txt)).catch(() => toast(txt));
-}
-async function renderGuide() {
-  const el = document.getElementById('guide-body');
-  if (S.guideTab === 'ops') {
-    el.innerHTML = `
-      <h3>1. Memahami Status & Indikator</h3>
-      <div class="kv-grid">
-        <div class="kv-box"><div class="k">Normal</div><div class="v"><span class="badge c-ok"><img src="/assets/status/status-ok.svg">UP / OK</span> Exit code <code>0</code></div></div>
-        <div class="kv-box"><div class="k">Peringatan</div><div class="v"><span class="badge c-warn"><img src="/assets/status/status-warn.svg">WARN / UNREACH</span> Exit code <code>1</code></div></div>
-        <div class="kv-box"><div class="k">Kritis</div><div class="v"><span class="badge c-crit"><img src="/assets/status/status-critical.svg">CRIT / DOWN</span> Exit code <code>2</code></div></div>
-        <div class="kv-box"><div class="k">Lainnya</div><div class="v"><span class="badge c-unk"><img src="/assets/status/status-info.svg">UNKNOWN</span> <code>3</code> • <span class="badge c-pend">PENDING</span> belum dicek</div></div>
-      </div>
-      <ul>
-        <li><b>SOFT vs HARD:</b> Gagal pertama masuk <code>SOFT</code> dan diulang hingga <code>max_check_attempts</code>; jika tetap gagal menjadi <code>HARD</code>.</li>
-        <li><b>Unhandled Problems:</b> Problem aktif yang <b>belum di-ACK</b> dan <b>tidak sedang Downtime</b> — selalu pantau angka ini di halaman <b>Overview</b>.</li>
-        <li><b>Tag:</b> <code>ACK</code> = sudah diketahui tim, <code>DT</code> = sedang dalam jadwal maintenance, <code>FLAP</code> = status terlalu sering berubah-ubah.</li>
-      </ul>
-      <h3>2. Alur Operasional Triage Harian</h3>
-      <ol>
-        <li>Buka <b>Overview</b> atau <b>Problems</b> (lihat badge merah di sidebar kiri).</li>
-        <li>Klik baris Host/Service untuk membuka <b>Detail Slide-Over Drawer</b> (lihat full output & <i>Performance Data</i>).</li>
-        <li>Klik <b>↻ Force Check</b> untuk verifikasi instan.</li>
-        <li>Klik <b>✓ Acknowledge</b> untuk mencatat investigasi, atau <b>⏱ Downtime</b> saat maintenance terjadwal.</li>
-      </ol>
-      <h3>3. Shortcut & Navigasi Cepat</h3>
-      <ul>
-        <li>Tekan <code>/</code> kapan saja untuk fokus ke kotak pencarian global (cari nama host, IP, service, atau teks output).</li>
-        <li>Tekan <code>Esc</code> untuk menutup Modal atau Detail Drawer.</li>
-        <li>Gunakan tombol <b>Grouped by Host</b> di menu Services atau klik kartu di menu <b>Groups</b> untuk memfilter per grup.</li>
-      </ul>`;
-  } else if (S.guideTab === 'sop') {
-    el.innerHTML = `
-      <h3>1. Menambah Host, Service & Cloning</h3>
-      <ol>
-        <li>Buka <b>Management → Hosts & Services</b>, klik <b>+ Add Host</b> (isi nama, IP, command <code>check-host-alive</code>, dan hostgroup opsional).</li>
-        <li>Klik <b>+ Add Service</b>, pilih Host, lalu gunakan tombol <b>Quick Preset</b> (HTTP, TCP, Ping, SSH, Disk, atau NCPA) atau isi <code>command!ARG1!ARG2</code>.</li>
-        <li><b>Cloning Cepat:</b> Klik tombol <b>Clone</b> pada Host yang sudah punya banyak service, centang <i>"Clone all services"</i>, isi nama & IP baru — seluruh service ikut terduplikasi otomatis.</li>
-        <li><b>Kelola Localhost:</b> Buka <b>Management → Localhost Config</b> lalu klik <b>1-Click Adopt</b> agar <code>localhost</code> & 8 service bawaannya bisa diedit lewat form.</li>
-        <li>Setelah perubahan selesai, klik <b>Validate (nagios -v)</b> lalu <b>Apply & Reload</b>. Jika ada error konfigurasi, sistem menolak otomatis sehingga Nagios tetap aman.</li>
-      </ol>
-      <h3>2. Remote Monitoring dengan NCPA (Linux / Windows)</h3>
-      <p><b>Encore Go Worker</b> sudah mendukung <b>NCPA in-process fast-path</b> (menembak HTTPS API NCPA port <code>5693</code> langsung di Go tanpa spawn Python!).</p>
-      <div style="margin:10px 0"><button class="btn btn-sm primary" onclick="quickRegisterNCPA()">+ 1-Click Register Command "check_ncpa"</button></div>
-      <ol>
-        <li>Install <b>NCPA</b> di server target (Ubuntu/Debian/RHEL/Windows) dan atur token di <code>/usr/local/ncpa/etc/ncpa.cfg</code>:
-          <pre class="guide-pre">community_string = TOKEN_RAHASIA_ANDA</pre>
-        </li>
-        <li>Restart NCPA (<code>sudo systemctl restart ncpa</code>) dan buka firewall port <code>5693/tcp</code> dari IP server Encore.</li>
-        <li>Klik tombol <b>+ 1-Click Register Command "check_ncpa"</b> di atas (lalu klik <b>Apply & Reload</b>).</li>
-        <li>Tambahkan Host target, lalu tambah Service menggunakan preset NCPA (ganti <code>MY_TOKEN</code> dengan token Anda):
-          <pre class="guide-pre">CPU Usage  : check_ncpa!TOKEN_ANDA!cpu/percent!-w 80 -c 90
-Memory     : check_ncpa!TOKEN_ANDA!memory/virtual!-w 80 -c 90
-Disk /     : check_ncpa!TOKEN_ANDA!disk/logical/|/used_percent!-w 80 -c 90
-Processes  : check_ncpa!TOKEN_ANDA!processes!-w 250 -c 400</pre>
-        </li>
-      </ol>`;
-  } else if (S.guideTab === 'catalog') {
-    el.innerHTML = '<div class="empty">Loading live command & plugin catalog...</div>';
-    const [cRes, pRes] = await Promise.all([fetch('/api/v1/catalog/commands'), fetch('/api/v1/catalog/plugins')]);
-    const cmds = (await cRes.json()).commands || [];
-    const pData = await pRes.json();
-    S.catalogCmds = cmds;
-    el.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-        <h3 style="margin:0">Katalog Command Aktif (${cmds.length})</h3>
-        <input type="search" id="cat-search" placeholder="Filter command..." oninput="filterCatalog()">
-      </div>
-      <div class="table-wrap" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:18px">
-        <table><thead><tr><th>Command</th><th>Source</th><th>Contoh check_command</th><th>Command Line</th><th style="text-align:right">Copy</th></tr></thead>
-        <tbody id="cat-cmd-body"></tbody></table>
-      </div>
-      <h3>Plugins & Scripts Terpasang (${(pData.plugins||[]).length})</h3>
-      <p>Direktori aktif <code>$USER1$</code>: <code>${esc(pData.user1_dir)}</code> • Custom Scripts: <code>${esc(pData.scripts_dir || '-')}</code></p>
-      <div class="perf-chips">${(pData.plugins||[]).slice(0,80).map(p => `<span class="perf-chip" title="${esc(p.path)}" style="${p.is_custom?'background:var(--ok-bg);color:var(--ok-fg)':''}">${esc(p.name)}</span>`).join('')}</div>`;
-    filterCatalog();
-  } else if (S.guideTab === 'paths') {
-    const p = await (await fetch('/api/v1/catalog/paths')).json();
-    el.innerHTML = `
-      <h3>1. Peta Lokasi File di Server (Live)</h3>
-      <div class="table-wrap" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
-        <table><thead><tr><th>Komponen</th><th>Path Aktual</th><th>Fungsi</th></tr></thead><tbody>
-          <tr><td><b>Main Config</b></td><td class="mono">${esc(p.nagios_cfg)}</td><td>Konfigurasi utama Nagios Core</td></tr>
-          <tr><td><b>Managed Dir</b></td><td class="mono">${esc(p.managed_dir || '-')}</td><td><code>encore-managed.json</code> & hasil generate <code>encore-*.cfg</code></td></tr>
-          <tr><td><b>Custom Scripts</b></td><td class="mono">${esc(p.scripts_dir || '-')}</td><td>Tempat penyimpanan script dari menu <b>Custom Scripts</b></td></tr>
-          <tr><td><b>Backups</b></td><td class="mono">${esc(p.backups_dir || '-')}</td><td>10 snapshot otomatis untuk 1-Click Rollback</td></tr>
-          <tr><td><b>Audit Log</b></td><td class="mono">${esc(p.audit_log || '-')}</td><td>Riwayat seluruh aksi manajemen & external command</td></tr>
-          <tr><td><b>Built-in Commands</b></td><td class="mono">${esc(p.commands_cfg)}</td><td>Definisi command bawaan Nagios</td></tr>
-          <tr><td><b>Plugins ($USER1$)</b></td><td class="mono">${esc(p.plugins_dir)}</td><td>Binary plugin dari paket <code>monitoring-plugins</code></td></tr>
-          <tr><td><b>Localhost Config</b></td><td class="mono">${esc(p.localhost_cfg)}</td><td>Config monitoring server lokal</td></tr>
-        </tbody></table>
-      </div>
-      <h3>2. Macro & Standar Pembuatan Custom Script</h3>
-      <ul>
-        <li><b>Macro utama:</b> <code>$HOSTADDRESS$</code> (IP host), <code>$HOSTNAME$</code>, <code>$SERVICEDESC$</code>, <code>$ARG1$</code>..<code>$ARGn$</code> (dipisah tanda <code>!</code>), <code>$USER1$</code> (folder plugin).</li>
-        <li><b>Exit Code Wajib:</b> <code>0 = OK</code>, <code>1 = WARNING</code>, <code>2 = CRITICAL</code>, <code>3 = UNKNOWN</code>.</li>
-        <li><b>Format Output + Perfdata:</b> <code>STATUS - pesan ringkas | metric=nilai;warn;crit;min;max</code></li>
-      </ul>
-      <p>Untuk membuat script baru tanpa SSH, langsung buka menu <b>Docs & Scripts → Custom Scripts</b> di sidebar kiri, buat script, klik <b>Test Run</b>, lalu klik <b>Register Command</b>.</p>`;
-  }
-}
-function filterCatalog() {
-  const q = (document.getElementById('cat-search')?.value || '').toLowerCase();
-  const body = document.getElementById('cat-cmd-body');
-  if (!body) return;
-  const rows = S.catalogCmds.filter(c => !q || c.command_name.toLowerCase().includes(q) || c.command_line.toLowerCase().includes(q) || (c.description||'').toLowerCase().includes(q));
-  body.innerHTML = rows.length ? rows.map(c => `<tr>
-    <td><b>${esc(c.command_name)}</b>${c.fast_path ? ' <span class="badge c-ok">Go Fast</span>' : ''}<div class="name-sub">${esc(c.description||'')}</div></td>
-    <td><span class="flag-tag">${esc(c.source)}</span></td>
-    <td class="mono">${esc(c.example)}</td>
-    <td class="output-cell mono" title="${esc(c.command_line)}">${esc(c.command_line)}</td>
-    <td class="actions"><button class="btn btn-sm" onclick="copyText('${esc(c.example)}')">Copy</button></td>
-  </tr>`).join('') : '<tr><td colspan="5" class="empty">No matching commands</td></tr>';
-}
-
-async function refreshAll() {
-  try {
-    await loadMeta();
-    if (S.view === 'overview') await loadOverview();
-    else if (['hosts','services','problems'].includes(S.view)) await loadTable();
-    else if (S.view === 'groups') loadGroups();
-    else if (S.view === 'downtimes') await loadDowntimes();
-  } catch (e) {
-    document.getElementById('conn-icon').src = '/assets/status/status-critical.svg';
-    document.getElementById('conn-label').textContent = 'Offline';
-  }
-}
-
-refreshAll();
-setAutoInterval();
+  refreshAll();
+  setAutoInterval();
 </script>
 </body>
 </html>

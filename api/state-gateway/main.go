@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-//go:embed web/index.html web/assets
+//go:embed web/index.html web/assets web/css web/js
 var webFS embed.FS
 
 type ProgramInfo struct {
@@ -791,6 +791,18 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		assetsHandler.ServeHTTP(w, r)
 	})
+	cssSub, _ := fs.Sub(webFS, "web/css")
+	cssHandler := http.StripPrefix("/css/", http.FileServer(http.FS(cssSub)))
+	mux.HandleFunc("/css/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		cssHandler.ServeHTTP(w, r)
+	})
+	jsSub, _ := fs.Sub(webFS, "web/js")
+	jsHandler := http.StripPrefix("/js/", http.FileServer(http.FS(jsSub)))
+	mux.HandleFunc("/js/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		jsHandler.ServeHTTP(w, r)
+	})
 	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		data, err := webFS.ReadFile("web/assets/favicon/favicon.ico")
 		if err != nil {
@@ -952,6 +964,7 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 	registerConfigRoutes(mux, cs, localhostCfgPath)
 	registerCatalogRoutes(mux, cs, commandsCfgPath, resourceCfgPath, localhostCfgPath, nagiosCfgPath)
 	registerScriptRoutes(mux, cs)
+	registerSecretRoutes(mux, cs, resourceCfgPath, cmdPipePath)
 	return mux
 }
 
