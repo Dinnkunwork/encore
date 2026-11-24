@@ -147,6 +147,11 @@ extern int enable_predictive_service_dependency_checks;
 extern int soft_state_dependencies;
 
 extern int retain_state_information;
+extern int async_retention_save;
+extern int async_status_save;
+extern pid_t async_retention_pid;
+extern pid_t async_status_pid;
+void reap_async_save_children(int blocking);
 extern int retention_update_interval;
 extern int use_retained_program_state;
 extern int use_retained_scheduling_info;

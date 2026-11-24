@@ -94,6 +94,9 @@ int xsddefault_initialize_status_data(const char *cfgfile) {
 /* cleanup status data before terminating */
 int xsddefault_cleanup_status_data(int delete_status_data) {
 
+	/* ensure any background status save finishes before unlink */
+	reap_async_save_children(TRUE);
+
 	/* delete the status log */
 	if(delete_status_data == TRUE && status_file) {
 		if(unlink(status_file))
@@ -111,8 +114,47 @@ int xsddefault_cleanup_status_data(int delete_status_data) {
 /****************** STATUS DATA OUTPUT FUNCTIONS ******************/
 /******************************************************************/
 
+static int xsddefault_save_status_data_sync(void);
+
 /* write all status data to file */
 int xsddefault_save_status_data(void) {
+	pid_t pid;
+
+	/* users may not want us to write status data */
+	if(!status_file || !strcmp(status_file, "/dev/null"))
+		return OK;
+
+	reap_async_save_children(FALSE);
+
+	if(async_status_save == FALSE || sigshutdown == TRUE || sigrestart == TRUE) {
+		reap_async_save_children(TRUE);
+		return xsddefault_save_status_data_sync();
+		}
+
+	if(async_status_pid > 0) {
+		logit(NSLOG_RUNTIME_WARNING, TRUE, "Warning: Previous async status save (pid %d) still running; skipping this cycle\n",
+			  (int)async_status_pid);
+		return OK;
+		}
+
+	fflush(NULL);
+	pid = fork();
+	if(pid < 0) {
+		logit(NSLOG_RUNTIME_ERROR, TRUE, "Error: fork() failed for async status save (%s); falling back to sync\n",
+			  strerror(errno));
+		return xsddefault_save_status_data_sync();
+		}
+
+	if(pid == 0) {
+		int r = xsddefault_save_status_data_sync();
+		_exit(r == OK ? 0 : 1);
+		}
+
+	async_status_pid = pid;
+	return OK;
+	}
+
+static int xsddefault_save_status_data_sync(void) {
 	char *tmp_log = NULL;
 	customvariablesmember *temp_customvariablesmember = NULL;
 	host *temp_host = NULL;

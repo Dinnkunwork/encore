@@ -38,6 +38,8 @@ int      check_host_freshness;
 int      auto_reschedule_checks;
 
 int      retain_state_information;
+int      async_retention_save;
+int      async_status_save;
 int      retention_update_interval;
 
 int      max_parallel_service_checks;

@@ -1137,6 +1137,7 @@ int event_execution_loop(void) {
 			logit(NSLOG_RUNTIME_ERROR, TRUE, "Error: Polling for input on %p failed: %s", nagios_iobs, iobroker_strerror(inputs));
 			break;
 		}
+		reap_async_save_children(FALSE);
 
 		log_debug_info(DEBUGL_IPC, 2, "## %d descriptors had input\n", inputs);
 

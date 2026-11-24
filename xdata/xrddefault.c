@@ -67,6 +67,9 @@ int xrddefault_initialize_retention_data(const char *cfgfile) {
 /* cleanup retention data before terminating */
 int xrddefault_cleanup_retention_data(void) {
 
+	/* ensure any background save finishes before cleanup */
+	reap_async_save_children(TRUE);
+
 	/* free memory */
 	my_free(retention_file);
 
@@ -78,7 +81,43 @@ int xrddefault_cleanup_retention_data(void) {
 /**************** DEFAULT STATE OUTPUT FUNCTION *******************/
 /******************************************************************/
 
+static int xrddefault_save_state_information_sync(void);
+
 int xrddefault_save_state_information(void) {
+	pid_t pid;
+
+	reap_async_save_children(FALSE);
+
+	/* Always save synchronously when async is disabled or during shutdown/restart */
+	if(async_retention_save == FALSE || sigshutdown == TRUE || sigrestart == TRUE) {
+		reap_async_save_children(TRUE);
+		return xrddefault_save_state_information_sync();
+		}
+
+	if(async_retention_pid > 0) {
+		logit(NSLOG_RUNTIME_WARNING, TRUE, "Warning: Previous async retention save (pid %d) still running; skipping this cycle\n",
+			  (int)async_retention_pid);
+		return OK;
+		}
+
+	fflush(NULL);
+	pid = fork();
+	if(pid < 0) {
+		logit(NSLOG_RUNTIME_ERROR, TRUE, "Error: fork() failed for async retention save (%s); falling back to sync\n",
+			  strerror(errno));
+		return xrddefault_save_state_information_sync();
+		}
+
+	if(pid == 0) {
+		int r = xrddefault_save_state_information_sync();
+		_exit(r == OK ? 0 : 1);
+		}
+
+	async_retention_pid = pid;
+	return OK;
+	}
+
+static int xrddefault_save_state_information_sync(void) {
 	char *tmp_file = NULL;
 	customvariablesmember *temp_customvariablesmember = NULL;
 	time_t current_time = 0L;

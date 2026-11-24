@@ -138,6 +138,35 @@ int enable_predictive_service_dependency_checks;
 int soft_state_dependencies;
 
 int retain_state_information;
+int async_retention_save;
+int async_status_save;
+pid_t async_retention_pid = 0;
+pid_t async_status_pid = 0;
+
+static void reap_one_async_child(pid_t *pid_ptr, const char *label, int blocking) {
+	int status = 0;
+	pid_t ret;
+
+	if(*pid_ptr <= 0)
+		return;
+
+	do {
+		ret = waitpid(*pid_ptr, &status, blocking ? 0 : WNOHANG);
+		} while(ret < 0 && errno == EINTR);
+
+	if(ret == *pid_ptr || (ret < 0 && errno == ECHILD)) {
+		if(ret == *pid_ptr && (!WIFEXITED(status) || WEXITSTATUS(status) != 0)) {
+			logit(NSLOG_RUNTIME_WARNING, TRUE, "Warning: Async %s save child (pid %d) exited abnormally (status %d)\n",
+				  label, (int)(*pid_ptr), status);
+			}
+		*pid_ptr = 0;
+		}
+	}
+
+void reap_async_save_children(int blocking) {
+	reap_one_async_child(&async_retention_pid, "retention", blocking);
+	reap_one_async_child(&async_status_pid, "status", blocking);
+	}
 int retention_update_interval;
 int use_retained_program_state;
 int use_retained_scheduling_info;
@@ -327,6 +356,8 @@ void init_main_cfg_vars(int first_time) {
 	soft_state_dependencies = FALSE;
 
 	retain_state_information = FALSE;
+	async_retention_save = FALSE;
+	async_status_save = FALSE;
 	retention_update_interval = DEFAULT_RETENTION_UPDATE_INTERVAL;
 	use_retained_program_state = TRUE;
 	use_retained_scheduling_info = FALSE;
