@@ -33,6 +33,9 @@
         <img src="/assets/icons/alert.svg" alt=""><span class="nav-text">Problems</span>
         <span class="nav-badge" id="nav-prob-badge" style="display:none">0</span>
       </button>
+      <button class="nav-item" id="nav-reports" onclick="setView('reports')">
+        <img src="/assets/icons/database.svg" alt=""><span class="nav-text">Reports</span>
+      </button>
 
       <div class="nav-section">Configuration</div>
       <button class="nav-item" id="nav-manage" onclick="setView('manage')">
@@ -205,6 +208,29 @@
         </div>
         <div id="guide-content"></div>
       </section>
+
+      <!-- REPORTS (SLA | Alerts | Event Log) -->
+      <section id="sec-reports" style="display:none">
+        <div class="subtabs">
+          <div class="subtab-list">
+            <button class="subtab active" id="rtab-sla" onclick="setReportTab('sla')">SLA</button>
+            <button class="subtab" id="rtab-alerts" onclick="setReportTab('alerts')">Alerts</button>
+            <button class="subtab" id="rtab-eventlog" onclick="setReportTab('eventlog')">Event Log</button>
+          </div>
+          <div class="subtab-actions">
+            <button class="btn btn-sm active" id="rr-24h" onclick="setReportRange('24h')">24h</button>
+            <button class="btn btn-sm" id="rr-7d" onclick="setReportRange('7d')">7d</button>
+            <button class="btn btn-sm" id="rr-30d" onclick="setReportRange('30d')">30d</button>
+            <div id="rep-sla-controls" style="display:flex;gap:6px;flex-wrap:wrap">
+              <select id="rep-target" onchange="loadReports()"><option value="services">Services</option><option value="hosts">Hosts</option></select>
+              <select id="rep-hg" onchange="loadReports()"><option value="">All Hostgroups</option></select>
+              <button class="btn btn-sm" onclick="exportReport('csv')">Export CSV</button>
+              <button class="btn btn-sm primary" onclick="exportReport('html')">Print / PDF</button>
+            </div>
+          </div>
+        </div>
+        <div id="reports-content"></div>
+      </section>
     </main>
   </div>
 </div>
@@ -217,6 +243,7 @@
 <script src="/js/monitor.js"></script>
 <script src="/js/manage.js"></script>
 <script src="/js/guide.js"></script>
+<script src="/js/reports.js"></script>
 <script>
   refreshAll();
   setAutoInterval();

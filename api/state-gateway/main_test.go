@@ -35,10 +35,10 @@ func TestStateStoreAndHTTPAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewConfigStore: %v", err)
 	}
-	handler := newHTTPHandler(store, "", "", "", "", "", "", cs)
+	handler := newHTTPHandler(store, "", "", "", "", "", "", "", "", cs)
 
 	// Dashboard HTML + embedded assets + modular css/js
-	for _, p := range []string{"/", "/favicon.ico", "/assets/logo/logo.svg", "/assets/status/status-ok.svg", "/assets/icons/dashboard.svg", "/css/app.css", "/js/core.js", "/js/monitor.js", "/js/manage.js", "/js/guide.js"} {
+	for _, p := range []string{"/", "/favicon.ico", "/assets/logo/logo.svg", "/assets/status/status-ok.svg", "/assets/icons/dashboard.svg", "/css/app.css", "/js/core.js", "/js/monitor.js", "/js/manage.js", "/js/guide.js", "/js/reports.js"} {
 		req := httptest.NewRequest(http.MethodGet, p, nil)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -177,7 +177,7 @@ func TestCustomScriptsAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewConfigStore: %v", err)
 	}
-	handler := newHTTPHandler(NewStateStore(), "", "", "", "", "", "", cs)
+	handler := newHTTPHandler(NewStateStore(), "", "", "", "", "", "", "", "", cs)
 
 	// Create script
 	body := `{"name":"check_hello.sh","content":"#!/bin/sh\necho \"OK - hello $1 | v=1\"\nexit 0\n"}`
@@ -212,7 +212,7 @@ func TestSecretsAPI(t *testing.T) {
 		t.Fatalf("write resource.cfg: %v", err)
 	}
 	cs, _ := NewConfigStore(dir, "", "", "")
-	handler := newHTTPHandler(NewStateStore(), "", "", "", "", resPath, "", cs)
+	handler := newHTTPHandler(NewStateStore(), "", "", "", "", resPath, "", "", "", cs)
 
 	// Protect $USER1$
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(`{"key":"$USER1$","value":"hack"}`))
@@ -236,5 +236,69 @@ func TestSecretsAPI(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if !bytes.Contains(rec.Body.Bytes(), []byte("••••••9876")) || bytes.Contains(rec.Body.Bytes(), []byte("supersecret9876")) {
 		t.Fatalf("secret was not properly masked: %s", rec.Body.String())
+	}
+}
+
+func TestReportsAndBasicAuth(t *testing.T) {
+	dir := t.TempDir()
+	logPath := dir + "/nagios.log"
+	sampleLog := `[1700000100] SERVICE ALERT: web-01;HTTP;CRITICAL;HARD;3;Connection refused
+[1700000400] SERVICE ALERT: web-01;HTTP;OK;HARD;1;HTTP OK
+[1700000500] SERVICE NOTIFICATION: admin;web-01;HTTP;OK;notify-service-by-email;HTTP OK
+`
+	if err := os.WriteFile(logPath, []byte(sampleLog), 0o644); err != nil {
+		t.Fatalf("write nagios.log: %v", err)
+	}
+
+	store := NewStateStore()
+	store.ReplaceSnapshot(ProgramInfo{PID: 1},
+		[]HostState{{Name: "web-01", CurrentState: 0, HasBeenChecked: 1}},
+		[]ServiceState{{HostName: "web-01", Description: "HTTP", CurrentState: 0, HasBeenChecked: 1}},
+	)
+	cs, _ := NewConfigStore(dir, "", "", "")
+	base := newHTTPHandler(store, "", "", "", "", "", "", logPath, "", cs)
+	protected := basicAuthMiddleware("admin", "secret", base)
+
+	// Unauthenticated request -> 401
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/reports/events?from=1700000000&to=1700001000", nil)
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+
+	// Authenticated SLA availability check (300s CRIT out of 1000s = 70% OK, 1 incident, MTTR=300s)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/reports/availability?from=1700000000&to=1700001000&target=services", nil)
+	req.SetBasicAuth("admin", "secret")
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var avail struct {
+		Summary AvailabilitySummary `json:"summary"`
+		Rows    []AvailabilityRow   `json:"rows"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &avail)
+	if len(avail.Rows) != 1 || avail.Rows[0].Incidents != 1 || avail.Rows[0].OKPct != 70.0 || avail.Rows[0].MTTRSec != 300.0 {
+		t.Fatalf("unexpected availability result: %+v", avail)
+	}
+
+	// CSV export
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/reports/export?from=1700000000&to=1700001000&target=services&format=csv", nil)
+	req.SetBasicAuth("admin", "secret")
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("web-01,HTTP,70.00")) {
+		t.Fatalf("unexpected CSV export: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Printable HTML export
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/reports/export?from=1700000000&to=1700001000&target=services&format=html", nil)
+	req.SetBasicAuth("admin", "secret")
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("Encore Availability")) {
+		t.Fatalf("unexpected HTML export: %d", rec.Code)
 	}
 }

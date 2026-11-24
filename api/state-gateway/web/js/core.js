@@ -100,6 +100,7 @@ const VIEW_TITLES = {
   overview: 'Overview',
   inventory: 'Inventory',
   problems: 'Problems',
+  reports: 'Historical Reports & SLA',
   manage: 'Manage Configuration',
   system: 'System',
   guide: 'User Guide'
@@ -114,7 +115,7 @@ function setView(v, sub) {
   const activeNav = document.getElementById('nav-' + v);
   if (activeNav) activeNav.classList.add('active');
 
-  ['sec-overview','sec-monitor','sec-manage','sec-system','sec-guide'].forEach(id => {
+  ['sec-overview','sec-monitor','sec-reports','sec-manage','sec-system','sec-guide'].forEach(id => {
     document.getElementById(id).style.display = 'none';
   });
 
@@ -131,6 +132,10 @@ function setView(v, sub) {
     if (sub) S.probTab = sub;
     renderMonitorSubtabs();
     loadMonitorView();
+  } else if (v === 'reports') {
+    document.getElementById('sec-reports').style.display = 'block';
+    if (sub) S.repTab = sub;
+    setReportTab(S.repTab);
   } else if (v === 'manage') {
     document.getElementById('sec-manage').style.display = 'block';
     if (sub) S.manageTab = sub;

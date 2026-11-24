@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -782,7 +783,28 @@ func parseQueryOpts(r *http.Request) (QueryOpts, error) {
 	}, nil
 }
 
-func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, commandsCfgPath, resourceCfgPath, nagiosCfgPath string, cs *ConfigStore) http.Handler {
+func basicAuthMiddleware(user, pass string, next http.Handler) http.Handler {
+	if user == "" || pass == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/favicon.ico" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		u, p, ok := r.BasicAuth()
+		if !ok ||
+			subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
+			subtle.ConstantTimeCompare([]byte(p), []byte(pass)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Encore Monitor"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, commandsCfgPath, resourceCfgPath, nagiosCfgPath, nagiosLogPath, archivesDir string, cs *ConfigStore) http.Handler {
 	mux := http.NewServeMux()
 
 	assetsSub, _ := fs.Sub(webFS, "web/assets")
@@ -965,6 +987,7 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 	registerCatalogRoutes(mux, cs, commandsCfgPath, resourceCfgPath, localhostCfgPath, nagiosCfgPath)
 	registerScriptRoutes(mux, cs)
 	registerSecretRoutes(mux, cs, resourceCfgPath, cmdPipePath)
+	registerReportRoutes(mux, store, nagiosLogPath, archivesDir)
 	return mux
 }
 
@@ -999,6 +1022,10 @@ func main() {
 	localhostCfg := flag.String("localhost-cfg", "/usr/local/nagios/etc/objects/localhost.cfg", "Path to localhost.cfg for dashboard management/adoption")
 	commandsCfg := flag.String("commands-cfg", "/usr/local/nagios/etc/objects/commands.cfg", "Path to built-in commands.cfg for live command catalog")
 	resourceCfg := flag.String("resource-cfg", "/usr/local/nagios/etc/resource.cfg", "Path to resource.cfg for $USER1$ plugin directory discovery")
+	nagiosLog := flag.String("nagios-log", "/usr/local/nagios/var/nagios.log", "Path to active nagios.log for historical reports")
+	archivesDir := flag.String("archives-dir", "/usr/local/nagios/var/archives", "Path to archived nagios-*.log directory")
+	authUser := flag.String("auth-user", "", "Optional HTTP Basic Auth username")
+	authPass := flag.String("auth-pass", "", "Optional HTTP Basic Auth password")
 	resyncInterval := flag.Duration("resync-interval", 5*time.Minute, "Periodic full snapshot resync interval (0 to disable)")
 	flag.Parse()
 
@@ -1014,9 +1041,10 @@ func main() {
 	go runNERDLoop(ctx, *qhPath, store)
 	go runPeriodicResync(ctx, *qhPath, store, *resyncInterval)
 
+	baseHandler := newHTTPHandler(store, *qhPath, *cmdPath, *localhostCfg, *commandsCfg, *resourceCfg, *nagiosCfg, *nagiosLog, *archivesDir, cfgStore)
 	srv := &http.Server{
 		Addr:              *listenAddr,
-		Handler:           newHTTPHandler(store, *qhPath, *cmdPath, *localhostCfg, *commandsCfg, *resourceCfg, *nagiosCfg, cfgStore),
+		Handler:           basicAuthMiddleware(*authUser, *authPass, baseHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
