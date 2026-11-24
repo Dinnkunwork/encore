@@ -122,7 +122,10 @@ ExecStart=/usr/local/nagios/bin/encore-state-gateway \
   -nagios-bin /usr/local/nagios/bin/nagios \
   -nagios-cfg /usr/local/nagios/etc/nagios.cfg \
   -localhost-cfg /usr/local/nagios/etc/objects/localhost.cfg \
+  -nagios-log /usr/local/nagios/var/nagios.log \
+  -archives-dir /usr/local/nagios/var/archives \
   -resync-interval 5m
+# Opsional proteksi login bawaan: tambahkan -auth-user admin -auth-pass PASSWORD_KUAT
 Restart=always
 RestartSec=2
 
