@@ -83,6 +83,15 @@ status_file=/dev/null
 retain_state_information=1
 retention_update_interval=60
 async_retention_save=1
+
+# Dashboard Full Management (CRUD Host/Service/Group/Command + Clone + Reload)
+cfg_dir=/usr/local/nagios/etc/encore.d
+```
+
+Buat direktori `encore.d` dengan kepemilikan user `nagios`:
+```bash
+sudo mkdir -p /usr/local/nagios/etc/encore.d
+sudo chown -R nagios:nagios /usr/local/nagios/etc/encore.d
 ```
 
 Validasi konfigurasi sebelum start:
@@ -106,9 +115,12 @@ Type=simple
 User=nagios
 Group=nagios
 ExecStart=/usr/local/nagios/bin/encore-state-gateway \
-  -listen 127.0.0.1:8080 \
+  -listen 0.0.0.0:8080 \
   -qh /usr/local/nagios/var/rw/nagios.qh \
   -cmd /usr/local/nagios/var/rw/nagios.cmd \
+  -managed-dir /usr/local/nagios/etc/encore.d \
+  -nagios-bin /usr/local/nagios/bin/nagios \
+  -nagios-cfg /usr/local/nagios/etc/nagios.cfg \
   -resync-interval 5m
 Restart=always
 RestartSec=2
