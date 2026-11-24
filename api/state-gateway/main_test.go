@@ -325,4 +325,123 @@ func TestReportsAndBasicAuth(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected /health to require Basic Auth, got %d", rec.Code)
 	}
+
+	// Reports per-service filter & timeline buckets
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/reports/availability?from=1700000000&to=1700007200&target=services&host=web-01&service=HTTP", nil)
+	req.SetBasicAuth("admin", "secret")
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for filtered availability, got %d", rec.Code)
+	}
+	var availTL struct {
+		Rows     []AvailabilityRow `json:"rows"`
+		Timeline []TimelineBucket  `json:"timeline"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &availTL)
+	if len(availTL.Rows) != 1 || len(availTL.Timeline) == 0 {
+		t.Fatalf("expected 1 row and non-empty timeline, got %+v", availTL)
+	}
+}
+
+func TestTemplatesBulkAndNotifications(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStateStore()
+	store.ReplaceSnapshot(ProgramInfo{PID: 1},
+		[]HostState{{Name: "app-01", CurrentState: 0, HasBeenChecked: 1}},
+		[]ServiceState{
+			{HostName: "app-01", Description: "HTTP", CurrentState: 0, HasBeenChecked: 1, StateType: 1},
+			{HostName: "app-01", Description: "DISK", CurrentState: 2, HasBeenChecked: 1, StateType: 1},
+		},
+	)
+	cs, err := NewConfigStore(dir, "", "", "")
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+	_ = cs.UpsertHost(ManagedHost{Name: "app-01", Address: "10.0.0.10", Enabled: true})
+	_ = cs.UpsertHost(ManagedHost{Name: "app-02", Address: "10.0.0.11", Enabled: true})
+
+	handler := newHTTPHandler(store, "", "", "", "", "", "", "", "", cs)
+
+	// 1. problems=1 filter returns only non-OK service
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/services?problems=1", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	var pResp struct {
+		Total    int            `json:"total"`
+		Services []ServiceState `json:"services"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &pResp)
+	if pResp.Total != 1 || pResp.Services[0].Description != "DISK" {
+		t.Fatalf("expected 1 problem service (DISK), got %+v", pResp)
+	}
+
+	// 2. Starter templates exist & ApplyTemplate works + skips duplicates
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/config/templates/apply", bytes.NewBufferString(`{"template":"linux-ncpa-basic","hosts":["app-01","app-02"],"overwrite":false}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"added":8`)) {
+		t.Fatalf("apply starter template failed: %d %s", rec.Code, rec.Body.String())
+	}
+	// Second apply skips all 8
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/config/templates/apply", bytes.NewBufferString(`{"template":"linux-ncpa-basic","hosts":["app-01","app-02"],"overwrite":false}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"skipped":8`)) {
+		t.Fatalf("expected 8 skipped on re-apply: %s", rec.Body.String())
+	}
+
+	// 3. Save template from host
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/config/templates/from-host", bytes.NewBufferString(`{"host_name":"app-01","name":"from-app-01"}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"services":4`)) {
+		t.Fatalf("save template from host failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 4. Bulk hosts disable
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/config/hosts/bulk", bytes.NewBufferString(`{"action":"disable","hosts":["app-02"]}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"affected":1`)) {
+		t.Fatalf("bulk disable failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 5. Notification config masking + Webhook test delivery
+	webhookHit := make(chan string, 2)
+	whSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body bytes.Buffer
+		_, _ = body.ReadFrom(r.Body)
+		webhookHit <- body.String()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer whSrv.Close()
+
+	ncfg := `{"enabled":false,"smtp_host":"smtp.example.com","smtp_port":587,"smtp_tls":"starttls","smtp_user":"u","smtp_pass":"topsecret","from_address":"a@b.com","recipients":["ops@b.com"],"webhook_enabled":true,"webhook_type":"slack","webhook_url":"` + whSrv.URL + `","notify_critical":true,"hard_only":true}`
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/notifications/config", bytes.NewBufferString(ncfg))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || bytes.Contains(rec.Body.Bytes(), []byte("topsecret")) {
+		t.Fatalf("notify config save/masking failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/notifications/test", bytes.NewBufferString(`{"channel":"webhook"}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook test failed: %d %s", rec.Code, rec.Body.String())
+	}
+	got := <-webhookHit
+	if !bytes.Contains([]byte(got), []byte("Encore TEST")) {
+		t.Fatalf("unexpected webhook payload: %s", got)
+	}
+
+	// 6. Real-time HARD state transition dispatches webhook automatically
+	store.ApplyServiceEvent(ServiceState{
+		HostName: "app-01", Description: "HTTP", CurrentState: 2, HasBeenChecked: 1, StateType: 1, PluginOutput: "502 Bad Gateway",
+	})
+	gotAlert := <-webhookHit
+	if !bytes.Contains([]byte(gotAlert), []byte("502 Bad Gateway")) {
+		t.Fatalf("expected transition alert in webhook, got: %s", gotAlert)
+	}
 }

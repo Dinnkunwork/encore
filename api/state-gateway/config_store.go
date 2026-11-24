@@ -63,6 +63,23 @@ type ManagedServicegroup struct {
 	Alias     string `json:"alias"`
 }
 
+type TemplateService struct {
+	ServiceDescription string   `json:"service_description"`
+	CheckCommand       string   `json:"check_command"`
+	CheckInterval      int      `json:"check_interval"`
+	RetryInterval      int      `json:"retry_interval"`
+	MaxCheckAttempts   int      `json:"max_check_attempts"`
+	CheckPeriod        string   `json:"check_period"`
+	Contacts           string   `json:"contacts"`
+	Servicegroups      []string `json:"servicegroups,omitempty"`
+}
+
+type ServiceTemplate struct {
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Services    []TemplateService `json:"services"`
+}
+
 type ManagedConfig struct {
 	Hosts         []ManagedHost         `json:"hosts"`
 	Services      []ManagedService      `json:"services"`
@@ -70,6 +87,7 @@ type ManagedConfig struct {
 	Contacts      []ManagedContact      `json:"contacts"`
 	Hostgroups    []ManagedHostgroup    `json:"hostgroups"`
 	Servicegroups []ManagedServicegroup `json:"servicegroups"`
+	Templates     []ServiceTemplate     `json:"templates"`
 }
 
 type ConfigBackupInfo struct {
@@ -154,6 +172,282 @@ func (cs *ConfigStore) ensureSlices() {
 	if cs.cfg.Servicegroups == nil {
 		cs.cfg.Servicegroups = []ManagedServicegroup{}
 	}
+	if cs.cfg.Templates == nil {
+		cs.cfg.Templates = defaultStarterTemplates()
+	}
+}
+
+func defaultStarterTemplates() []ServiceTemplate {
+	return []ServiceTemplate{
+		{
+			Name:        "linux-ncpa-basic",
+			Description: "Standard Linux server checks via NCPA (CPU, RAM, Disk /, Processes)",
+			Services: []TemplateService{
+				{ServiceDescription: "NCPA CPU", CheckCommand: "check_ncpa!cpu/percent!-w 80 -c 90", CheckInterval: 5, RetryInterval: 1, MaxCheckAttempts: 3, CheckPeriod: "24x7"},
+				{ServiceDescription: "NCPA RAM", CheckCommand: "check_ncpa!memory/virtual!-w 80 -c 90", CheckInterval: 5, RetryInterval: 1, MaxCheckAttempts: 3, CheckPeriod: "24x7"},
+				{ServiceDescription: "NCPA Disk /", CheckCommand: "check_ncpa!disk/logical/|/used_percent!-w 80 -c 90", CheckInterval: 5, RetryInterval: 1, MaxCheckAttempts: 3, CheckPeriod: "24x7"},
+				{ServiceDescription: "NCPA Procs", CheckCommand: "check_ncpa!processes!-w 250 -c 400", CheckInterval: 5, RetryInterval: 1, MaxCheckAttempts: 3, CheckPeriod: "24x7"},
+			},
+		},
+		{
+			Name:        "windows-ncpa-basic",
+			Description: "Standard Windows server checks via NCPA (CPU, RAM, Disk C:)",
+			Services: []TemplateService{
+				{ServiceDescription: "NCPA CPU", CheckCommand: "check_ncpa!cpu/percent!-w 80 -c 90", CheckInterval: 5, RetryInterval: 1, MaxCheckAttempts: 3, CheckPeriod: "24x7"},
+				{ServiceDescription: "NCPA RAM", CheckCommand: "check_ncpa!memory/virtual!-w 80 -c 90", CheckInterval: 5, RetryInterval: 1, MaxCheckAttempts: 3, CheckPeriod: "24x7"},
+				{ServiceDescription: "NCPA Disk C:", CheckCommand: "check_ncpa!disk/logical/C:|/used_percent!-w 80 -c 90", CheckInterval: 5, RetryInterval: 1, MaxCheckAttempts: 3, CheckPeriod: "24x7"},
+			},
+		},
+		{
+			Name:        "web-https-stack",
+			Description: "Web server HTTP, HTTPS & PING availability checks",
+			Services: []TemplateService{
+				{ServiceDescription: "PING", CheckCommand: "check_ping!100.0,20%!500.0,60%", CheckInterval: 5, RetryInterval: 1, MaxCheckAttempts: 3, CheckPeriod: "24x7"},
+				{ServiceDescription: "HTTP", CheckCommand: "check_http", CheckInterval: 5, RetryInterval: 1, MaxCheckAttempts: 3, CheckPeriod: "24x7"},
+				{ServiceDescription: "HTTPS 443", CheckCommand: "check_tcp!443", CheckInterval: 5, RetryInterval: 1, MaxCheckAttempts: 3, CheckPeriod: "24x7"},
+			},
+		},
+	}
+}
+
+func (cs *ConfigStore) UpsertTemplate(t ServiceTemplate) error {
+	if err := sanitizeName(t.Name); err != nil {
+		return fmt.Errorf("template name: %w", err)
+	}
+	if err := sanitizeVal(t.Description); err != nil {
+		return err
+	}
+	if len(t.Services) == 0 {
+		return errors.New("template must contain at least one service")
+	}
+	for i := range t.Services {
+		s := &t.Services[i]
+		if err := sanitizeName(s.ServiceDescription); err != nil {
+			return fmt.Errorf("service %d description: %w", i+1, err)
+		}
+		if strings.TrimSpace(s.CheckCommand) == "" {
+			return fmt.Errorf("service %s: check_command is required", s.ServiceDescription)
+		}
+		if err := sanitizeVal(s.CheckCommand); err != nil {
+			return err
+		}
+		if s.CheckInterval <= 0 {
+			s.CheckInterval = 5
+		}
+		if s.RetryInterval <= 0 {
+			s.RetryInterval = 1
+		}
+		if s.MaxCheckAttempts <= 0 {
+			s.MaxCheckAttempts = 3
+		}
+		if s.CheckPeriod == "" {
+			s.CheckPeriod = "24x7"
+		}
+	}
+
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	found := false
+	for i := range cs.cfg.Templates {
+		if cs.cfg.Templates[i].Name == t.Name {
+			cs.cfg.Templates[i] = t
+			found = true
+			break
+		}
+	}
+	if !found {
+		cs.cfg.Templates = append(cs.cfg.Templates, t)
+	}
+	sort.Slice(cs.cfg.Templates, func(i, j int) bool { return cs.cfg.Templates[i].Name < cs.cfg.Templates[j].Name })
+	if err := cs.saveJSONLocked(); err != nil {
+		return err
+	}
+	cs.RecordAudit("upsert_template", t.Name, fmt.Sprintf("%d services", len(t.Services)))
+	return nil
+}
+
+func (cs *ConfigStore) DeleteTemplate(name string) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	out := cs.cfg.Templates[:0]
+	removed := false
+	for _, t := range cs.cfg.Templates {
+		if t.Name == name {
+			removed = true
+			continue
+		}
+		out = append(out, t)
+	}
+	if !removed {
+		return fmt.Errorf("template %q not found", name)
+	}
+	cs.cfg.Templates = out
+	if err := cs.saveJSONLocked(); err != nil {
+		return err
+	}
+	cs.RecordAudit("delete_template", name, "")
+	return nil
+}
+
+func (cs *ConfigStore) SaveTemplateFromHost(hostName, tplName, desc string) (int, error) {
+	if err := sanitizeName(tplName); err != nil {
+		return 0, fmt.Errorf("template name: %w", err)
+	}
+	cs.mu.Lock()
+	var svcs []TemplateService
+	for _, s := range cs.cfg.Services {
+		if s.HostName == hostName {
+			svcs = append(svcs, TemplateService{
+				ServiceDescription: s.ServiceDescription,
+				CheckCommand:       s.CheckCommand,
+				CheckInterval:      s.CheckInterval,
+				RetryInterval:      s.RetryInterval,
+				MaxCheckAttempts:   s.MaxCheckAttempts,
+				CheckPeriod:        s.CheckPeriod,
+				Contacts:           s.Contacts,
+				Servicegroups:      append([]string(nil), s.Servicegroups...),
+			})
+		}
+	}
+	cs.mu.Unlock()
+	if len(svcs) == 0 {
+		return 0, fmt.Errorf("host %q has no managed services to save as template", hostName)
+	}
+	if desc == "" {
+		desc = fmt.Sprintf("Cloned from host %s (%d services)", hostName, len(svcs))
+	}
+	if err := cs.UpsertTemplate(ServiceTemplate{Name: tplName, Description: desc, Services: svcs}); err != nil {
+		return 0, err
+	}
+	return len(svcs), nil
+}
+
+func (cs *ConfigStore) ApplyTemplate(tplName string, hostNames []string, overwrite bool) (int, int, error) {
+	if len(hostNames) == 0 {
+		return 0, 0, errors.New("at least one target host is required")
+	}
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	var tpl *ServiceTemplate
+	for i := range cs.cfg.Templates {
+		if cs.cfg.Templates[i].Name == tplName {
+			tpl = &cs.cfg.Templates[i]
+			break
+		}
+	}
+	if tpl == nil {
+		return 0, 0, fmt.Errorf("template %q not found", tplName)
+	}
+
+	hostExists := make(map[string]bool, len(cs.cfg.Hosts))
+	for _, h := range cs.cfg.Hosts {
+		hostExists[h.Name] = true
+	}
+	existingIdx := make(map[string]int, len(cs.cfg.Services))
+	for i, s := range cs.cfg.Services {
+		existingIdx[s.HostName+"\x00"+s.ServiceDescription] = i
+	}
+
+	added, skipped := 0, 0
+	for _, hn := range hostNames {
+		if !hostExists[hn] {
+			continue
+		}
+		for _, ts := range tpl.Services {
+			k := hn + "\x00" + ts.ServiceDescription
+			ms := ManagedService{
+				HostName:           hn,
+				ServiceDescription: ts.ServiceDescription,
+				CheckCommand:       ts.CheckCommand,
+				CheckInterval:      ts.CheckInterval,
+				RetryInterval:      ts.RetryInterval,
+				MaxCheckAttempts:   ts.MaxCheckAttempts,
+				CheckPeriod:        ts.CheckPeriod,
+				Contacts:           ts.Contacts,
+				Servicegroups:      append([]string(nil), ts.Servicegroups...),
+				Enabled:            true,
+			}
+			if idx, ok := existingIdx[k]; ok {
+				if overwrite {
+					cs.cfg.Services[idx] = ms
+					added++
+				} else {
+					skipped++
+				}
+			} else {
+				existingIdx[k] = len(cs.cfg.Services)
+				cs.cfg.Services = append(cs.cfg.Services, ms)
+				added++
+			}
+		}
+	}
+
+	if added > 0 {
+		sort.Slice(cs.cfg.Services, func(i, j int) bool {
+			if cs.cfg.Services[i].HostName != cs.cfg.Services[j].HostName {
+				return cs.cfg.Services[i].HostName < cs.cfg.Services[j].HostName
+			}
+			return cs.cfg.Services[i].ServiceDescription < cs.cfg.Services[j].ServiceDescription
+		})
+		cs.pendingChanges = true
+		if err := cs.saveJSONLocked(); err != nil {
+			return added, skipped, err
+		}
+		cs.RecordAudit("apply_template", tplName, fmt.Sprintf("hosts=%d added=%d skipped=%d", len(hostNames), added, skipped))
+	}
+	return added, skipped, nil
+}
+
+func (cs *ConfigStore) BulkHostsAction(action string, names []string) (int, error) {
+	if len(names) == 0 {
+		return 0, errors.New("no hosts selected")
+	}
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	affected := 0
+	switch action {
+	case "enable", "disable":
+		en := action == "enable"
+		for i := range cs.cfg.Hosts {
+			if set[cs.cfg.Hosts[i].Name] {
+				cs.cfg.Hosts[i].Enabled = en
+				affected++
+			}
+		}
+	case "delete":
+		newHosts := cs.cfg.Hosts[:0]
+		for _, h := range cs.cfg.Hosts {
+			if set[h.Name] {
+				affected++
+				continue
+			}
+			newHosts = append(newHosts, h)
+		}
+		cs.cfg.Hosts = newHosts
+		newSvcs := cs.cfg.Services[:0]
+		for _, s := range cs.cfg.Services {
+			if set[s.HostName] {
+				continue
+			}
+			newSvcs = append(newSvcs, s)
+		}
+		cs.cfg.Services = newSvcs
+	default:
+		return 0, fmt.Errorf("unknown bulk action %q", action)
+	}
+	if affected > 0 {
+		cs.pendingChanges = true
+		if err := cs.saveJSONLocked(); err != nil {
+			return affected, err
+		}
+		cs.RecordAudit("bulk_hosts_"+action, fmt.Sprintf("%d hosts", affected), strings.Join(names, ","))
+	}
+	return affected, nil
 }
 
 func sanitizeVal(s string) error {

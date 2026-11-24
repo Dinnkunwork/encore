@@ -282,6 +282,99 @@ func registerConfigRoutes(mux *http.ServeMux, cs *ConfigStore, localhostCfgPath 
 		}
 	})
 
+	mux.HandleFunc("/api/v1/config/hosts/bulk", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		var req struct {
+			Action string   `json:"action"` // enable, disable, delete
+			Hosts  []string `json:"hosts"`
+		}
+		if err := decodeJSONBody(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		n, err := cs.BulkHostsAction(req.Action, req.Hosts)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "affected": n})
+	})
+
+	mux.HandleFunc("/api/v1/config/templates", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			cfg, _, _ := cs.Snapshot()
+			writeJSON(w, http.StatusOK, map[string]any{"templates": cfg.Templates})
+		case http.MethodPost, http.MethodPut:
+			var t ServiceTemplate
+			if err := decodeJSONBody(r, &t); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if err := cs.UpsertTemplate(t); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "name": t.Name})
+		case http.MethodDelete:
+			name := r.URL.Query().Get("name")
+			if err := cs.DeleteTemplate(name); err != nil {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"status": "deleted"})
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	})
+
+	mux.HandleFunc("/api/v1/config/templates/from-host", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		var req struct {
+			HostName    string `json:"host_name"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		}
+		if err := decodeJSONBody(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		cnt, err := cs.SaveTemplateFromHost(req.HostName, req.Name, req.Description)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "services": cnt})
+	})
+
+	mux.HandleFunc("/api/v1/config/templates/apply", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		var req struct {
+			Template  string   `json:"template"`
+			Hosts     []string `json:"hosts"`
+			Overwrite bool     `json:"overwrite"`
+		}
+		if err := decodeJSONBody(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		added, skipped, err := cs.ApplyTemplate(req.Template, req.Hosts, req.Overwrite)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "applied", "added": added, "skipped": skipped})
+	})
+
 	mux.HandleFunc("/api/v1/config/validate", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})

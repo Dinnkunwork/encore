@@ -45,8 +45,19 @@ type AvailabilitySummary struct {
 	Target         string  `json:"target"`
 	TotalObjects   int     `json:"total_objects"`
 	OverallSLAPct  float64 `json:"overall_sla_pct"`
+	WarnPct        float64 `json:"warn_pct"`
+	CritPct        float64 `json:"crit_pct"`
+	UnkPct         float64 `json:"unk_pct"`
+	DowntimePct    float64 `json:"downtime_pct"`
 	TotalIncidents int     `json:"total_incidents"`
 	AvgMTTRSec     float64 `json:"avg_mttr_sec"`
+}
+
+type TimelineBucket struct {
+	Timestamp int64   `json:"timestamp"`
+	Label     string  `json:"label"`
+	OKPct     float64 `json:"ok_pct"`
+	Incidents int     `json:"incidents"`
 }
 
 func collectLogFiles(nagiosLog, archivesDir string, from, to int64) []string {
@@ -197,7 +208,7 @@ func round2(v float64) float64 {
 	return math.Round(v*100) / 100
 }
 
-func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from, to int64, target, hostgroup, hostFilter string) (AvailabilitySummary, []AvailabilityRow) {
+func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from, to int64, target, hostgroup, hostFilter, serviceFilter string) (AvailabilitySummary, []AvailabilityRow, []TimelineBucket) {
 	if to <= from {
 		to = time.Now().Unix()
 		from = to - 86400
@@ -244,6 +255,9 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 	} else {
 		svcs, _ := store.QueryServices(QueryOpts{Host: hostFilter, Hostgroup: hostgroup})
 		for _, s := range svcs {
+			if serviceFilter != "" && s.Description != serviceFilter {
+				continue
+			}
 			st := "OK"
 			switch s.CurrentState {
 			case 1:
@@ -258,14 +272,35 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 		}
 	}
 
+	// Prepare timeline buckets (hourly for <=48h, daily for >48h, capped cleanly)
+	bucketSec := int64(3600)
+	labelFmt := "15:04"
+	if to-from > 48*3600 {
+		bucketSec = 86400
+		labelFmt = "01-02"
+	}
+	numBuckets := int((to - from + bucketSec - 1) / bucketSec)
+	if numBuckets < 1 {
+		numBuckets = 1
+	}
+	if numBuckets > 31 {
+		bucketSec = (to - from + 29) / 30
+		numBuckets = int((to - from + bucketSec - 1) / bucketSec)
+	}
+	bOK := make([]float64, numBuckets)
+	bTot := make([]float64, numBuckets)
+	bInc := make([]int, numBuckets)
+
 	addDuration := func(tr *objTrack, until int64) {
 		if until <= tr.lastTS {
 			return
 		}
-		dt := float64(until - tr.lastTS)
+		start := tr.lastTS
+		dt := float64(until - start)
 		if tr.inDowntime {
 			tr.dtSec += dt
 		}
+		isOK := tr.curState == "UP" || tr.curState == "OK"
 		switch tr.curState {
 		case "UP", "OK":
 			tr.okSec += dt
@@ -276,7 +311,35 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 		default:
 			tr.unkSec += dt
 		}
+		// Distribute duration across timeline buckets
+		bIdx := int((start - from) / bucketSec)
+		if bIdx < 0 {
+			bIdx = 0
+		}
+		cur := start
+		for cur < until && bIdx < numBuckets {
+			bEnd := from + int64(bIdx+1)*bucketSec
+			if bEnd > until {
+				bEnd = until
+			}
+			seg := float64(bEnd - cur)
+			if seg > 0 {
+				bTot[bIdx] += seg
+				if isOK {
+					bOK[bIdx] += seg
+				}
+			}
+			cur = bEnd
+			bIdx++
+		}
 		tr.lastTS = until
+	}
+
+	recordBucketInc := func(ts int64) {
+		idx := int((ts - from) / bucketSec)
+		if idx >= 0 && idx < numBuckets {
+			bInc[idx]++
+		}
 	}
 
 	events := readLogEvents(nagiosLog, archivesDir, from, to)
@@ -303,6 +366,7 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 				if wasHealthy && !isHealthy {
 					tr.incidents++
 					tr.probStartTS = ev.Timestamp
+					recordBucketInc(ev.Timestamp)
 				} else if !wasHealthy && isHealthy && tr.probStartTS > 0 {
 					tr.mttrSum += float64(ev.Timestamp - tr.probStartTS)
 					tr.mttrCount++
@@ -332,6 +396,7 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 				if wasHealthy && !isHealthy {
 					tr.incidents++
 					tr.probStartTS = ev.Timestamp
+					recordBucketInc(ev.Timestamp)
 				} else if !wasHealthy && isHealthy && tr.probStartTS > 0 {
 					tr.mttrSum += float64(ev.Timestamp - tr.probStartTS)
 					tr.mttrCount++
@@ -343,11 +408,15 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 	}
 
 	rows := make([]AvailabilityRow, 0, len(tracks))
-	var slaSum, mttrTotalSum float64
+	var slaSum, warnSum, critSum, unkSum, dtSum, mttrTotalSum float64
 	var totalInc, mttrTotalCnt int
 	for _, tr := range tracks {
 		addDuration(tr, to)
 		okPct := round2((tr.okSec / windowSec) * 100.0)
+		warnPct := round2((tr.warnSec / windowSec) * 100.0)
+		critPct := round2((tr.critSec / windowSec) * 100.0)
+		unkPct := round2((tr.unkSec / windowSec) * 100.0)
+		dtPct := round2((tr.dtSec / windowSec) * 100.0)
 		mttr := 0.0
 		if tr.mttrCount > 0 {
 			mttr = round2(tr.mttrSum / float64(tr.mttrCount))
@@ -355,15 +424,19 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 			mttrTotalCnt += tr.mttrCount
 		}
 		slaSum += okPct
+		warnSum += warnPct
+		critSum += critPct
+		unkSum += unkPct
+		dtSum += dtPct
 		totalInc += tr.incidents
 		rows = append(rows, AvailabilityRow{
 			Host:        tr.host,
 			Service:     tr.service,
 			OKPct:       okPct,
-			WarnPct:     round2((tr.warnSec / windowSec) * 100.0),
-			CritPct:     round2((tr.critSec / windowSec) * 100.0),
-			UnkPct:      round2((tr.unkSec / windowSec) * 100.0),
-			DowntimePct: round2((tr.dtSec / windowSec) * 100.0),
+			WarnPct:     warnPct,
+			CritPct:     critPct,
+			UnkPct:      unkPct,
+			DowntimePct: dtPct,
 			Incidents:   tr.incidents,
 			MTTRSec:     mttr,
 		})
@@ -379,12 +452,33 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 	})
 
 	overallSLA := 100.0
+	var avgWarn, avgCrit, avgUnk, avgDT float64
 	if len(rows) > 0 {
-		overallSLA = round2(slaSum / float64(len(rows)))
+		n := float64(len(rows))
+		overallSLA = round2(slaSum / n)
+		avgWarn = round2(warnSum / n)
+		avgCrit = round2(critSum / n)
+		avgUnk = round2(unkSum / n)
+		avgDT = round2(dtSum / n)
 	}
 	avgMTTR := 0.0
 	if mttrTotalCnt > 0 {
 		avgMTTR = round2(mttrTotalSum / float64(mttrTotalCnt))
+	}
+
+	timeline := make([]TimelineBucket, numBuckets)
+	for i := 0; i < numBuckets; i++ {
+		ts := from + int64(i)*bucketSec
+		pct := 100.0
+		if bTot[i] > 0 {
+			pct = round2((bOK[i] / bTot[i]) * 100.0)
+		}
+		timeline[i] = TimelineBucket{
+			Timestamp: ts,
+			Label:     time.Unix(ts, 0).Format(labelFmt),
+			OKPct:     pct,
+			Incidents: bInc[i],
+		}
 	}
 
 	return AvailabilitySummary{
@@ -393,9 +487,13 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 		Target:         target,
 		TotalObjects:   len(rows),
 		OverallSLAPct:  overallSLA,
+		WarnPct:        avgWarn,
+		CritPct:        avgCrit,
+		UnkPct:         avgUnk,
+		DowntimePct:    avgDT,
 		TotalIncidents: totalInc,
 		AvgMTTRSec:     avgMTTR,
-	}, rows
+	}, rows, timeline
 }
 
 func parseTimeRange(r *http.Request) (int64, int64) {
@@ -417,6 +515,7 @@ func registerReportRoutes(mux *http.ServeMux, store *StateStore, nagiosLog, arch
 		q := r.URL.Query()
 		evType := q.Get("type")
 		host := q.Get("host")
+		service := q.Get("service")
 		state := strings.ToUpper(q.Get("state"))
 		hardOnly := q.Get("hard_only") == "1" || q.Get("hard_only") == "true"
 		search := strings.ToLower(q.Get("search"))
@@ -444,6 +543,9 @@ func registerReportRoutes(mux *http.ServeMux, store *StateStore, nagiosLog, arch
 				}
 			}
 			if host != "" && ev.Host != host {
+				continue
+			}
+			if service != "" && ev.Service != service {
 				continue
 			}
 			if state != "" && ev.State != state {
@@ -480,10 +582,11 @@ func registerReportRoutes(mux *http.ServeMux, store *StateStore, nagiosLog, arch
 	mux.HandleFunc("/api/v1/reports/availability", func(w http.ResponseWriter, r *http.Request) {
 		from, to := parseTimeRange(r)
 		q := r.URL.Query()
-		sum, rows := computeAvailability(store, nagiosLog, archivesDir, from, to, q.Get("target"), q.Get("hostgroup"), q.Get("host"))
+		sum, rows, timeline := computeAvailability(store, nagiosLog, archivesDir, from, to, q.Get("target"), q.Get("hostgroup"), q.Get("host"), q.Get("service"))
 		writeJSON(w, http.StatusOK, map[string]any{
-			"summary": sum,
-			"rows":    rows,
+			"summary":  sum,
+			"rows":     rows,
+			"timeline": timeline,
 		})
 	})
 
@@ -494,13 +597,13 @@ func registerReportRoutes(mux *http.ServeMux, store *StateStore, nagiosLog, arch
 		if format == "" {
 			format = "csv"
 		}
-		sum, rows := computeAvailability(store, nagiosLog, archivesDir, from, to, q.Get("target"), q.Get("hostgroup"), q.Get("host"))
+		sum, rows, timeline := computeAvailability(store, nagiosLog, archivesDir, from, to, q.Get("target"), q.Get("hostgroup"), q.Get("host"), q.Get("service"))
 		dateTag := time.Now().Format("20060102-1504")
 
 		switch format {
 		case "json":
 			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="encore-sla-%s.json"`, dateTag))
-			writeJSON(w, http.StatusOK, map[string]any{"summary": sum, "rows": rows})
+			writeJSON(w, http.StatusOK, map[string]any{"summary": sum, "rows": rows, "timeline": timeline})
 
 		case "html":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")

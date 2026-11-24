@@ -166,6 +166,13 @@ type StateStore struct {
 	lastSync      time.Time
 	eventsApplied atomic.Int64
 	connected     atomic.Bool
+	notifier      *Notifier
+}
+
+func (s *StateStore) SetNotifier(n *Notifier) {
+	s.mu.Lock()
+	s.notifier = n
+	s.mu.Unlock()
 }
 
 func NewStateStore() *StateStore {
@@ -203,18 +210,29 @@ func (s *StateStore) ReplaceSnapshot(prog ProgramInfo, hosts []HostState, servic
 
 func (s *StateStore) ApplyHostEvent(h HostState) {
 	s.mu.Lock()
+	prev := s.hosts[h.Name]
 	hc := h
 	s.hosts[hc.Name] = &hc
+	notifier := s.notifier
 	s.mu.Unlock()
 	s.eventsApplied.Add(1)
+	if notifier != nil && prev != nil {
+		notifier.OnHostTransition(prev, hc)
+	}
 }
 
 func (s *StateStore) ApplyServiceEvent(sv ServiceState) {
 	s.mu.Lock()
+	k := svcKey(sv.HostName, sv.Description)
+	prev := s.services[k]
 	sc := sv
-	s.services[svcKey(sc.HostName, sc.Description)] = &sc
+	s.services[k] = &sc
+	notifier := s.notifier
 	s.mu.Unlock()
 	s.eventsApplied.Add(1)
+	if notifier != nil && prev != nil {
+		notifier.OnServiceTransition(prev, sc)
+	}
 }
 
 func (s *StateStore) ReplaceGroups(hgs []HostgroupInfo, sgs []ServicegroupInfo) {
@@ -423,6 +441,7 @@ type QueryOpts struct {
 	Ack          *int
 	Downtime     *int
 	Unhandled    bool
+	ProblemsOnly bool
 	Search       string
 	SortBy       string
 	Offset       int
@@ -458,6 +477,9 @@ func (s *StateStore) QueryHosts(opts QueryOpts) ([]HostState, int) {
 			}
 		}
 		if opts.Unhandled && !(h.HasBeenChecked == 1 && h.CurrentState > 0 && h.Acknowledged == 0 && h.DowntimeDepth == 0) {
+			continue
+		}
+		if opts.ProblemsOnly && !(h.HasBeenChecked == 1 && h.CurrentState > 0) {
 			continue
 		}
 		if searchLower != "" &&
@@ -531,6 +553,9 @@ func (s *StateStore) QueryServices(opts QueryOpts) ([]ServiceState, int) {
 			}
 		}
 		if opts.Unhandled && !(sv.HasBeenChecked == 1 && sv.CurrentState > 0 && sv.Acknowledged == 0 && sv.DowntimeDepth == 0) {
+			continue
+		}
+		if opts.ProblemsOnly && !(sv.HasBeenChecked == 1 && sv.CurrentState > 0) {
 			continue
 		}
 		if searchLower != "" &&
@@ -776,6 +801,7 @@ func parseQueryOpts(r *http.Request) (QueryOpts, error) {
 		Ack:          ack,
 		Downtime:     dt,
 		Unhandled:    q.Get("unhandled") == "1" || q.Get("unhandled") == "true",
+		ProblemsOnly: q.Get("problems") == "1" || q.Get("problems") == "true",
 		Search:       q.Get("search"),
 		SortBy:       q.Get("sort"),
 		Offset:       offset,
@@ -1006,11 +1032,62 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued", "command": cmd})
 	})
 
+	mux.HandleFunc("/api/v1/commands/batch", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		if cmdPipePath == "" {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "command pipe not configured"})
+			return
+		}
+		var req struct {
+			Commands []string `json:"commands"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 256*1024)).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if len(req.Commands) == 0 || len(req.Commands) > 200 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "commands must contain 1..200 entries"})
+			return
+		}
+		f, err := os.OpenFile(cmdPipePath, os.O_WRONLY, 0)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		defer f.Close()
+		now := time.Now().Unix()
+		queued := 0
+		for _, raw := range req.Commands {
+			cmd := strings.TrimSpace(raw)
+			if cmd == "" || strings.ContainsAny(cmd, "\r\n\x00") {
+				continue
+			}
+			if _, err := fmt.Fprintf(f, "[%d] %s\n", now, cmd); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			queued++
+		}
+		cs.RecordAudit("batch_commands", fmt.Sprintf("%d commands", queued), "")
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": "queued", "count": queued})
+	})
+
 	registerConfigRoutes(mux, cs, localhostCfgPath)
 	registerCatalogRoutes(mux, cs, commandsCfgPath, resourceCfgPath, localhostCfgPath, nagiosCfgPath)
 	registerScriptRoutes(mux, cs)
 	registerSecretRoutes(mux, cs, resourceCfgPath, cmdPipePath)
 	registerReportRoutes(mux, store, nagiosLogPath, archivesDir)
+	store.mu.RLock()
+	notifier := store.notifier
+	store.mu.RUnlock()
+	if notifier == nil {
+		notifier = NewNotifier(cs.managedDir, cs)
+		store.SetNotifier(notifier)
+	}
+	registerNotifyRoutes(mux, notifier)
 	return mux
 }
 
