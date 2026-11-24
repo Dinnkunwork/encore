@@ -107,3 +107,20 @@
 | Final sync `retention.dat` pada graceful shutdown | **PASS** (`2.797,3 KB`, 200 host, 2.000 service) |
 | Zombie process selama runtime | **`0` zombie** |
 | State restore setelah restart daemon | **PASS** (`200/200 UP`, `2.000/2.000 OK`) |
+
+---
+
+## 9. Hasil Benchmark Produksi (`-O2`, tanpa `--enable-testing`)
+
+Build rilis bersih: `./configure --enable-event-broker --enable-nerd && make -j4 all` (`base/nagios` 2,5 MB, total RSS tree `55,62 MB`).
+
+| Metrik (200 host, 2.000 service) | Baseline `-O2` (CGI + Core Worker) | Encore `-O2` (Go Gateway + Go Worker) | Peningkatan |
+| :--- | :--- | :--- | :--- |
+| **Full 2.000 services JSON (4 concurrent)** | `3,42 req/s` (`p50 1.047 ms`, `p95 1.780 ms`) | **`65,21 req/s`** (`p50 40,44 ms`, `p95 76,99 ms`) | **19,1× throughput / -95,7% p95** |
+| **Paged 50 services JSON (8 concurrent)** | *(tidak tersedia)* | **`326,69 req/s`** (`p50 17,0 ms`) | — |
+| **Summary JSON (8 concurrent)** | *(tidak tersedia)* | **`790,19 req/s`** (`p50 9,43 ms`, `p95 15,29 ms`) | — |
+| **Disk write `status.dat`** | `2.769,6 KB` ditulis berkala | **0 byte (`status_file=/dev/null`)** | **-100% I/O** |
+| **Laju `fork()` OS** | `145,67 forks/detik` | **`0,70 forks/detik`** | **-99,5% forks** |
+| **Avg Service Check Latency** | `43 ms` | **`2 ms`** | **-95,3% latency** |
+| **Avg Service Check Exec** | `134 ms` | **`0 ms` (< 1 ms)** | **>100× lebih cepat** |
+| **Total RSS Process Tree** | `57,61 MB` | **`55,62 MB`** | Stabil & ringan |
