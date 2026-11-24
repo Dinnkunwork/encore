@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <stdarg.h>
 
 /* A registered handler */
 struct query_handler {
@@ -467,6 +469,273 @@ static int qh_core(int sd, char *buf, unsigned int len)
 	return 404;
 }
 
+/* Growable buffer and reliable writer for in-memory JSON state snapshots */
+struct qh_sbuf {
+	char *data;
+	size_t len;
+	size_t cap;
+};
+
+static int qh_sbuf_reserve(struct qh_sbuf *sb, size_t extra)
+{
+	size_t need = sb->len + extra + 1;
+	size_t new_cap;
+	char *p;
+
+	if (need <= sb->cap)
+		return 0;
+
+	new_cap = sb->cap ? sb->cap * 2 : 65536;
+	while (new_cap < need)
+		new_cap *= 2;
+
+	p = realloc(sb->data, new_cap);
+	if (!p)
+		return -1;
+
+	sb->data = p;
+	sb->cap = new_cap;
+	return 0;
+}
+
+static int qh_sbuf_append(struct qh_sbuf *sb, const char *s, size_t n)
+{
+	if (qh_sbuf_reserve(sb, n) < 0)
+		return -1;
+	memcpy(sb->data + sb->len, s, n);
+	sb->len += n;
+	sb->data[sb->len] = '\0';
+	return 0;
+}
+
+static int qh_sbuf_printf(struct qh_sbuf *sb, const char *fmt, ...)
+{
+	va_list ap, ap2;
+	int needed;
+
+	va_start(ap, fmt);
+	va_copy(ap2, ap);
+	needed = vsnprintf(NULL, 0, fmt, ap);
+	va_end(ap);
+
+	if (needed < 0 || qh_sbuf_reserve(sb, (size_t)needed) < 0) {
+		va_end(ap2);
+		return -1;
+	}
+
+	vsnprintf(sb->data + sb->len, (size_t)needed + 1, fmt, ap2);
+	va_end(ap2);
+	sb->len += (size_t)needed;
+	return 0;
+}
+
+static int qh_sbuf_json_str(struct qh_sbuf *sb, const char *s)
+{
+	const unsigned char *p = (const unsigned char *)(s ? s : "");
+	char esc[8];
+
+	if (qh_sbuf_append(sb, "\"", 1) < 0)
+		return -1;
+
+	while (*p) {
+		unsigned char c = *p++;
+		if (c == '"' || c == '\\') {
+			esc[0] = '\\';
+			esc[1] = (char)c;
+			if (qh_sbuf_append(sb, esc, 2) < 0)
+				return -1;
+		} else if (c == '\b') {
+			if (qh_sbuf_append(sb, "\\b", 2) < 0)
+				return -1;
+		} else if (c == '\f') {
+			if (qh_sbuf_append(sb, "\\f", 2) < 0)
+				return -1;
+		} else if (c == '\n') {
+			if (qh_sbuf_append(sb, "\\n", 2) < 0)
+				return -1;
+		} else if (c == '\r') {
+			if (qh_sbuf_append(sb, "\\r", 2) < 0)
+				return -1;
+		} else if (c == '\t') {
+			if (qh_sbuf_append(sb, "\\t", 2) < 0)
+				return -1;
+		} else if (c < 0x20) {
+			int n = snprintf(esc, sizeof(esc), "\\u%04x", c);
+			if (qh_sbuf_append(sb, esc, (size_t)n) < 0)
+				return -1;
+		} else {
+			if (qh_sbuf_append(sb, (const char *)&c, 1) < 0)
+				return -1;
+		}
+	}
+
+	return qh_sbuf_append(sb, "\"", 1);
+}
+
+static int qh_write_all(int sd, const char *data, size_t len)
+{
+	size_t off = 0;
+
+	while (off < len) {
+		ssize_t n = write(sd, data + off, len - off);
+		if (n > 0) {
+			off += (size_t)n;
+			continue;
+		}
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+			struct pollfd pfd;
+			pfd.fd = sd;
+			pfd.events = POLLOUT;
+			pfd.revents = 0;
+			if (poll(&pfd, 1, 200) <= 0)
+				return -1;
+			continue;
+		}
+		return -1;
+	}
+	return 0;
+}
+
+static int qh_state(int sd, char *buf, unsigned int len)
+{
+	struct qh_sbuf sb = { NULL, 0, 0 };
+	host *h;
+	service *s;
+	int first = 1;
+
+	if (buf == NULL || !*buf || !strcmp(buf, "help")) {
+		nsock_printf_nul(sd,
+			"Query handler for fast in-memory JSON state snapshots.\n"
+			"Available commands:\n"
+			"  summary    Host/service state counts and program info\n"
+			"  hosts      JSON array of all host states\n"
+			"  services   JSON array of all service states\n");
+		return 0;
+	}
+
+	if (!strcmp(buf, "summary")) {
+		unsigned int h_total = 0, h_up = 0, h_down = 0, h_unreach = 0, h_pending = 0;
+		unsigned int s_total = 0, s_ok = 0, s_warn = 0, s_crit = 0, s_unk = 0, s_pending = 0;
+
+		for (h = host_list; h != NULL; h = h->next) {
+			h_total++;
+			if (!h->has_been_checked) h_pending++;
+			else if (h->current_state == STATE_UP) h_up++;
+			else if (h->current_state == STATE_DOWN) h_down++;
+			else h_unreach++;
+		}
+		for (s = service_list; s != NULL; s = s->next) {
+			s_total++;
+			if (!s->has_been_checked) s_pending++;
+			else if (s->current_state == STATE_OK) s_ok++;
+			else if (s->current_state == STATE_WARNING) s_warn++;
+			else if (s->current_state == STATE_CRITICAL) s_crit++;
+			else s_unk++;
+		}
+
+		if (qh_sbuf_printf(&sb,
+			"{\"program\":{\"pid\":%d,\"program_start\":%llu},"
+			"\"hosts\":{\"total\":%u,\"up\":%u,\"down\":%u,\"unreachable\":%u,\"pending\":%u},"
+			"\"services\":{\"total\":%u,\"ok\":%u,\"warning\":%u,\"critical\":%u,\"unknown\":%u,\"pending\":%u}}",
+			(int)getpid(), (unsigned long long)program_start,
+			h_total, h_up, h_down, h_unreach, h_pending,
+			s_total, s_ok, s_warn, s_crit, s_unk, s_pending) < 0) {
+			free(sb.data);
+			return 500;
+		}
+	} else if (!strcmp(buf, "hosts")) {
+		if (qh_sbuf_append(&sb, "[", 1) < 0) {
+			free(sb.data);
+			return 500;
+		}
+		for (h = host_list; h != NULL; h = h->next) {
+			if (!first && qh_sbuf_append(&sb, ",", 1) < 0) { free(sb.data); return 500; }
+			first = 0;
+			if (qh_sbuf_append(&sb, "{\"name\":", 8) < 0 ||
+				qh_sbuf_json_str(&sb, h->name) < 0 ||
+				qh_sbuf_append(&sb, ",\"address\":", 11) < 0 ||
+				qh_sbuf_json_str(&sb, h->address) < 0 ||
+				qh_sbuf_printf(&sb,
+					",\"current_state\":%d,\"state_type\":%d,\"has_been_checked\":%d,"
+					"\"current_attempt\":%d,\"max_attempts\":%d,"
+					"\"last_check\":%llu,\"next_check\":%llu,\"last_state_change\":%llu,"
+					"\"acknowledged\":%d,\"downtime_depth\":%d,\"is_flapping\":%d,"
+					"\"latency\":%.4f,\"execution_time\":%.4f,\"plugin_output\":",
+					h->current_state, h->state_type, h->has_been_checked,
+					h->current_attempt, h->max_attempts,
+					(unsigned long long)h->last_check,
+					(unsigned long long)h->next_check,
+					(unsigned long long)h->last_state_change,
+					h->problem_has_been_acknowledged,
+					h->scheduled_downtime_depth,
+					h->is_flapping,
+					h->latency, h->execution_time) < 0 ||
+				qh_sbuf_json_str(&sb, h->plugin_output) < 0 ||
+				qh_sbuf_append(&sb, ",\"perf_data\":", 13) < 0 ||
+				qh_sbuf_json_str(&sb, h->perf_data) < 0 ||
+				qh_sbuf_append(&sb, "}", 1) < 0) {
+				free(sb.data);
+				return 500;
+			}
+		}
+		if (qh_sbuf_append(&sb, "]", 1) < 0) {
+			free(sb.data);
+			return 500;
+		}
+	} else if (!strcmp(buf, "services")) {
+		if (qh_sbuf_append(&sb, "[", 1) < 0) {
+			free(sb.data);
+			return 500;
+		}
+		for (s = service_list; s != NULL; s = s->next) {
+			if (!first && qh_sbuf_append(&sb, ",", 1) < 0) { free(sb.data); return 500; }
+			first = 0;
+			if (qh_sbuf_append(&sb, "{\"host_name\":", 13) < 0 ||
+				qh_sbuf_json_str(&sb, s->host_name) < 0 ||
+				qh_sbuf_append(&sb, ",\"description\":", 15) < 0 ||
+				qh_sbuf_json_str(&sb, s->description) < 0 ||
+				qh_sbuf_printf(&sb,
+					",\"current_state\":%d,\"state_type\":%d,\"has_been_checked\":%d,"
+					"\"current_attempt\":%d,\"max_attempts\":%d,"
+					"\"last_check\":%llu,\"next_check\":%llu,\"last_state_change\":%llu,"
+					"\"acknowledged\":%d,\"downtime_depth\":%d,\"is_flapping\":%d,"
+					"\"latency\":%.4f,\"execution_time\":%.4f,\"plugin_output\":",
+					s->current_state, s->state_type, s->has_been_checked,
+					s->current_attempt, s->max_attempts,
+					(unsigned long long)s->last_check,
+					(unsigned long long)s->next_check,
+					(unsigned long long)s->last_state_change,
+					s->problem_has_been_acknowledged,
+					s->scheduled_downtime_depth,
+					s->is_flapping,
+					s->latency, s->execution_time) < 0 ||
+				qh_sbuf_json_str(&sb, s->plugin_output) < 0 ||
+				qh_sbuf_append(&sb, ",\"perf_data\":", 13) < 0 ||
+				qh_sbuf_json_str(&sb, s->perf_data) < 0 ||
+				qh_sbuf_append(&sb, "}", 1) < 0) {
+				free(sb.data);
+				return 500;
+			}
+		}
+		if (qh_sbuf_append(&sb, "]", 1) < 0) {
+			free(sb.data);
+			return 500;
+		}
+	} else {
+		return 404;
+	}
+
+	/* Include terminating NUL byte as query handler response delimiter */
+	if (qh_write_all(sd, sb.data, sb.len + 1) < 0) {
+		free(sb.data);
+		return -1;
+	}
+	free(sb.data);
+	return 0;
+}
+
 int qh_init(const char *path)
 {
 	int result    = 0;
@@ -536,6 +805,11 @@ int qh_init(const char *path)
 	result = qh_register_handler("help", "Help for the query handler", 0, qh_help);
 	if (result == OK) {
 		logit(NSLOG_INFO_MESSAGE, FALSE, "qh: help for the query handler registered\n");
+	}
+
+	result = qh_register_handler("state", "In-memory host and service state JSON snapshots", 0, qh_state);
+	if (result == OK) {
+		logit(NSLOG_INFO_MESSAGE, FALSE, "qh: state query handler registered\n");
 	}
 
 	return 0;

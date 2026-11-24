@@ -43,7 +43,7 @@ static nebmodule nerd_mod; /* fake module to get our callbacks accepted */
 static struct nerd_channel **channels;
 static unsigned int num_channels, alloc_channels;
 static unsigned int chan_host_checks_id, chan_service_checks_id;
-static unsigned int chan_opath_checks_id;
+static unsigned int chan_opath_checks_id, chan_state_events_id;
 
 
 static struct nerd_channel *find_channel(const char *name)
@@ -366,6 +366,127 @@ static int chan_opath_checks(int cb, void *data)
 	return 0;
 }
 
+static char *nerd_json_escape(const char *s)
+{
+	const unsigned char *p = (const unsigned char *)(s ? s : "");
+	size_t len = strlen((const char *)p);
+	char *out = malloc(len * 6 + 1);
+	char *d = out;
+
+	if (!out)
+		return NULL;
+
+	while (*p) {
+		unsigned char c = *p++;
+		if (c == '"' || c == '\\') {
+			*d++ = '\\';
+			*d++ = (char)c;
+		} else if (c == '\b') {
+			*d++ = '\\'; *d++ = 'b';
+		} else if (c == '\f') {
+			*d++ = '\\'; *d++ = 'f';
+		} else if (c == '\n') {
+			*d++ = '\\'; *d++ = 'n';
+		} else if (c == '\r') {
+			*d++ = '\\'; *d++ = 'r';
+		} else if (c == '\t') {
+			*d++ = '\\'; *d++ = 't';
+		} else if (c < 0x20) {
+			d += sprintf(d, "\\u%04x", c);
+		} else {
+			*d++ = (char)c;
+		}
+	}
+	*d = '\0';
+	return out;
+}
+
+static int chan_state_events(int cb, void *data)
+{
+	char *buf = NULL;
+	char *e1 = NULL, *e2 = NULL, *e3 = NULL, *e4 = NULL;
+	int len = -1;
+
+	if (channels[chan_state_events_id]->subscriptions == NULL)
+		return 0;
+
+	if (cb == NEBCALLBACK_HOST_CHECK_DATA) {
+		nebstruct_host_check_data *ds = (nebstruct_host_check_data *)data;
+		host *h;
+
+		if (ds->type != NEBTYPE_HOSTCHECK_PROCESSED)
+			return 0;
+
+		h = (host *)ds->object_ptr;
+		e1 = nerd_json_escape(h->name);
+		e2 = nerd_json_escape(h->address);
+		e3 = nerd_json_escape(h->plugin_output);
+		e4 = nerd_json_escape(h->perf_data);
+		if (e1 && e2 && e3 && e4) {
+			len = asprintf(&buf,
+				"{\"type\":\"host\",\"name\":\"%s\",\"address\":\"%s\","
+				"\"current_state\":%d,\"state_type\":%d,\"has_been_checked\":%d,"
+				"\"current_attempt\":%d,\"max_attempts\":%d,"
+				"\"last_check\":%llu,\"next_check\":%llu,\"last_state_change\":%llu,"
+				"\"acknowledged\":%d,\"downtime_depth\":%d,\"is_flapping\":%d,"
+				"\"latency\":%.4f,\"execution_time\":%.4f,"
+				"\"plugin_output\":\"%s\",\"perf_data\":\"%s\"}\n",
+				e1, e2, h->current_state, h->state_type, 1,
+				h->current_attempt, h->max_attempts,
+				(unsigned long long)h->last_check,
+				(unsigned long long)h->next_check,
+				(unsigned long long)h->last_state_change,
+				h->problem_has_been_acknowledged,
+				h->scheduled_downtime_depth,
+				h->is_flapping,
+				h->latency, h->execution_time,
+				e3, e4);
+		}
+	} else if (cb == NEBCALLBACK_SERVICE_CHECK_DATA) {
+		nebstruct_service_check_data *ds = (nebstruct_service_check_data *)data;
+		service *s;
+
+		if (ds->type != NEBTYPE_SERVICECHECK_PROCESSED)
+			return 0;
+
+		s = (service *)ds->object_ptr;
+		e1 = nerd_json_escape(s->host_name);
+		e2 = nerd_json_escape(s->description);
+		e3 = nerd_json_escape(s->plugin_output);
+		e4 = nerd_json_escape(s->perf_data);
+		if (e1 && e2 && e3 && e4) {
+			len = asprintf(&buf,
+				"{\"type\":\"service\",\"host_name\":\"%s\",\"description\":\"%s\","
+				"\"current_state\":%d,\"state_type\":%d,\"has_been_checked\":%d,"
+				"\"current_attempt\":%d,\"max_attempts\":%d,"
+				"\"last_check\":%llu,\"next_check\":%llu,\"last_state_change\":%llu,"
+				"\"acknowledged\":%d,\"downtime_depth\":%d,\"is_flapping\":%d,"
+				"\"latency\":%.4f,\"execution_time\":%.4f,"
+				"\"plugin_output\":\"%s\",\"perf_data\":\"%s\"}\n",
+				e1, e2, s->current_state, s->state_type, 1,
+				s->current_attempt, s->max_attempts,
+				(unsigned long long)s->last_check,
+				(unsigned long long)s->next_check,
+				(unsigned long long)s->last_state_change,
+				s->problem_has_been_acknowledged,
+				s->scheduled_downtime_depth,
+				s->is_flapping,
+				s->latency, s->execution_time,
+				e3, e4);
+		}
+	}
+
+	if (len > 0 && buf) {
+		nerd_broadcast(chan_state_events_id, buf, (unsigned int)len);
+	}
+	free(buf);
+	free(e1);
+	free(e2);
+	free(e3);
+	free(e4);
+	return 0;
+}
+
 
 static int nerd_deinit(void)
 {
@@ -511,6 +632,9 @@ int nerd_init(void)
 	chan_opath_checks_id = nerd_mkchan("opathchecks",
 			"Host and service checks in gource's log format",
 			chan_opath_checks, nebcallback_flag(NEBCALLBACK_HOST_CHECK_DATA) | nebcallback_flag(NEBCALLBACK_SERVICE_CHECK_DATA));
+	chan_state_events_id = nerd_mkchan("stateevents",
+			"Real-time host and service state updates as NDJSON",
+			chan_state_events, nebcallback_flag(NEBCALLBACK_HOST_CHECK_DATA) | nebcallback_flag(NEBCALLBACK_SERVICE_CHECK_DATA));
 
 	logit(NSLOG_INFO_MESSAGE, TRUE, "nerd: Fully initialized and ready to rock!\n");
 	return 0;

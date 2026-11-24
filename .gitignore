@@ -22,6 +22,10 @@ nbproject/
 *.kdev4
 
 *.o
+*.gcno
+*.gcda
+api/state-gateway/state-gateway
+worker/go-worker/go-worker
 *.la
 *.lo
 *.a
