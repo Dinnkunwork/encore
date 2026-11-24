@@ -34,7 +34,7 @@ func TestStateStoreAndHTTPAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewConfigStore: %v", err)
 	}
-	handler := newHTTPHandler(store, "", "", "", cs)
+	handler := newHTTPHandler(store, "", "", "", "", "", "", cs)
 
 	// Dashboard HTML + embedded assets
 	for _, p := range []string{"/", "/favicon.ico", "/assets/logo/logo.svg", "/assets/status/status-ok.svg", "/assets/icons/dashboard.svg"} {
@@ -167,5 +167,39 @@ define service {
 	}
 	if len(svcs) != 2 || len(hgs) != 1 {
 		t.Fatalf("unexpected parsed svcs=%d hgs=%d", len(svcs), len(hgs))
+	}
+}
+
+func TestCustomScriptsAPI(t *testing.T) {
+	dir := t.TempDir()
+	cs, err := NewConfigStore(dir, "", "", "")
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+	handler := newHTTPHandler(NewStateStore(), "", "", "", "", "", "", cs)
+
+	// Create script
+	body := `{"name":"check_hello.sh","content":"#!/bin/sh\necho \"OK - hello $1 | v=1\"\nexit 0\n"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/scripts", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save script failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Test run script
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/scripts/test", bytes.NewBufferString(`{"name":"check_hello.sh","args":"world"}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("test script failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var tr struct {
+		ExitCode int    `json:"exit_code"`
+		Stdout   string `json:"stdout"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &tr)
+	if tr.ExitCode != 0 || !bytes.Contains([]byte(tr.Stdout), []byte("hello world")) {
+		t.Fatalf("unexpected script test result: %+v", tr)
 	}
 }

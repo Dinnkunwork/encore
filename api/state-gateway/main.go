@@ -782,7 +782,7 @@ func parseQueryOpts(r *http.Request) (QueryOpts, error) {
 	}, nil
 }
 
-func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath string, cs *ConfigStore) http.Handler {
+func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, commandsCfgPath, resourceCfgPath, nagiosCfgPath string, cs *ConfigStore) http.Handler {
 	mux := http.NewServeMux()
 
 	assetsSub, _ := fs.Sub(webFS, "web/assets")
@@ -950,6 +950,8 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath str
 	})
 
 	registerConfigRoutes(mux, cs, localhostCfgPath)
+	registerCatalogRoutes(mux, cs, commandsCfgPath, resourceCfgPath, localhostCfgPath, nagiosCfgPath)
+	registerScriptRoutes(mux, cs)
 	return mux
 }
 
@@ -982,6 +984,8 @@ func main() {
 	nagiosBin := flag.String("nagios-bin", "/usr/local/nagios/bin/nagios", "Path to nagios binary for pre-flight validation (-v)")
 	nagiosCfg := flag.String("nagios-cfg", "/usr/local/nagios/etc/nagios.cfg", "Path to nagios.cfg for pre-flight validation")
 	localhostCfg := flag.String("localhost-cfg", "/usr/local/nagios/etc/objects/localhost.cfg", "Path to localhost.cfg for dashboard management/adoption")
+	commandsCfg := flag.String("commands-cfg", "/usr/local/nagios/etc/objects/commands.cfg", "Path to built-in commands.cfg for live command catalog")
+	resourceCfg := flag.String("resource-cfg", "/usr/local/nagios/etc/resource.cfg", "Path to resource.cfg for $USER1$ plugin directory discovery")
 	resyncInterval := flag.Duration("resync-interval", 5*time.Minute, "Periodic full snapshot resync interval (0 to disable)")
 	flag.Parse()
 
@@ -999,7 +1003,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *listenAddr,
-		Handler:           newHTTPHandler(store, *qhPath, *cmdPath, *localhostCfg, cfgStore),
+		Handler:           newHTTPHandler(store, *qhPath, *cmdPath, *localhostCfg, *commandsCfg, *resourceCfg, *nagiosCfg, cfgStore),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

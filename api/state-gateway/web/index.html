@@ -163,25 +163,32 @@
 
   .btn {
     display: inline-flex; align-items: center; gap: 6px;
-    padding: 6px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 550;
-    background: var(--surface); border: 1px solid var(--border); color: var(--text);
-    cursor: pointer; transition: all 0.14s ease;
+    padding: 6px 13px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+    background: var(--surface-2); border: 1px solid #cbd5e1; color: var(--text);
+    box-shadow: 0 1px 2px rgba(15,23,42,0.08);
+    cursor: pointer; transition: transform 0.12s ease, background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
   }
-  .btn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--muted); }
+  [data-theme="dark"] .btn { border-color: #334155; box-shadow: 0 1px 2px rgba(0,0,0,0.35); }
+  .btn:hover:not(:disabled) { background: var(--surface); border-color: var(--accent); color: var(--accent); transform: translateY(-1px); box-shadow: 0 3px 8px rgba(37,99,235,0.14); }
+  .btn:active:not(:disabled) { transform: scale(0.98); }
   .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 2px 6px rgba(37,99,235,0.28); }
+  .btn.primary:hover:not(:disabled) { color: #fff; filter: brightness(1.08); box-shadow: 0 4px 12px rgba(37,99,235,0.35); }
   .btn.danger { background: var(--crit-bg); border-color: var(--crit); color: var(--crit-fg); }
+  .btn.danger:hover:not(:disabled) { background: var(--crit); color: #fff; border-color: var(--crit); }
   .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .btn-sm { padding: 4px 9px; font-size: 12px; }
+  .btn-sm { padding: 4.5px 10px; font-size: 12px; }
 
   /* KPI Grid & Split Panels */
   .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 18px; }
   .kpi-card {
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 16px 18px; box-shadow: var(--shadow); cursor: pointer; transition: transform 0.12s, border-color 0.15s;
+    padding: 16px 18px; box-shadow: var(--shadow); cursor: pointer; position: relative;
+    transition: transform 0.14s ease, border-color 0.15s ease, box-shadow 0.15s ease;
   }
-  .kpi-card:hover { transform: translateY(-1px); border-color: var(--accent); }
+  .kpi-card:hover { transform: translateY(-2px); border-color: var(--accent); box-shadow: 0 6px 18px rgba(37,99,235,0.12); }
+  .kpi-card::after { content: "View ›"; position: absolute; right: 14px; bottom: 12px; font-size: 11px; font-weight: 600; color: var(--accent); opacity: 0.72; }
+  .kpi-card:hover::after { opacity: 1; }
   .kpi-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
   .kpi-label { font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
   .kpi-icon { width: 22px; height: 22px; }
@@ -229,7 +236,8 @@
     background: var(--surface-2); border-bottom: 1px solid var(--border); white-space: nowrap;
   }
   td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable { cursor: pointer; transition: background 0.12s, box-shadow 0.12s; }
+  tbody tr.clickable:hover { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
   tbody tr:hover { background: var(--surface-2); }
   tr.group-row td { background: var(--surface-2); font-weight: 650; font-size: 12.5px; padding: 7px 14px; }
 
@@ -255,11 +263,22 @@
   }
   .actions { display: flex; gap: 4px; justify-content: flex-end; }
   .icon-btn {
-    padding: 4px 7px; border-radius: 6px; font-size: 12px;
-    background: transparent; border: 1px solid var(--border); color: var(--muted);
+    padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    background: var(--surface-2); border: 1px solid #cbd5e1; color: var(--text);
+    box-shadow: 0 1px 2px rgba(15,23,42,0.06);
     cursor: pointer; transition: all 0.12s;
   }
-  .icon-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--accent); }
+  [data-theme="dark"] .icon-btn { border-color: #334155; }
+  .icon-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); transform: translateY(-1px); }
+  .icon-btn:active { transform: scale(0.96); }
+  .guide-tabs { display: flex; gap: 6px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+  .guide-body { padding: 18px 20px; }
+  .guide-body h3 { font-size: 15px; font-weight: 700; margin: 16px 0 8px; color: var(--text); }
+  .guide-body h3:first-child { margin-top: 0; }
+  .guide-body p, .guide-body li { font-size: 13.5px; color: var(--muted); margin-bottom: 6px; }
+  .guide-body ul, .guide-body ol { padding-left: 20px; margin-bottom: 12px; }
+  .guide-body code { background: var(--surface-2); padding: 2px 6px; border-radius: 5px; font-size: 12px; color: var(--text); font-family: ui-monospace, monospace; }
+  .guide-pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-family: ui-monospace, monospace; font-size: 12px; overflow-x: auto; margin: 8px 0 14px; white-space: pre; }
   .pager { display: flex; align-items: center; justify-content: space-between; padding: 11px 16px; font-size: 12.5px; color: var(--muted); }
   .empty { text-align: center; padding: 36px 16px; color: var(--muted); font-size: 13px; }
 
@@ -390,6 +409,14 @@
       </button>
       <button class="nav-item" id="nav-system" onclick="setView('system')">
         <img src="/assets/icons/log.svg" alt=""><span class="nav-text">System & Audit</span>
+      </button>
+
+      <div class="nav-section">Docs & Scripts</div>
+      <button class="nav-item" id="nav-scripts" onclick="setView('scripts')">
+        <img src="/assets/icons/settings.svg" alt=""><span class="nav-text">Custom Scripts</span>
+      </button>
+      <button class="nav-item" id="nav-guide" onclick="setView('guide')">
+        <img src="/assets/icons/dashboard.svg" alt=""><span class="nav-text">User Guide</span>
       </button>
     </nav>
 
@@ -583,6 +610,33 @@
           <div id="manage-content"></div>
         </div>
       </section>
+
+      <!-- CUSTOM SCRIPTS MANAGER -->
+      <section id="sec-scripts" style="display:none">
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title"><img src="/assets/icons/settings.svg" alt="">Custom Check Scripts</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-sm primary" onclick="openScriptModal('','bash')">+ New Bash Script</button>
+              <button class="btn btn-sm" onclick="openScriptModal('','python')">+ New Python Script</button>
+            </div>
+          </div>
+          <div id="scripts-content" style="padding:14px 16px">Loading...</div>
+        </div>
+      </section>
+
+      <!-- INTERACTIVE USER GUIDE -->
+      <section id="sec-guide" style="display:none">
+        <div class="panel">
+          <div class="guide-tabs">
+            <button class="btn btn-sm active" id="gtab-ops" onclick="setGuideTab('ops')">1. Operasional & Status</button>
+            <button class="btn btn-sm" id="gtab-sop" onclick="setGuideTab('sop')">2. SOP Config & NCPA</button>
+            <button class="btn btn-sm" id="gtab-catalog" onclick="setGuideTab('catalog')">3. Katalog Command & Plugin (Live)</button>
+            <button class="btn btn-sm" id="gtab-paths" onclick="setGuideTab('paths')">4. Lokasi File & Standar Script</button>
+          </div>
+          <div class="guide-body" id="guide-body">Loading...</div>
+        </div>
+      </section>
     </main>
   </div>
 </div>
@@ -686,7 +740,9 @@ const VIEW_TITLES = {
   'manage-hosts': 'Manage Hosts & Services',
   'manage-cmd': 'Manage Commands & Groups',
   'manage-contacts': 'Manage Contacts',
-  'system': 'System Controls, Backups & Audit'
+  'system': 'System Controls, Backups & Audit',
+  'scripts': 'Custom Check Scripts',
+  'guide': 'Encore User Guide & Command Reference'
 };
 
 function populateStateSelect() {
@@ -711,7 +767,7 @@ function setView(v) {
   const activeNav = document.getElementById('nav-' + v);
   if (activeNav) activeNav.classList.add('active');
 
-  ['sec-overview','sec-table','sec-groups','sec-downtimes','sec-localhost','sec-manage'].forEach(id => {
+  ['sec-overview','sec-table','sec-groups','sec-downtimes','sec-localhost','sec-manage','sec-scripts','sec-guide'].forEach(id => {
     document.getElementById(id).style.display = 'none';
   });
 
@@ -733,6 +789,12 @@ function setView(v) {
   } else if (v === 'localhost') {
     document.getElementById('sec-localhost').style.display = 'block';
     loadLocalhost();
+  } else if (v === 'scripts') {
+    document.getElementById('sec-scripts').style.display = 'block';
+    loadScripts();
+  } else if (v === 'guide') {
+    document.getElementById('sec-guide').style.display = 'block';
+    renderGuide();
   } else {
     document.getElementById('sec-manage').style.display = 'block';
     document.getElementById('m-add-host-btn').style.display = v === 'manage-hosts' ? 'inline-flex' : 'none';
@@ -1303,6 +1365,10 @@ function openSvcForm(idx) {
       <button class="btn btn-sm" onclick="applySvcPreset('PING','check_ping!100.0,20%!500.0,60%')">Ping</button>
       <button class="btn btn-sm" onclick="applySvcPreset('SSH','check_ssh')">SSH</button>
       <button class="btn btn-sm" onclick="applySvcPreset('Disk /','check_local_disk!20%!10%!/')">Disk</button>
+      <button class="btn btn-sm" onclick="applySvcPreset('NCPA CPU','check_ncpa!MY_TOKEN!cpu/percent!-w 80 -c 90')">NCPA CPU</button>
+      <button class="btn btn-sm" onclick="applySvcPreset('NCPA Memory','check_ncpa!MY_TOKEN!memory/virtual!-w 80 -c 90')">NCPA RAM</button>
+      <button class="btn btn-sm" onclick="applySvcPreset('NCPA Disk /','check_ncpa!MY_TOKEN!disk/logical/|/used_percent!-w 80 -c 90')">NCPA Disk</button>
+      <button class="btn btn-sm" onclick="applySvcPreset('NCPA Procs','check_ncpa!MY_TOKEN!processes!-w 250 -c 400')">NCPA Procs</button>
     </div>
     <div class="form-grid">
       <div class="form-row"><label>Host Name *</label><input id="f-s-host" list="managed-host-list" type="text" value="${esc(s.host_name)}"><datalist id="managed-host-list">${hostOpts}</datalist></div>
@@ -1400,6 +1466,212 @@ async function rollbackBackup(name) {
   const d = await res.json();
   toast(res.ok ? 'Rolled back & reloading!' : ('Rollback failed: ' + d.error));
   if (res.ok) { await loadManage(); setTimeout(refreshAll, 1400); }
+}
+
+/* Custom Scripts Manager */
+async function loadScripts() {
+  const data = await (await fetch('/api/v1/scripts')).json();
+  const el = document.getElementById('scripts-content');
+  if (!data.enabled) {
+    el.innerHTML = '<div class="empty">Custom scripts require <code>-managed-dir</code> to be configured on <code>encore-state-gateway</code>.</div>';
+    return;
+  }
+  const list = data.scripts || [];
+  el.innerHTML = `<div class="kv-box" style="margin-bottom:14px"><div class="k">Scripts Directory (auto chmod +x)</div><div class="mono" style="margin-top:3px;color:var(--text)">${esc(data.dir)}</div></div>` +
+    (list.length ? `<div class="table-wrap"><table><thead><tr><th>Script Name</th><th>Full Path</th><th>Size</th><th>Modified</th><th style="text-align:right">Actions</th></tr></thead><tbody>` +
+      list.map(sc => `<tr>
+        <td><b>${esc(sc.name)}</b></td>
+        <td class="mono">${esc(sc.path)}</td>
+        <td class="mono">${sc.size_bytes} B</td>
+        <td class="mono">${esc(sc.mod_time)}</td>
+        <td class="actions">
+          <button class="btn btn-sm" onclick="openScriptModal('${esc(sc.name)}')">Edit</button>
+          <button class="btn btn-sm" onclick="openTestScriptModal('${esc(sc.name)}')">Test Run</button>
+          <button class="btn btn-sm primary" onclick="registerScriptAsCmd('${esc(sc.name)}','${esc(sc.path)}')">Register Command</button>
+          <button class="btn btn-sm danger" onclick="deleteScript('${esc(sc.name)}')">Delete</button>
+        </td></tr>`).join('') + `</tbody></table></div>`
+    : '<div class="empty">Belum ada custom script. Klik <b>+ New Bash Script</b> atau <b>+ New Python Script</b> untuk membuat check custom langsung dari dashboard.</div>');
+}
+
+async function openScriptModal(name, kind) {
+  let content = '';
+  if (name) {
+    const d = await (await fetch('/api/v1/scripts/content?name=' + encodeURIComponent(name))).json();
+    content = d.content || '';
+  } else if (kind === 'python') {
+    content = `#!/usr/bin/env python3\nimport sys\n# Exit codes: 0=OK, 1=WARNING, 2=CRITICAL, 3=UNKNOWN\nhost = sys.argv[1] if len(sys.argv) > 1 else "localhost"\nprint(f"OK - custom python check on {host} | metric=1;5;10;0;100")\nsys.exit(0)\n`;
+  } else {
+    content = `#!/bin/sh\n# Exit codes: 0=OK, 1=WARNING, 2=CRITICAL, 3=UNKNOWN\nHOST="\${1:-localhost}"\necho "OK - custom check on \$HOST | latency=1.2ms;50;100;0;200"\nexit 0\n`;
+  }
+  openModal(`<h2>${name ? 'Edit Script: ' + esc(name) : 'New Custom Check Script'}</h2>
+    <div class="form-row"><label>Filename (e.g. check_app.sh or check_api.py)</label><input id="sc-name" type="text" value="${esc(name || (kind==='python'?'check_custom.py':'check_custom.sh'))}" ${name?'readonly':''}></div>
+    <div class="form-row"><label>Script Content (auto chmod 0755 on save)</label><textarea id="sc-body" class="raw-editor">${esc(content)}</textarea></div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveScriptModal()">Save Script</button></div>`);
+}
+async function saveScriptModal() {
+  const name = document.getElementById('sc-name').value.trim();
+  const content = document.getElementById('sc-body').value;
+  const res = await fetch('/api/v1/scripts', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, content}) });
+  const d = await res.json();
+  if (!res.ok) { toast('Error: ' + (d.error || res.statusText)); return; }
+  closeModal(); toast('Script saved (chmod +x): ' + name); loadScripts();
+}
+async function deleteScript(name) {
+  if (!confirm(`Delete custom script "${name}"?`)) return;
+  const res = await fetch('/api/v1/scripts?name=' + encodeURIComponent(name), { method:'DELETE' });
+  if (res.ok) { toast('Script deleted'); loadScripts(); }
+}
+function openTestScriptModal(name) {
+  openModal(`<h2>Test Run: ${esc(name)}</h2>
+    <div class="form-row"><label>Arguments (optional, e.g. 127.0.0.1 8080)</label><input id="sc-test-args" type="text" placeholder="127.0.0.1"></div>
+    <pre class="console-out" id="sc-test-out" style="display:block;margin:8px 0">Click "Run Test" to execute (10s timeout)...</pre>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Close</button><button class="btn primary" onclick="runScriptTest('${esc(name)}')">Run Test</button></div>`);
+}
+async function runScriptTest(name) {
+  const outEl = document.getElementById('sc-test-out');
+  outEl.textContent = 'Running...';
+  const args = document.getElementById('sc-test-args').value.trim();
+  const res = await fetch('/api/v1/scripts/test', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, args}) });
+  const d = await res.json();
+  const stMap = {0:'OK',1:'WARNING',2:'CRITICAL',3:'UNKNOWN'};
+  outEl.textContent = `Exit Code: ${d.exit_code} (${stMap[d.exit_code]||'ERR'}) • Duration: ${d.duration_ms}ms\n--- STDOUT ---\n${d.stdout || '(empty)'}\n--- STDERR ---\n${d.stderr || '(empty)'}`;
+}
+function registerScriptAsCmd(name, fullPath) {
+  const cmdName = name.replace(/\.(sh|py|pl)$/, '');
+  openModal(`<h2>Register Script as Nagios Command</h2>
+    <div class="form-row"><label>Command Name *</label><input id="f-c-name" type="text" value="${esc(cmdName)}"></div>
+    <div class="form-row"><label>Command Line *</label><input id="f-c-line" type="text" value="${esc(fullPath)} $HOSTADDRESS$ $ARG1$"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/commands',{command_name:document.getElementById('f-c-name').value.trim(),command_line:document.getElementById('f-c-line').value.trim()},'Command registered')">Register Command</button></div>`);
+}
+async function quickRegisterNCPA() {
+  await apiPost('/api/v1/config/commands', {
+    command_name: 'check_ncpa',
+    command_line: "$USER1$/check_ncpa.py -H $HOSTADDRESS$ -t '$ARG1$' -P 5693 -M $ARG2$ $ARG3$"
+  }, 'Command check_ncpa registered');
+}
+
+/* Interactive User Guide */
+S.guideTab = 'ops';
+S.catalogCmds = [];
+function setGuideTab(t) {
+  S.guideTab = t;
+  ['ops','sop','catalog','paths'].forEach(k => document.getElementById('gtab-'+k).classList.toggle('active', k===t));
+  renderGuide();
+}
+function copyText(txt) {
+  navigator.clipboard?.writeText(txt).then(() => toast('Copied: ' + txt)).catch(() => toast(txt));
+}
+async function renderGuide() {
+  const el = document.getElementById('guide-body');
+  if (S.guideTab === 'ops') {
+    el.innerHTML = `
+      <h3>1. Memahami Status & Indikator</h3>
+      <div class="kv-grid">
+        <div class="kv-box"><div class="k">Normal</div><div class="v"><span class="badge c-ok"><img src="/assets/status/status-ok.svg">UP / OK</span> Exit code <code>0</code></div></div>
+        <div class="kv-box"><div class="k">Peringatan</div><div class="v"><span class="badge c-warn"><img src="/assets/status/status-warn.svg">WARN / UNREACH</span> Exit code <code>1</code></div></div>
+        <div class="kv-box"><div class="k">Kritis</div><div class="v"><span class="badge c-crit"><img src="/assets/status/status-critical.svg">CRIT / DOWN</span> Exit code <code>2</code></div></div>
+        <div class="kv-box"><div class="k">Lainnya</div><div class="v"><span class="badge c-unk"><img src="/assets/status/status-info.svg">UNKNOWN</span> <code>3</code> • <span class="badge c-pend">PENDING</span> belum dicek</div></div>
+      </div>
+      <ul>
+        <li><b>SOFT vs HARD:</b> Gagal pertama masuk <code>SOFT</code> dan diulang hingga <code>max_check_attempts</code>; jika tetap gagal menjadi <code>HARD</code>.</li>
+        <li><b>Unhandled Problems:</b> Problem aktif yang <b>belum di-ACK</b> dan <b>tidak sedang Downtime</b> — selalu pantau angka ini di halaman <b>Overview</b>.</li>
+        <li><b>Tag:</b> <code>ACK</code> = sudah diketahui tim, <code>DT</code> = sedang dalam jadwal maintenance, <code>FLAP</code> = status terlalu sering berubah-ubah.</li>
+      </ul>
+      <h3>2. Alur Operasional Triage Harian</h3>
+      <ol>
+        <li>Buka <b>Overview</b> atau <b>Problems</b> (lihat badge merah di sidebar kiri).</li>
+        <li>Klik baris Host/Service untuk membuka <b>Detail Slide-Over Drawer</b> (lihat full output & <i>Performance Data</i>).</li>
+        <li>Klik <b>↻ Force Check</b> untuk verifikasi instan.</li>
+        <li>Klik <b>✓ Acknowledge</b> untuk mencatat investigasi, atau <b>⏱ Downtime</b> saat maintenance terjadwal.</li>
+      </ol>
+      <h3>3. Shortcut & Navigasi Cepat</h3>
+      <ul>
+        <li>Tekan <code>/</code> kapan saja untuk fokus ke kotak pencarian global (cari nama host, IP, service, atau teks output).</li>
+        <li>Tekan <code>Esc</code> untuk menutup Modal atau Detail Drawer.</li>
+        <li>Gunakan tombol <b>Grouped by Host</b> di menu Services atau klik kartu di menu <b>Groups</b> untuk memfilter per grup.</li>
+      </ul>`;
+  } else if (S.guideTab === 'sop') {
+    el.innerHTML = `
+      <h3>1. Menambah Host, Service & Cloning</h3>
+      <ol>
+        <li>Buka <b>Management → Hosts & Services</b>, klik <b>+ Add Host</b> (isi nama, IP, command <code>check-host-alive</code>, dan hostgroup opsional).</li>
+        <li>Klik <b>+ Add Service</b>, pilih Host, lalu gunakan tombol <b>Quick Preset</b> (HTTP, TCP, Ping, SSH, Disk, atau NCPA) atau isi <code>command!ARG1!ARG2</code>.</li>
+        <li><b>Cloning Cepat:</b> Klik tombol <b>Clone</b> pada Host yang sudah punya banyak service, centang <i>"Clone all services"</i>, isi nama & IP baru — seluruh service ikut terduplikasi otomatis.</li>
+        <li><b>Kelola Localhost:</b> Buka <b>Management → Localhost Config</b> lalu klik <b>1-Click Adopt</b> agar <code>localhost</code> & 8 service bawaannya bisa diedit lewat form.</li>
+        <li>Setelah perubahan selesai, klik <b>Validate (nagios -v)</b> lalu <b>Apply & Reload</b>. Jika ada error konfigurasi, sistem menolak otomatis sehingga Nagios tetap aman.</li>
+      </ol>
+      <h3>2. Remote Monitoring dengan NCPA (Linux / Windows)</h3>
+      <p><b>Encore Go Worker</b> sudah mendukung <b>NCPA in-process fast-path</b> (menembak HTTPS API NCPA port <code>5693</code> langsung di Go tanpa spawn Python!).</p>
+      <div style="margin:10px 0"><button class="btn btn-sm primary" onclick="quickRegisterNCPA()">+ 1-Click Register Command "check_ncpa"</button></div>
+      <ol>
+        <li>Install <b>NCPA</b> di server target (Ubuntu/Debian/RHEL/Windows) dan atur token di <code>/usr/local/ncpa/etc/ncpa.cfg</code>:
+          <pre class="guide-pre">community_string = TOKEN_RAHASIA_ANDA</pre>
+        </li>
+        <li>Restart NCPA (<code>sudo systemctl restart ncpa</code>) dan buka firewall port <code>5693/tcp</code> dari IP server Encore.</li>
+        <li>Klik tombol <b>+ 1-Click Register Command "check_ncpa"</b> di atas (lalu klik <b>Apply & Reload</b>).</li>
+        <li>Tambahkan Host target, lalu tambah Service menggunakan preset NCPA (ganti <code>MY_TOKEN</code> dengan token Anda):
+          <pre class="guide-pre">CPU Usage  : check_ncpa!TOKEN_ANDA!cpu/percent!-w 80 -c 90
+Memory     : check_ncpa!TOKEN_ANDA!memory/virtual!-w 80 -c 90
+Disk /     : check_ncpa!TOKEN_ANDA!disk/logical/|/used_percent!-w 80 -c 90
+Processes  : check_ncpa!TOKEN_ANDA!processes!-w 250 -c 400</pre>
+        </li>
+      </ol>`;
+  } else if (S.guideTab === 'catalog') {
+    el.innerHTML = '<div class="empty">Loading live command & plugin catalog...</div>';
+    const [cRes, pRes] = await Promise.all([fetch('/api/v1/catalog/commands'), fetch('/api/v1/catalog/plugins')]);
+    const cmds = (await cRes.json()).commands || [];
+    const pData = await pRes.json();
+    S.catalogCmds = cmds;
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <h3 style="margin:0">Katalog Command Aktif (${cmds.length})</h3>
+        <input type="search" id="cat-search" placeholder="Filter command..." oninput="filterCatalog()">
+      </div>
+      <div class="table-wrap" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:18px">
+        <table><thead><tr><th>Command</th><th>Source</th><th>Contoh check_command</th><th>Command Line</th><th style="text-align:right">Copy</th></tr></thead>
+        <tbody id="cat-cmd-body"></tbody></table>
+      </div>
+      <h3>Plugins & Scripts Terpasang (${(pData.plugins||[]).length})</h3>
+      <p>Direktori aktif <code>$USER1$</code>: <code>${esc(pData.user1_dir)}</code> • Custom Scripts: <code>${esc(pData.scripts_dir || '-')}</code></p>
+      <div class="perf-chips">${(pData.plugins||[]).slice(0,80).map(p => `<span class="perf-chip" title="${esc(p.path)}" style="${p.is_custom?'background:var(--ok-bg);color:var(--ok-fg)':''}">${esc(p.name)}</span>`).join('')}</div>`;
+    filterCatalog();
+  } else if (S.guideTab === 'paths') {
+    const p = await (await fetch('/api/v1/catalog/paths')).json();
+    el.innerHTML = `
+      <h3>1. Peta Lokasi File di Server (Live)</h3>
+      <div class="table-wrap" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
+        <table><thead><tr><th>Komponen</th><th>Path Aktual</th><th>Fungsi</th></tr></thead><tbody>
+          <tr><td><b>Main Config</b></td><td class="mono">${esc(p.nagios_cfg)}</td><td>Konfigurasi utama Nagios Core</td></tr>
+          <tr><td><b>Managed Dir</b></td><td class="mono">${esc(p.managed_dir || '-')}</td><td><code>encore-managed.json</code> & hasil generate <code>encore-*.cfg</code></td></tr>
+          <tr><td><b>Custom Scripts</b></td><td class="mono">${esc(p.scripts_dir || '-')}</td><td>Tempat penyimpanan script dari menu <b>Custom Scripts</b></td></tr>
+          <tr><td><b>Backups</b></td><td class="mono">${esc(p.backups_dir || '-')}</td><td>10 snapshot otomatis untuk 1-Click Rollback</td></tr>
+          <tr><td><b>Audit Log</b></td><td class="mono">${esc(p.audit_log || '-')}</td><td>Riwayat seluruh aksi manajemen & external command</td></tr>
+          <tr><td><b>Built-in Commands</b></td><td class="mono">${esc(p.commands_cfg)}</td><td>Definisi command bawaan Nagios</td></tr>
+          <tr><td><b>Plugins ($USER1$)</b></td><td class="mono">${esc(p.plugins_dir)}</td><td>Binary plugin dari paket <code>monitoring-plugins</code></td></tr>
+          <tr><td><b>Localhost Config</b></td><td class="mono">${esc(p.localhost_cfg)}</td><td>Config monitoring server lokal</td></tr>
+        </tbody></table>
+      </div>
+      <h3>2. Macro & Standar Pembuatan Custom Script</h3>
+      <ul>
+        <li><b>Macro utama:</b> <code>$HOSTADDRESS$</code> (IP host), <code>$HOSTNAME$</code>, <code>$SERVICEDESC$</code>, <code>$ARG1$</code>..<code>$ARGn$</code> (dipisah tanda <code>!</code>), <code>$USER1$</code> (folder plugin).</li>
+        <li><b>Exit Code Wajib:</b> <code>0 = OK</code>, <code>1 = WARNING</code>, <code>2 = CRITICAL</code>, <code>3 = UNKNOWN</code>.</li>
+        <li><b>Format Output + Perfdata:</b> <code>STATUS - pesan ringkas | metric=nilai;warn;crit;min;max</code></li>
+      </ul>
+      <p>Untuk membuat script baru tanpa SSH, langsung buka menu <b>Docs & Scripts → Custom Scripts</b> di sidebar kiri, buat script, klik <b>Test Run</b>, lalu klik <b>Register Command</b>.</p>`;
+  }
+}
+function filterCatalog() {
+  const q = (document.getElementById('cat-search')?.value || '').toLowerCase();
+  const body = document.getElementById('cat-cmd-body');
+  if (!body) return;
+  const rows = S.catalogCmds.filter(c => !q || c.command_name.toLowerCase().includes(q) || c.command_line.toLowerCase().includes(q) || (c.description||'').toLowerCase().includes(q));
+  body.innerHTML = rows.length ? rows.map(c => `<tr>
+    <td><b>${esc(c.command_name)}</b>${c.fast_path ? ' <span class="badge c-ok">Go Fast</span>' : ''}<div class="name-sub">${esc(c.description||'')}</div></td>
+    <td><span class="flag-tag">${esc(c.source)}</span></td>
+    <td class="mono">${esc(c.example)}</td>
+    <td class="output-cell mono" title="${esc(c.command_line)}">${esc(c.command_line)}</td>
+    <td class="actions"><button class="btn btn-sm" onclick="copyText('${esc(c.example)}')">Copy</button></td>
+  </tr>`).join('') : '<tr><td colspan="5" class="empty">No matching commands</td></tr>';
 }
 
 async function refreshAll() {
