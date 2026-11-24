@@ -77,3 +77,28 @@ func TestKVEncodeDecodeRoundtrip(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckNCPAInProcess(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("token") != "secret123" || r.URL.Path != "/api/cpu/percent" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"returncode": 0, "stdout": "OK: Percent was 12.50% | 'percent'=12.50%;80;90;"}`))
+	}))
+	defer srv.Close()
+
+	addr := strings.TrimPrefix(srv.URL, "https://")
+	host, port, _ := net.SplitHostPort(addr)
+	w := NewWorker("test", "", []string{"check_ncpa.py"}, 16)
+
+	res := w.ExecuteCommand(context.Background(),
+		"/usr/local/nagios/libexec/check_ncpa.py -H "+host+" -P "+port+" -t secret123 -M cpu/percent -w 80 -c 90")
+	if res.ExitCode != 0 || !strings.Contains(res.Stdout, "Percent was 12.50%") {
+		t.Fatalf("expected NCPA OK, got code=%d out=%q", res.ExitCode, res.Stdout)
+	}
+	if w.fastPath.Load() != 1 || w.fallback.Load() != 0 {
+		t.Fatalf("expected fastPath=1 fallback=0, got %d/%d", w.fastPath.Load(), w.fallback.Load())
+	}
+}

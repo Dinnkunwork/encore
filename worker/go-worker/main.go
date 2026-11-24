@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -420,6 +422,143 @@ func (w *Worker) runCheckHTTP(ctx context.Context, args []string) (CheckResult, 
 	}, true
 }
 
+func (w *Worker) runCheckNCPA(ctx context.Context, args []string) (CheckResult, bool) {
+	var host, token, metric, warnStr, critStr, units string
+	port := 5693
+	timeoutSec := 15.0
+	var extraQueries []string
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-H", "--host":
+			if i+1 >= len(args) {
+				return CheckResult{}, false
+			}
+			i++
+			host = args[i]
+		case "-P", "--port":
+			if i+1 >= len(args) {
+				return CheckResult{}, false
+			}
+			i++
+			v, err := strconv.Atoi(args[i])
+			if err != nil {
+				return CheckResult{}, false
+			}
+			port = v
+		case "-t", "--token":
+			if i+1 >= len(args) {
+				return CheckResult{}, false
+			}
+			i++
+			token = args[i]
+		case "-M", "--metric":
+			if i+1 >= len(args) {
+				return CheckResult{}, false
+			}
+			i++
+			metric = strings.TrimPrefix(args[i], "/")
+		case "-w", "--warning":
+			if i+1 >= len(args) {
+				return CheckResult{}, false
+			}
+			i++
+			warnStr = args[i]
+		case "-c", "--critical":
+			if i+1 >= len(args) {
+				return CheckResult{}, false
+			}
+			i++
+			critStr = args[i]
+		case "-u", "--units":
+			if i+1 >= len(args) {
+				return CheckResult{}, false
+			}
+			i++
+			units = args[i]
+		case "-q", "--queryargs":
+			if i+1 >= len(args) {
+				return CheckResult{}, false
+			}
+			i++
+			extraQueries = append(extraQueries, args[i])
+		case "-T", "--timeout":
+			if i+1 >= len(args) {
+				return CheckResult{}, false
+			}
+			i++
+			if v, err := strconv.ParseFloat(args[i], 64); err == nil && v > 0 {
+				timeoutSec = v
+			}
+		default:
+			return CheckResult{}, false
+		}
+	}
+
+	if host == "" || token == "" || metric == "" {
+		return CheckResult{}, false
+	}
+
+	q := url.Values{}
+	q.Set("token", token)
+	q.Set("check", "1")
+	if warnStr != "" {
+		q.Set("warning", warnStr)
+	}
+	if critStr != "" {
+		q.Set("critical", critStr)
+	}
+	if units != "" {
+		q.Set("units", units)
+	}
+	for _, eq := range extraQueries {
+		for _, pair := range strings.Split(eq, ",") {
+			if k, v, ok := strings.Cut(pair, "="); ok {
+				q.Add(strings.TrimSpace(k), strings.TrimSpace(v))
+			}
+		}
+	}
+
+	endpoint := fmt.Sprintf("https://%s/api/%s?%s",
+		net.JoinHostPort(host, strconv.Itoa(port)), metric, q.Encode())
+
+	tctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec*float64(time.Second)))
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(tctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return CheckResult{ExitCode: 3, Stdout: fmt.Sprintf("UNKNOWN: NCPA request build error: %v\n", err)}, true
+	}
+
+	resp, err := w.httpCli.Do(req)
+	if err != nil {
+		return CheckResult{ExitCode: 2, Stdout: fmt.Sprintf("CRITICAL: Unable to contact NCPA on %s:%d: %v\n", host, port, err)}, true
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if resp.StatusCode != http.StatusOK {
+		return CheckResult{ExitCode: 2, Stdout: fmt.Sprintf("CRITICAL: NCPA HTTP %d: %s\n", resp.StatusCode, strings.TrimSpace(string(body)))}, true
+	}
+
+	var ncpaResp struct {
+		ReturnCode int    `json:"returncode"`
+		Stdout     string `json:"stdout"`
+		Error      string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &ncpaResp); err != nil {
+		return CheckResult{ExitCode: 3, Stdout: fmt.Sprintf("UNKNOWN: Invalid NCPA JSON response: %v\n", err)}, true
+	}
+	if ncpaResp.Error != "" {
+		return CheckResult{ExitCode: 3, Stdout: fmt.Sprintf("UNKNOWN: NCPA error: %s\n", ncpaResp.Error)}, true
+	}
+	out := ncpaResp.Stdout
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return CheckResult{ExitCode: ncpaResp.ReturnCode, Stdout: out}, true
+}
+
 func (w *Worker) runCheckDummy(args []string) (CheckResult, bool) {
 	if len(args) == 0 {
 		return CheckResult{ExitCode: 0, Stdout: "OK - dummy check\n"}, true
@@ -487,6 +626,11 @@ func (w *Worker) ExecuteCommand(ctx context.Context, cmdLine string) CheckResult
 			}
 		case "check_http":
 			if res, handled := w.runCheckHTTP(ctx, args[1:]); handled {
+				w.fastPath.Add(1)
+				return res
+			}
+		case "check_ncpa.py", "check_ncpa":
+			if res, handled := w.runCheckNCPA(ctx, args[1:]); handled {
 				w.fastPath.Add(1)
 				return res
 			}
@@ -669,7 +813,7 @@ func (w *Worker) Run(ctx context.Context) {
 func main() {
 	name := flag.String("name", fmt.Sprintf("Encore Go Worker %d", os.Getpid()), "Worker name")
 	qhPath := flag.String("qh", "/usr/local/nagios/var/rw/nagios.qh", "Path to Nagios QH Unix socket")
-	pluginsCSV := flag.String("plugins", "check_tcp,check_http,check_dummy", "Comma-separated plugin names to handle")
+	pluginsCSV := flag.String("plugins", "check_tcp,check_http,check_dummy,check_ncpa.py,check_ncpa", "Comma-separated plugin names to handle")
 	maxJobs := flag.Int("max-jobs", 512, "Maximum concurrent in-process jobs")
 	flag.Parse()
 
