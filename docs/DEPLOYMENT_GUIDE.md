@@ -144,7 +144,7 @@ Group=nagios
 ExecStart=/usr/local/nagios/bin/encore-go-worker \
   -name encore-fast-worker \
   -qh /usr/local/nagios/var/rw/nagios.qh \
-  -plugins check_tcp,check_http,check_dummy \
+  -plugins check_tcp,check_http,check_dummy,check_ncpa.py,check_ncpa \
   -max-jobs 512
 Restart=always
 RestartSec=2
