@@ -102,3 +102,27 @@ func TestCheckNCPAInProcess(t *testing.T) {
 		t.Fatalf("expected fastPath=1 fallback=0, got %d/%d", w.fastPath.Load(), w.fallback.Load())
 	}
 }
+
+func TestCheckHTTPStrictTLS(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("secure-ok"))
+	}))
+	defer srv.Close()
+
+	addr := strings.TrimPrefix(srv.URL, "https://")
+	host, port, _ := net.SplitHostPort(addr)
+	w := NewWorker("test", "", []string{"check_http"}, 16)
+
+	// Without -k, self-signed TLS cert MUST fail as CRITICAL
+	resStrict := w.ExecuteCommand(context.Background(), "/usr/lib/nagios/plugins/check_http -H "+host+" -p "+port+" -S")
+	if resStrict.ExitCode != 2 {
+		t.Fatalf("expected CRITICAL on untrusted TLS cert without -k, got %d (%s)", resStrict.ExitCode, resStrict.Stdout)
+	}
+
+	// With -k, self-signed TLS cert succeeds
+	resInsecure := w.ExecuteCommand(context.Background(), "/usr/lib/nagios/plugins/check_http -H "+host+" -p "+port+" -S -k")
+	if resInsecure.ExitCode != 0 {
+		t.Fatalf("expected OK with -k, got %d (%s)", resInsecure.ExitCode, resInsecure.Stdout)
+	}
+}

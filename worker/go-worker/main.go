@@ -41,29 +41,36 @@ type CheckResult struct {
 }
 
 type Worker struct {
-	name      string
-	qhPath    string
-	plugins   []string
-	maxJobs   int
-	httpCli   *http.Client
-	completed atomic.Int64
-	fastPath  atomic.Int64
-	fallback  atomic.Int64
+	name            string
+	qhPath          string
+	plugins         []string
+	maxJobs         int
+	httpCliStrict   *http.Client
+	httpCliInsecure *http.Client
+	completed       atomic.Int64
+	fastPath        atomic.Int64
+	fallback        atomic.Int64
 }
 
 func NewWorker(name, qhPath string, plugins []string, maxJobs int) *Worker {
-	tr := &http.Transport{
+	trStrict := &http.Transport{
 		MaxIdleConns:        256,
 		MaxIdleConnsPerHost: 64,
 		IdleConnTimeout:     60 * time.Second,
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, // controlled per-check if needed
+	}
+	trInsecure := &http.Transport{
+		MaxIdleConns:        256,
+		MaxIdleConnsPerHost: 64,
+		IdleConnTimeout:     60 * time.Second,
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 	}
 	return &Worker{
-		name:    name,
-		qhPath:  qhPath,
-		plugins: plugins,
-		maxJobs: maxJobs,
-		httpCli: &http.Client{Transport: tr},
+		name:            name,
+		qhPath:          qhPath,
+		plugins:         plugins,
+		maxJobs:         maxJobs,
+		httpCliStrict:   &http.Client{Transport: trStrict},
+		httpCliInsecure: &http.Client{Transport: trInsecure},
 	}
 }
 
@@ -261,6 +268,7 @@ func (w *Worker) runCheckHTTP(ctx context.Context, args []string) (CheckResult, 
 	var host, ip, uri, expectStr string
 	var port int
 	useSSL := false
+	insecure := false
 	var warnSec, critSec float64
 	timeoutSec := 10.0
 	expectCode := 0
@@ -297,6 +305,8 @@ func (w *Worker) runCheckHTTP(ctx context.Context, args []string) (CheckResult, 
 			uri = args[i]
 		case "-S", "--ssl":
 			useSSL = true
+		case "-k", "--insecure":
+			insecure = true
 		case "-s":
 			if i+1 >= len(args) {
 				return CheckResult{}, false
@@ -380,7 +390,11 @@ func (w *Worker) runCheckHTTP(ctx context.Context, args []string) (CheckResult, 
 	}
 
 	t0 := time.Now()
-	resp, err := w.httpCli.Do(req)
+	cli := w.httpCliStrict
+	if insecure {
+		cli = w.httpCliInsecure
+	}
+	resp, err := cli.Do(req)
 	elapsed := time.Since(t0).Seconds()
 	if err != nil {
 		return CheckResult{ExitCode: 2, Stdout: fmt.Sprintf("HTTP CRITICAL - %v\n", err)}, true
@@ -530,7 +544,7 @@ func (w *Worker) runCheckNCPA(ctx context.Context, args []string) (CheckResult, 
 		return CheckResult{ExitCode: 3, Stdout: fmt.Sprintf("UNKNOWN: NCPA request build error: %v\n", err)}, true
 	}
 
-	resp, err := w.httpCli.Do(req)
+	resp, err := w.httpCliInsecure.Do(req)
 	if err != nil {
 		return CheckResult{ExitCode: 2, Stdout: fmt.Sprintf("CRITICAL: Unable to contact NCPA on %s:%d: %v\n", host, port, err)}, true
 	}
