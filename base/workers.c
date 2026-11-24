@@ -256,7 +256,7 @@ static struct wproc_list *get_wproc_list(const char *cmd)
 		free(cmd_name);
 	}
 
-	if (wp_list) {
+	if (wp_list && wp_list->len > 0) {
 		return wp_list;
 	}
 
@@ -518,29 +518,52 @@ static int remove_specialized(void *data)
 }
 
 /* remove worker from job assignment list */
+static struct wproc_worker *worker_to_purge;
+static int purge_worker_from_specialized(void *data)
+{
+	struct wproc_list *wpl = (struct wproc_list *)data;
+	unsigned int i = 0, j = 0;
+
+	if (!wpl || !worker_to_purge)
+		return 0;
+
+	for (i = 0; i < wpl->len; i++) {
+		if (wpl->wps[i] == worker_to_purge)
+			continue;
+		wpl->wps[j++] = wpl->wps[i];
+	}
+	wpl->len = j;
+
+	if (wpl->len == 0) {
+		free(wpl->wps);
+		wpl->wps = NULL;
+		free(wpl);
+		return DKHASH_WALK_REMOVE;
+	}
+	return 0;
+}
+
 static void remove_worker(struct wproc_worker *worker)
 {
 	unsigned int i         = 0;
 	unsigned int j         = 0;
 	struct wproc_list *wpl = worker->wp_list;
 
-	for (i = 0; i < wpl->len; i++) {
-
-		if (wpl->wps[i] == worker) {
-			continue;
+	if (wpl == &workers) {
+		for (i = 0; i < wpl->len; i++) {
+			if (wpl->wps[i] == worker)
+				continue;
+			wpl->wps[j++] = wpl->wps[i];
 		}
-
-		wpl->wps[j++] = wpl->wps[i];
-	}
-
-	wpl->len = j;
-
-	if (specialized_workers == NULL || wpl->len > 0) {
+		wpl->len = j;
 		return;
 	}
 
-	to_remove = wpl;
-	dkhash_walk_data(specialized_workers, remove_specialized);
+	if (specialized_workers != NULL) {
+		worker_to_purge = worker;
+		dkhash_walk_data(specialized_workers, purge_worker_from_specialized);
+		worker_to_purge = NULL;
+	}
 }
 
 
