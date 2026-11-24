@@ -410,11 +410,11 @@ static int chan_state_events(int cb, void *data)
 	if (channels[chan_state_events_id]->subscriptions == NULL)
 		return 0;
 
-	if (cb == NEBCALLBACK_HOST_CHECK_DATA) {
-		nebstruct_host_check_data *ds = (nebstruct_host_check_data *)data;
+	if (cb == NEBCALLBACK_HOST_STATUS_DATA) {
+		nebstruct_host_status_data *ds = (nebstruct_host_status_data *)data;
 		host *h;
 
-		if (ds->type != NEBTYPE_HOSTCHECK_PROCESSED)
+		if (ds->type != NEBTYPE_HOSTSTATUS_UPDATE || !ds->object_ptr)
 			return 0;
 
 		h = (host *)ds->object_ptr;
@@ -431,7 +431,7 @@ static int chan_state_events(int cb, void *data)
 				"\"acknowledged\":%d,\"downtime_depth\":%d,\"is_flapping\":%d,"
 				"\"latency\":%.4f,\"execution_time\":%.4f,"
 				"\"plugin_output\":\"%s\",\"perf_data\":\"%s\"}\n",
-				e1, e2, h->current_state, h->state_type, 1,
+				e1, e2, h->current_state, h->state_type, h->has_been_checked,
 				h->current_attempt, h->max_attempts,
 				(unsigned long long)h->last_check,
 				(unsigned long long)h->next_check,
@@ -442,11 +442,11 @@ static int chan_state_events(int cb, void *data)
 				h->latency, h->execution_time,
 				e3, e4);
 		}
-	} else if (cb == NEBCALLBACK_SERVICE_CHECK_DATA) {
-		nebstruct_service_check_data *ds = (nebstruct_service_check_data *)data;
+	} else if (cb == NEBCALLBACK_SERVICE_STATUS_DATA) {
+		nebstruct_service_status_data *ds = (nebstruct_service_status_data *)data;
 		service *s;
 
-		if (ds->type != NEBTYPE_SERVICECHECK_PROCESSED)
+		if (ds->type != NEBTYPE_SERVICESTATUS_UPDATE || !ds->object_ptr)
 			return 0;
 
 		s = (service *)ds->object_ptr;
@@ -463,7 +463,7 @@ static int chan_state_events(int cb, void *data)
 				"\"acknowledged\":%d,\"downtime_depth\":%d,\"is_flapping\":%d,"
 				"\"latency\":%.4f,\"execution_time\":%.4f,"
 				"\"plugin_output\":\"%s\",\"perf_data\":\"%s\"}\n",
-				e1, e2, s->current_state, s->state_type, 1,
+				e1, e2, s->current_state, s->state_type, s->has_been_checked,
 				s->current_attempt, s->max_attempts,
 				(unsigned long long)s->last_check,
 				(unsigned long long)s->next_check,
@@ -634,7 +634,7 @@ int nerd_init(void)
 			chan_opath_checks, nebcallback_flag(NEBCALLBACK_HOST_CHECK_DATA) | nebcallback_flag(NEBCALLBACK_SERVICE_CHECK_DATA));
 	chan_state_events_id = nerd_mkchan("stateevents",
 			"Real-time host and service state updates as NDJSON",
-			chan_state_events, nebcallback_flag(NEBCALLBACK_HOST_CHECK_DATA) | nebcallback_flag(NEBCALLBACK_SERVICE_CHECK_DATA));
+			chan_state_events, nebcallback_flag(NEBCALLBACK_HOST_STATUS_DATA) | nebcallback_flag(NEBCALLBACK_SERVICE_STATUS_DATA));
 
 	logit(NSLOG_INFO_MESSAGE, TRUE, "nerd: Fully initialized and ready to rock!\n");
 	return 0;

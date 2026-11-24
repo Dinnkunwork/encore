@@ -517,10 +517,32 @@ func newHTTPHandler(store *StateStore, cmdPipePath string) http.Handler {
 	return mux
 }
 
+func runPeriodicResync(ctx context.Context, sockPath string, store *StateStore, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !store.connected.Load() {
+				continue
+			}
+			if err := syncFromQH(sockPath, store); err != nil {
+				log.Printf("[resync] periodic sync failed: %v", err)
+			}
+		}
+	}
+}
+
 func main() {
 	listenAddr := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	qhPath := flag.String("qh", "/usr/local/nagios/var/rw/nagios.qh", "Path to Nagios Query Handler Unix socket")
 	cmdPath := flag.String("cmd", "", "Optional path to Nagios external command file (nagios.cmd)")
+	resyncInterval := flag.Duration("resync-interval", 5*time.Minute, "Periodic full snapshot resync interval (0 to disable)")
 	flag.Parse()
 
 	store := NewStateStore()
@@ -528,6 +550,7 @@ func main() {
 	defer stop()
 
 	go runNERDLoop(ctx, *qhPath, store)
+	go runPeriodicResync(ctx, *qhPath, store, *resyncInterval)
 
 	srv := &http.Server{
 		Addr:              *listenAddr,
