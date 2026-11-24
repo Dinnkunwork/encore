@@ -1,5 +1,7 @@
 #include "include/config.h"
 #include "include/nagios.h"
+#include "include/downtime.h"
+#include "include/comments.h"
 #include "lib/libnagios.h"
 #include "lib/nsock.h"
 #include <unistd.h>
@@ -609,9 +611,13 @@ static int qh_state(int sd, char *buf, unsigned int len)
 		nsock_printf_nul(sd,
 			"Query handler for fast in-memory JSON state snapshots.\n"
 			"Available commands:\n"
-			"  summary    Host/service state counts and program info\n"
-			"  hosts      JSON array of all host states\n"
-			"  services   JSON array of all service states\n");
+			"  summary        Host/service state counts and program info\n"
+			"  hosts          JSON array of all host states\n"
+			"  services       JSON array of all service states\n"
+			"  hostgroups     JSON array of all hostgroups and members\n"
+			"  servicegroups  JSON array of all servicegroups and members\n"
+			"  downtimes      JSON array of scheduled downtimes\n"
+			"  comments       JSON array of host/service comments\n");
 		return 0;
 	}
 
@@ -636,10 +642,16 @@ static int qh_state(int sd, char *buf, unsigned int len)
 		}
 
 		if (qh_sbuf_printf(&sb,
-			"{\"program\":{\"pid\":%d,\"program_start\":%llu},"
+			"{\"program\":{\"pid\":%d,\"program_start\":%llu,"
+			"\"notifications_enabled\":%d,\"execute_service_checks\":%d,"
+			"\"execute_host_checks\":%d,\"flap_detection_enabled\":%d,"
+			"\"event_handlers_enabled\":%d},"
 			"\"hosts\":{\"total\":%u,\"up\":%u,\"down\":%u,\"unreachable\":%u,\"pending\":%u},"
 			"\"services\":{\"total\":%u,\"ok\":%u,\"warning\":%u,\"critical\":%u,\"unknown\":%u,\"pending\":%u}}",
 			(int)getpid(), (unsigned long long)program_start,
+			enable_notifications, execute_service_checks,
+			execute_host_checks, enable_flap_detection,
+			enable_event_handlers,
 			h_total, h_up, h_down, h_unreach, h_pending,
 			s_total, s_ok, s_warn, s_crit, s_unk, s_pending) < 0) {
 			free(sb.data);
@@ -723,6 +735,113 @@ static int qh_state(int sd, char *buf, unsigned int len)
 			free(sb.data);
 			return 500;
 		}
+	} else if (!strcmp(buf, "hostgroups")) {
+		hostgroup *hg;
+		if (qh_sbuf_append(&sb, "[", 1) < 0) { free(sb.data); return 500; }
+		for (hg = hostgroup_list; hg != NULL; hg = hg->next) {
+			hostsmember *hm;
+			int mfirst = 1;
+			if (!first && qh_sbuf_append(&sb, ",", 1) < 0) { free(sb.data); return 500; }
+			first = 0;
+			if (qh_sbuf_append(&sb, "{\"group_name\":", 14) < 0 ||
+				qh_sbuf_json_str(&sb, hg->group_name) < 0 ||
+				qh_sbuf_append(&sb, ",\"alias\":", 9) < 0 ||
+				qh_sbuf_json_str(&sb, hg->alias) < 0 ||
+				qh_sbuf_append(&sb, ",\"members\":[", 12) < 0) {
+				free(sb.data);
+				return 500;
+			}
+			for (hm = hg->members; hm != NULL; hm = hm->next) {
+				if (!mfirst && qh_sbuf_append(&sb, ",", 1) < 0) { free(sb.data); return 500; }
+				mfirst = 0;
+				if (qh_sbuf_json_str(&sb, hm->host_name) < 0) { free(sb.data); return 500; }
+			}
+			if (qh_sbuf_append(&sb, "]}", 2) < 0) { free(sb.data); return 500; }
+		}
+		if (qh_sbuf_append(&sb, "]", 1) < 0) { free(sb.data); return 500; }
+	} else if (!strcmp(buf, "servicegroups")) {
+		servicegroup *sg;
+		if (qh_sbuf_append(&sb, "[", 1) < 0) { free(sb.data); return 500; }
+		for (sg = servicegroup_list; sg != NULL; sg = sg->next) {
+			servicesmember *sm;
+			int mfirst = 1;
+			if (!first && qh_sbuf_append(&sb, ",", 1) < 0) { free(sb.data); return 500; }
+			first = 0;
+			if (qh_sbuf_append(&sb, "{\"group_name\":", 14) < 0 ||
+				qh_sbuf_json_str(&sb, sg->group_name) < 0 ||
+				qh_sbuf_append(&sb, ",\"alias\":", 9) < 0 ||
+				qh_sbuf_json_str(&sb, sg->alias) < 0 ||
+				qh_sbuf_append(&sb, ",\"members\":[", 12) < 0) {
+				free(sb.data);
+				return 500;
+			}
+			for (sm = sg->members; sm != NULL; sm = sm->next) {
+				if (!mfirst && qh_sbuf_append(&sb, ",", 1) < 0) { free(sb.data); return 500; }
+				mfirst = 0;
+				if (qh_sbuf_append(&sb, "{\"host_name\":", 13) < 0 ||
+					qh_sbuf_json_str(&sb, sm->host_name) < 0 ||
+					qh_sbuf_append(&sb, ",\"description\":", 15) < 0 ||
+					qh_sbuf_json_str(&sb, sm->service_description) < 0 ||
+					qh_sbuf_append(&sb, "}", 1) < 0) {
+					free(sb.data);
+					return 500;
+				}
+			}
+			if (qh_sbuf_append(&sb, "]}", 2) < 0) { free(sb.data); return 500; }
+		}
+		if (qh_sbuf_append(&sb, "]", 1) < 0) { free(sb.data); return 500; }
+	} else if (!strcmp(buf, "downtimes")) {
+		scheduled_downtime *dt;
+		if (qh_sbuf_append(&sb, "[", 1) < 0) { free(sb.data); return 500; }
+		for (dt = scheduled_downtime_list; dt != NULL; dt = dt->next) {
+			if (!first && qh_sbuf_append(&sb, ",", 1) < 0) { free(sb.data); return 500; }
+			first = 0;
+			if (qh_sbuf_printf(&sb,
+					"{\"downtime_id\":%lu,\"type\":%d,\"host_name\":",
+					dt->downtime_id, dt->type) < 0 ||
+				qh_sbuf_json_str(&sb, dt->host_name) < 0 ||
+				qh_sbuf_append(&sb, ",\"service_description\":", 23) < 0 ||
+				qh_sbuf_json_str(&sb, dt->service_description) < 0 ||
+				qh_sbuf_printf(&sb,
+					",\"entry_time\":%llu,\"start_time\":%llu,\"end_time\":%llu,"
+					"\"fixed\":%d,\"duration\":%lu,\"is_in_effect\":%d,\"author\":",
+					(unsigned long long)dt->entry_time,
+					(unsigned long long)dt->start_time,
+					(unsigned long long)dt->end_time,
+					dt->fixed, dt->duration, dt->is_in_effect) < 0 ||
+				qh_sbuf_json_str(&sb, dt->author) < 0 ||
+				qh_sbuf_append(&sb, ",\"comment\":", 11) < 0 ||
+				qh_sbuf_json_str(&sb, dt->comment) < 0 ||
+				qh_sbuf_append(&sb, "}", 1) < 0) {
+				free(sb.data);
+				return 500;
+			}
+		}
+		if (qh_sbuf_append(&sb, "]", 1) < 0) { free(sb.data); return 500; }
+	} else if (!strcmp(buf, "comments")) {
+		nagios_comment *cm;
+		if (qh_sbuf_append(&sb, "[", 1) < 0) { free(sb.data); return 500; }
+		for (cm = comment_list; cm != NULL; cm = cm->next) {
+			if (!first && qh_sbuf_append(&sb, ",", 1) < 0) { free(sb.data); return 500; }
+			first = 0;
+			if (qh_sbuf_printf(&sb,
+					"{\"comment_id\":%lu,\"comment_type\":%d,\"entry_type\":%d,\"host_name\":",
+					cm->comment_id, cm->comment_type, cm->entry_type) < 0 ||
+				qh_sbuf_json_str(&sb, cm->host_name) < 0 ||
+				qh_sbuf_append(&sb, ",\"service_description\":", 23) < 0 ||
+				qh_sbuf_json_str(&sb, cm->service_description) < 0 ||
+				qh_sbuf_printf(&sb,
+					",\"entry_time\":%llu,\"persistent\":%d,\"author\":",
+					(unsigned long long)cm->entry_time, cm->persistent) < 0 ||
+				qh_sbuf_json_str(&sb, cm->author) < 0 ||
+				qh_sbuf_append(&sb, ",\"comment_data\":", 16) < 0 ||
+				qh_sbuf_json_str(&sb, cm->comment_data) < 0 ||
+				qh_sbuf_append(&sb, "}", 1) < 0) {
+				free(sb.data);
+				return 500;
+			}
+		}
+		if (qh_sbuf_append(&sb, "]", 1) < 0) { free(sb.data); return 500; }
 	} else {
 		return 404;
 	}
