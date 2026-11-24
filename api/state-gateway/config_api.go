@@ -11,7 +11,48 @@ func decodeJSONBody(r *http.Request, dst any) error {
 	return json.NewDecoder(io.LimitReader(r.Body, 256*1024)).Decode(dst)
 }
 
-func registerConfigRoutes(mux *http.ServeMux, cs *ConfigStore) {
+func registerConfigRoutes(mux *http.ServeMux, cs *ConfigStore, localhostCfgPath string) {
+	mux.HandleFunc("/api/v1/config/localhost", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, http.StatusOK, cs.GetLocalhostStatus(localhostCfgPath))
+		case http.MethodPut, http.MethodPost:
+			var req struct {
+				Raw string `json:"raw"`
+			}
+			if err := decodeJSONBody(r, &req); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			out, err := cs.SaveLocalhostRaw(localhostCfgPath, req.Raw)
+			if err != nil {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"saved": false, "error": err.Error(), "output": out})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"saved": true, "output": out})
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	})
+
+	mux.HandleFunc("/api/v1/config/localhost/adopt", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		out, nh, ns, err := cs.AdoptLocalhost(localhostCfgPath)
+		if err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"adopted": false, "error": err.Error(), "output": out})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"adopted":  true,
+			"hosts":    nh,
+			"services": ns,
+			"output":   out,
+		})
+	})
+
 	mux.HandleFunc("/api/v1/config", func(w http.ResponseWriter, r *http.Request) {
 		cfg, pending, enabled := cs.Snapshot()
 		writeJSON(w, http.StatusOK, map[string]any{

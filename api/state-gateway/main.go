@@ -4,12 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -24,8 +25,8 @@ import (
 	"time"
 )
 
-//go:embed web/index.html
-var dashboardHTML []byte
+//go:embed web/index.html web/assets
+var webFS embed.FS
 
 type ProgramInfo struct {
 	PID                  int   `json:"pid"`
@@ -781,17 +782,39 @@ func parseQueryOpts(r *http.Request) (QueryOpts, error) {
 	}, nil
 }
 
-func newHTTPHandler(store *StateStore, qhPath, cmdPipePath string, cs *ConfigStore) http.Handler {
+func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath string, cs *ConfigStore) http.Handler {
 	mux := http.NewServeMux()
+
+	assetsSub, _ := fs.Sub(webFS, "web/assets")
+	assetsHandler := http.StripPrefix("/assets/", http.FileServer(http.FS(assetsSub)))
+	mux.HandleFunc("/assets/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		assetsHandler.ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		data, err := webFS.ReadFile("web/assets/favicon/favicon.ico")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/x-icon")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(data)
+	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
+		data, err := webFS.ReadFile("web/index.html")
+		if err != nil {
+			http.Error(w, "dashboard missing", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(dashboardHTML)
+		_, _ = w.Write(data)
 	})
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -926,7 +949,7 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath string, cs *ConfigSto
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued", "command": cmd})
 	})
 
-	registerConfigRoutes(mux, cs)
+	registerConfigRoutes(mux, cs, localhostCfgPath)
 	return mux
 }
 
@@ -958,6 +981,7 @@ func main() {
 	managedDir := flag.String("managed-dir", "", "Optional managed Nagios config directory (e.g. /usr/local/nagios/etc/encore.d)")
 	nagiosBin := flag.String("nagios-bin", "/usr/local/nagios/bin/nagios", "Path to nagios binary for pre-flight validation (-v)")
 	nagiosCfg := flag.String("nagios-cfg", "/usr/local/nagios/etc/nagios.cfg", "Path to nagios.cfg for pre-flight validation")
+	localhostCfg := flag.String("localhost-cfg", "/usr/local/nagios/etc/objects/localhost.cfg", "Path to localhost.cfg for dashboard management/adoption")
 	resyncInterval := flag.Duration("resync-interval", 5*time.Minute, "Periodic full snapshot resync interval (0 to disable)")
 	flag.Parse()
 
@@ -975,7 +999,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *listenAddr,
-		Handler:           newHTTPHandler(store, *qhPath, *cmdPath, cfgStore),
+		Handler:           newHTTPHandler(store, *qhPath, *cmdPath, *localhostCfg, cfgStore),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

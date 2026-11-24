@@ -34,19 +34,21 @@ func TestStateStoreAndHTTPAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewConfigStore: %v", err)
 	}
-	handler := newHTTPHandler(store, "", "", cs)
+	handler := newHTTPHandler(store, "", "", "", cs)
 
-	// Dashboard HTML
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || rec.Body.Len() == 0 {
-		t.Fatalf("expected 200 HTML dashboard, got %d", rec.Code)
+	// Dashboard HTML + embedded assets
+	for _, p := range []string{"/", "/favicon.ico", "/assets/logo/logo.svg", "/assets/status/status-ok.svg", "/assets/icons/dashboard.svg"} {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Body.Len() == 0 {
+			t.Fatalf("expected 200 for %s, got %d (len=%d)", p, rec.Code, rec.Body.Len())
+		}
 	}
 
 	// Summary with unhandled count
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil)
-	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil)
+	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	var sum SummaryResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &sum)
@@ -130,5 +132,40 @@ func TestConfigStoreCRUDAndClone(t *testing.T) {
 	}
 	if len(cs.ListBackups()) != 1 {
 		t.Fatalf("expected 1 backup after apply, got %d", len(cs.ListBackups()))
+	}
+}
+
+func TestParseAndAdoptLocalhost(t *testing.T) {
+	sample := `
+define host {
+    use         linux-server
+    host_name   localhost
+    alias       localhost
+    address     127.0.0.1
+}
+define hostgroup {
+    hostgroup_name  linux-servers
+    alias           Linux Servers
+    members         localhost
+}
+define service {
+    use                 local-service
+    host_name           localhost
+    service_description PING
+    check_command       check_ping!100.0,20%!500.0,60%
+}
+define service {
+    use                 local-service
+    host_name           localhost
+    service_description Root Partition
+    check_command       check_local_disk!20%!10%!/
+}
+`
+	hosts, svcs, hgs := ParseNagiosObjectFile(sample)
+	if len(hosts) != 1 || hosts[0].Name != "localhost" {
+		t.Fatalf("unexpected parsed hosts: %+v", hosts)
+	}
+	if len(svcs) != 2 || len(hgs) != 1 {
+		t.Fatalf("unexpected parsed svcs=%d hgs=%d", len(svcs), len(hgs))
 	}
 }
