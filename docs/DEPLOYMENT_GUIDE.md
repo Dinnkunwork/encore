@@ -121,6 +121,7 @@ ExecStart=/usr/local/nagios/bin/encore-state-gateway \
   -managed-dir /usr/local/nagios/etc/encore.d \
   -nagios-bin /usr/local/nagios/bin/nagios \
   -nagios-cfg /usr/local/nagios/etc/nagios.cfg \
+  -localhost-cfg /usr/local/nagios/etc/objects/localhost.cfg \
   -resync-interval 5m
 Restart=always
 RestartSec=2
@@ -184,3 +185,36 @@ grep "encore-fast-worker" /usr/local/nagios/var/nagios.log
 - **Rollback Worker (Fase 2):** `sudo systemctl stop encore-go-worker` — Nagios otomatis *fallback* ke core worker bawaan tanpa restart.
 - **Rollback Async Save (Fase 3):** Ubah `async_retention_save=0` (dan `async_status_save=0`) di `nagios.cfg`, lalu `sudo systemctl reload nagios`.
 - **Rollback API/CGI (Fase 1):** Kembalikan `status_file=/usr/local/nagios/var/status.dat` di `nagios.cfg` dan `sudo systemctl reload nagios`.
+
+---
+
+## 8. Quick Update (Aman & Persist Semua Settings)
+
+Setiap kali ada update baru di repo, **jangan** menjalankan `make install-config` agar konfigurasi eksisting tidak tertimpa. Cukup perbarui binary saja — seluruh file di `/usr/local/nagios/etc/`, `/usr/local/nagios/etc/encore.d/` (`encore-managed.json`, backups, audit log), `retention.dat`, dan unit systemd akan **tetap utuh 100%**.
+
+```bash
+cd /path/to/encore
+git pull origin master
+
+# 1. Rebuild binary Nagios Core (config & state tidak disentuh)
+./configure --enable-event-broker --enable-nerd
+make -j"$(nproc)" nagios
+
+# 2. Rebuild binary Go Gateway & Go Worker
+(cd api/state-gateway && go build -o state-gateway .)
+(cd worker/go-worker && go build -o go-worker .)
+
+# 3. Stop service, ganti binary saja, lalu validasi config eksisting
+sudo systemctl stop encore-state-gateway encore-go-worker nagios
+sudo install -m 0755 base/nagios /usr/local/nagios/bin/nagios
+sudo install -m 0755 base/nagiostats /usr/local/nagios/bin/nagiostats
+sudo install -m 0755 api/state-gateway/state-gateway /usr/local/nagios/bin/encore-state-gateway
+sudo install -m 0755 worker/go-worker/go-worker /usr/local/nagios/bin/encore-go-worker
+sudo -u nagios /usr/local/nagios/bin/nagios -v /usr/local/nagios/etc/nagios.cfg
+
+# 4. Jalankan kembali semua service
+sudo systemctl start nagios encore-state-gateway encore-go-worker
+sudo systemctl status nagios encore-state-gateway encore-go-worker --no-pager
+```
+
+> **Tip:** Jika update hanya mengubah Dashboard / API Gateway (tanpa perubahan C di `base/`), cukup jalankan bagian rebuild `api/state-gateway`, `sudo install`, dan `sudo systemctl restart encore-state-gateway` (**tanpa** perlu restart `nagios`).
