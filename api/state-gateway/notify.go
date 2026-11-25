@@ -44,6 +44,21 @@ type NotifyConfig struct {
 	WebhookType    string `json:"webhook_type"` // "generic", "telegram", "slack", "discord"
 	WebhookURL     string `json:"webhook_url"`
 	WebhookChatID  string `json:"webhook_chat_id,omitempty"`
+
+	// Hostgroup-specific routing rules (optional)
+	Routes []NotifyRoute `json:"routes,omitempty"`
+}
+
+type NotifyRoute struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Hostgroup      string   `json:"hostgroup"` // e.g. "db-prod" or "*"
+	Recipients     []string `json:"recipients,omitempty"`
+	WebhookEnabled bool     `json:"webhook_enabled"`
+	WebhookType    string   `json:"webhook_type,omitempty"`
+	WebhookURL     string   `json:"webhook_url,omitempty"`
+	WebhookChatID  string   `json:"webhook_chat_id,omitempty"`
+	Enabled        bool     `json:"enabled"`
 }
 
 type NotifyDelivery struct {
@@ -70,11 +85,18 @@ type Notifier struct {
 	cfgPath     string
 	historyPath string
 	cs          *ConfigStore
+	store       *StateStore
 	cfg         NotifyConfig
 	lastSent    map[string]time.Time
 	history     []NotifyDelivery
 	queue       chan AlertEvent
 	httpClient  *http.Client
+}
+
+func (n *Notifier) SetStore(s *StateStore) {
+	n.mu.Lock()
+	n.store = s
+	n.mu.Unlock()
 }
 
 func defaultNotifyConfig() NotifyConfig {
@@ -477,9 +499,55 @@ func formatAlertHTML(ev AlertEvent, dashURL string) string {
 func (n *Notifier) dispatch(ev AlertEvent) {
 	n.mu.RLock()
 	cfg := n.cfg
+	st := n.store
 	n.mu.RUnlock()
 
 	subj := formatAlertSubject(ev)
+
+	// Check hostgroup-specific routing rules first
+	var matchedRoutes []NotifyRoute
+	if len(cfg.Routes) > 0 {
+		hgs := map[string]bool{}
+		if st != nil {
+			hgs = st.HostGroupsOf(ev.Host)
+		}
+		for _, rt := range cfg.Routes {
+			if !rt.Enabled {
+				continue
+			}
+			if rt.Hostgroup == "*" || hgs[rt.Hostgroup] {
+				matchedRoutes = append(matchedRoutes, rt)
+			}
+		}
+	}
+
+	if len(matchedRoutes) > 0 {
+		for _, rt := range matchedRoutes {
+			if cfg.Enabled && len(rt.Recipients) > 0 {
+				err := sendSMTPEmail(cfg, rt.Recipients, subj, formatAlertHTML(ev, cfg.DashboardURL))
+				d := NotifyDelivery{Time: time.Now().UTC().Format(time.RFC3339), Channel: "email:" + rt.Name, Target: strings.Join(rt.Recipients, ", "), Subject: subj, Status: "sent"}
+				if err != nil {
+					d.Status = "failed"
+					d.Error = err.Error()
+				}
+				n.recordDelivery(d)
+			}
+			if rt.WebhookEnabled && rt.WebhookURL != "" {
+				rtCfg := cfg
+				rtCfg.WebhookType = rt.WebhookType
+				rtCfg.WebhookURL = rt.WebhookURL
+				rtCfg.WebhookChatID = rt.WebhookChatID
+				err := n.sendWebhook(rtCfg, ev, subj)
+				d := NotifyDelivery{Time: time.Now().UTC().Format(time.RFC3339), Channel: "webhook:" + rt.Name, Target: ev.Host, Subject: subj, Status: "sent"}
+				if err != nil {
+					d.Status = "failed"
+					d.Error = err.Error()
+				}
+				n.recordDelivery(d)
+			}
+		}
+		return
+	}
 
 	if cfg.Enabled {
 		recips := n.resolveRecipients(cfg)

@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-//go:embed web/index.html web/assets web/css web/js
+//go:embed web/index.html web/login.html web/assets web/css web/js
 var webFS embed.FS
 
 type ProgramInfo struct {
@@ -167,12 +167,32 @@ type StateStore struct {
 	eventsApplied atomic.Int64
 	connected     atomic.Bool
 	notifier      *Notifier
+	metrics       *MetricsStore
 }
 
 func (s *StateStore) SetNotifier(n *Notifier) {
 	s.mu.Lock()
 	s.notifier = n
 	s.mu.Unlock()
+	if n != nil {
+		n.SetStore(s)
+	}
+}
+
+func (s *StateStore) SetMetrics(ms *MetricsStore) {
+	s.mu.Lock()
+	s.metrics = ms
+	s.mu.Unlock()
+}
+
+func (s *StateStore) HostGroupsOf(host string) map[string]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]bool)
+	for g := range s.hostToGroups[host] {
+		out[g] = true
+	}
+	return out
 }
 
 func NewStateStore() *StateStore {
@@ -205,7 +225,15 @@ func (s *StateStore) ReplaceSnapshot(prog ProgramInfo, hosts []HostState, servic
 	s.hosts = hm
 	s.services = sm
 	s.lastSync = time.Now().UTC()
+	ms := s.metrics
 	s.mu.Unlock()
+	if ms != nil {
+		for _, sv := range services {
+			if sv.HasBeenChecked == 1 && sv.PerfData != "" {
+				ms.Record(sv.HostName, sv.Description, sv.PerfData, sv.LastCheck)
+			}
+		}
+	}
 }
 
 func (s *StateStore) ApplyHostEvent(h HostState) {
@@ -214,8 +242,12 @@ func (s *StateStore) ApplyHostEvent(h HostState) {
 	hc := h
 	s.hosts[hc.Name] = &hc
 	notifier := s.notifier
+	ms := s.metrics
 	s.mu.Unlock()
 	s.eventsApplied.Add(1)
+	if ms != nil && hc.HasBeenChecked == 1 && hc.PerfData != "" {
+		ms.Record(hc.Name, "_HOST_", hc.PerfData, hc.LastCheck)
+	}
 	if notifier != nil && prev != nil {
 		notifier.OnHostTransition(prev, hc)
 	}
@@ -228,8 +260,12 @@ func (s *StateStore) ApplyServiceEvent(sv ServiceState) {
 	sc := sv
 	s.services[k] = &sc
 	notifier := s.notifier
+	ms := s.metrics
 	s.mu.Unlock()
 	s.eventsApplied.Add(1)
+	if ms != nil && sc.HasBeenChecked == 1 && sc.PerfData != "" {
+		ms.Record(sc.HostName, sc.Description, sc.PerfData, sc.LastCheck)
+	}
 	if notifier != nil && prev != nil {
 		notifier.OnServiceTransition(prev, sc)
 	}
@@ -1147,12 +1183,20 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 	registerReportRoutes(mux, store, nagiosLogPath, archivesDir)
 	store.mu.RLock()
 	notifier := store.notifier
+	ms := store.metrics
 	store.mu.RUnlock()
 	if notifier == nil {
 		notifier = NewNotifier(cs.managedDir, cs)
 		store.SetNotifier(notifier)
 	}
+	if ms == nil {
+		ms = NewMetricsStore(cs.managedDir)
+		store.SetMetrics(ms)
+	}
 	registerNotifyRoutes(mux, notifier)
+	registerMetricsRoutes(mux, ms)
+	rs := NewRecurringStore(cs.managedDir, cmdPipePath, store, cs)
+	registerRecurringRoutes(mux, rs)
 	return mux
 }
 
@@ -1200,16 +1244,42 @@ func main() {
 	}
 
 	store := NewStateStore()
+	ms := NewMetricsStore(*managedDir)
+	store.SetMetrics(ms)
+	notifier := NewNotifier(*managedDir, cfgStore)
+	store.SetNotifier(notifier)
+	am := NewAuthManager(*managedDir, *authUser, *authPass, cfgStore)
+	rs := NewRecurringStore(*managedDir, *cmdPath, store, cfgStore)
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	go runNERDLoop(ctx, *qhPath, store)
 	go runPeriodicResync(ctx, *qhPath, store, *resyncInterval)
+	go rs.RunLoop(ctx)
+	go func() {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				_ = ms.SaveToDisk()
+				return
+			case <-t.C:
+				_ = ms.SaveToDisk()
+			}
+		}
+	}()
 
+	mux := http.NewServeMux()
+	registerAuthRoutes(mux, am)
 	baseHandler := newHTTPHandler(store, *qhPath, *cmdPath, *localhostCfg, *commandsCfg, *resourceCfg, *nagiosCfg, *nagiosLog, *archivesDir, cfgStore)
+	// Mount all non-auth routes on mux via fallback
+	mux.Handle("/", baseHandler)
+
 	srv := &http.Server{
 		Addr:              *listenAddr,
-		Handler:           basicAuthMiddleware(*authUser, *authPass, baseHandler),
+		Handler:           am.Middleware(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

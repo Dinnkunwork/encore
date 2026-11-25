@@ -499,3 +499,120 @@ func TestTemplatesBulkAndNotifications(t *testing.T) {
 		t.Fatalf("unexpected /api/v1/hosts/health response: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestV7AuthRBACMetricsLegacyImportAndRecurring(t *testing.T) {
+	dir := t.TempDir()
+	cs, err := NewConfigStore(dir, "", "", "")
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+	store := NewStateStore()
+	ms := NewMetricsStore(dir)
+	store.SetMetrics(ms)
+	am := NewAuthManager(dir, "admin", "AdminPass123", cs)
+
+	mux := http.NewServeMux()
+	registerAuthRoutes(mux, am)
+	mux.Handle("/", newHTTPHandler(store, "", "", "", "", "", "", "", "", cs))
+	srv := am.Middleware(mux)
+
+	// 1. Login page & /healthz are public; /api/v1/summary requires auth
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("Encore Console")) {
+		t.Fatalf("expected 200 for /login, got %d", rec.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 unauthenticated, got %d", rec.Code)
+	}
+
+	// 2. Session login as admin & create viewer + operator users
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"admin","password":"AdminPass123"}`))
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || len(rec.Result().Cookies()) == 0 {
+		t.Fatalf("admin login failed: %d %s", rec.Code, rec.Body.String())
+	}
+	adminCookie := rec.Result().Cookies()[0]
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewBufferString(`{"username":"nocview","display_name":"Viewer","role":"viewer","password":"ViewPass1","enabled":true}`))
+	req.AddCookie(adminCookie)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create viewer failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 3. RBAC enforcement: viewer can GET /api/v1/summary (200) but gets 403 on /api/v1/users and /api/v1/command
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil)
+	req.SetBasicAuth("nocview", "ViewPass1")
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("viewer summary expected 200, got %d", rec.Code)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/command", bytes.NewBufferString(`{"command":"TEST"}`))
+	req.SetBasicAuth("nocview", "ViewPass1")
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("viewer command expected 403, got %d", rec.Code)
+	}
+
+	// 4. Time-series metrics parser & query
+	store.ApplyServiceEvent(ServiceState{
+		HostName: "web-01", Description: "NCPA CPU", CurrentState: 0, HasBeenChecked: 1,
+		LastCheck: 1795500000, PerfData: "'percent'=42.5%;80;90;0;100 'user'=30.1%;;;;",
+	})
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/metrics?host=web-01&service=NCPA+CPU&range=7d", nil)
+	req.AddCookie(adminCookie)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"label":"percent"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"last":42.5`)) {
+		t.Fatalf("metrics query failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 5. Legacy Nagios .cfg import (comma-separated hosts + register 0 skipped)
+	legacyCfg := `
+define host {
+  name generic-host
+  register 0
+}
+define host {
+  host_name old-web-1
+  address 10.1.1.10
+  hostgroups legacy-web
+}
+define host {
+  host_name old-web-2
+  address 10.1.1.11
+  hostgroups legacy-web
+}
+define service {
+  host_name old-web-1,old-web-2
+  service_description HTTP Legacy
+  check_command check_http
+}
+`
+	bodyBytes, _ := json.Marshal(map[string]any{"content": legacyCfg, "dry_run": false, "overwrite": false})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/config/import/nagios", bytes.NewReader(bodyBytes))
+	req.AddCookie(adminCookie)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"hosts_new":2`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"services_new":2`)) {
+		t.Fatalf("legacy import failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 6. Recurring downtime CRUD
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/downtimes/recurring", bytes.NewBufferString(`{"name":"Sunday Maint","target_type":"host","host":"old-web-1","days":[0],"start_time":"02:00","duration_min":120,"enabled":true}`))
+	req.AddCookie(adminCookie)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("Sunday Maint")) {
+		t.Fatalf("recurring downtime create failed: %d %s", rec.Code, rec.Body.String())
+	}
+}

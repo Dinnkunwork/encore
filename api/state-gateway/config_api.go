@@ -2,9 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 func decodeJSONBody(r *http.Request, dst any) error {
@@ -413,6 +417,61 @@ func registerConfigRoutes(mux *http.ServeMux, cs *ConfigStore, localhostCfgPath 
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "applied", "added": added, "skipped": skipped})
 	})
+
+	mux.HandleFunc("/api/v1/config/backups/download", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		if name == "" || name == "current" {
+			cfg, _, _ := cs.Snapshot()
+			raw, _ := json.MarshalIndent(cfg, "", "  ")
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Disposition", `attachment; filename="encore-config-current.json"`)
+			_, _ = w.Write(raw)
+			return
+		}
+		if strings.ContainsAny(name, "/\\") || !strings.HasSuffix(name, ".json") {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid backup name"})
+			return
+		}
+		raw, err := os.ReadFile(filepath.Join(cs.managedDir, "backups", name))
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "backup not found"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
+		_, _ = w.Write(raw)
+	})
+
+	mux.HandleFunc("/api/v1/config/backups/import", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		var imported ManagedConfig
+		if err := decodeJSONBody(r, &imported); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid Encore JSON backup: " + err.Error()})
+			return
+		}
+		cs.mu.Lock()
+		cs.cfg = imported
+		cs.ensureSlices()
+		cs.pendingChanges = true
+		err := cs.saveJSONLocked()
+		cs.mu.Unlock()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		cs.RecordAudit("import_json_backup", fmt.Sprintf("%d hosts, %d svcs", len(imported.Hosts), len(imported.Services)), "by="+actorFromRequest(r))
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":   "imported_to_draft",
+			"hosts":    len(imported.Hosts),
+			"services": len(imported.Services),
+			"commands": len(imported.Commands),
+		})
+	})
+
+	registerLegacyImportRoutes(mux, cs)
 
 	mux.HandleFunc("/api/v1/config/validate", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
