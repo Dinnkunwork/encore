@@ -10,7 +10,7 @@ async function loadMeta() {
 
   const dot = document.getElementById('conn-dot');
   if (dot) dot.className = health.connected ? 'pulse-dot ok' : 'pulse-dot crit';
-  document.getElementById('conn-label').textContent = health.connected ? 'Live' : 'Reconnecting';
+  document.getElementById('conn-label').textContent = health.connected ? (S.sseConnected ? 'Live (SSE)' : 'Live') : 'Reconnecting';
   document.getElementById('events-pill').textContent = (health.events_applied || 0).toLocaleString() + ' ev';
   document.getElementById('sub-meta').textContent = `PID ${sum.program.pid} • ${sum.hosts.total} hosts, ${sum.services.total} services • ${new Date().toLocaleTimeString()}`;
 
@@ -27,7 +27,7 @@ async function loadMeta() {
     if (diff.modified) parts.push(`${diff.modified} modified`);
     if (diff.deleted) parts.push(`${diff.deleted} deleted`);
     const sumEl = document.getElementById('pending-summary-text');
-    if (sumEl) sumEl.innerHTML = `<b>Pending Nagios Config</b>${parts.length ? ' (' + parts.join(' • ') + ')' : ''} — belum aktif sampai Apply &amp; Reload.`;
+    if (sumEl) sumEl.innerHTML = `<b>Pending Encore Config</b>${parts.length ? ' (' + parts.join(' • ') + ')' : ''} — belum aktif sampai Apply &amp; Reload.`;
     if (navPend) navPend.textContent = diff.total || '•';
   } else {
     if (pbBanner) pbBanner.style.display = 'none';

@@ -51,12 +51,12 @@ async function renderGuide() {
   if (S.guideTab === 'quick') {
     el.innerHTML = `
       <div class="guide-card">
-        <div class="guide-card-head"><h3>Arsitektur &amp; Cara Kerja Encore</h3><span class="badge c-ok">v6 Production Console</span></div>
+        <div class="guide-card-head"><h3>Arsitektur &amp; Cara Kerja Encore</h3><span class="badge c-ok">v8 Real-Time Console</span></div>
         <p style="font-size:13px;color:var(--muted)">Encore menggabungkan <b>3 komponen ringan</b> dalam satu ekosistem terpusat:</p>
         <ol class="guide-steps">
-          <li><b>Nagios Core Engine (C):</b> Menjadwalkan check, menyimpan state memori, dan menulis log historis dengan opsi <i>Async CoW Save</i> agar bebas lag.</li>
-          <li><b>Encore Go Worker (<code>encore-go-worker</code>):</b> Menjalankan check populer (<code>check_tcp</code>, <code>check_http</code> Strict TLS, <code>check_dummy</code>, <code>check_ncpa</code>) secara <i>in-process</i> tanpa fork/exec berulang sehingga hemat CPU &amp; RAM.</li>
-          <li><b>Encore State Gateway &amp; Dashboard (<code>encore-state-gateway</code>):</b> Membaca status real-time via Unix Socket (<code>@state</code> &amp; NERD), menyediakan Web UI, manajemen config, SLA Reports/Charts, dan engine notifikasi SMTP/Webhook bawaan.</li>
+          <li><b>Encore Core Engine (C):</b> Menjadwalkan check, menyimpan state memori, dan menulis log historis dengan opsi <i>Async CoW Save</i> agar bebas lag.</li>
+          <li><b>Encore Go Worker (<code>encore-go-worker</code>):</b> Menjalankan check populer (<code>check_tcp</code>, <code>check_http</code> Strict TLS &amp; SSL Expiry <code>-C</code>, <code>check_dummy</code>, <code>check_ncpa</code>) secara <i>in-process</i> tanpa fork/exec berulang sehingga hemat CPU &amp; RAM.</li>
+          <li><b>Encore State Gateway &amp; Dashboard (<code>encore-state-gateway</code>):</b> Menerima event real-time (SSE push ke browser), menyediakan Web UI (5 tema + NOC TV Mode), RBAC Login, Time-Series Metrics, Scheduled SLA Digest, Network Discovery, dan engine notifikasi SMTP/Webhook bawaan.</li>
         </ol>
       </div>
 
@@ -66,17 +66,17 @@ async function renderGuide() {
           <div class="step-card">
             <span class="save-scope-pill instant" style="margin-bottom:8px">Instant Save</span>
             <h4>Aktif Langsung Tanpa Reload</h4>
-            <p>Digunakan di <b>Notifications (SMTP/Webhook)</b>, <b>Service Templates</b>, dan <b>Custom Scripts</b>. Begitu Anda klik <b>Save &amp; Activate</b>, pengaturan langsung berlaku di Gateway tanpa perlu reload Nagios.</p>
+            <p>Digunakan di <b>Notifications (SMTP/Webhook)</b>, <b>Service Templates</b>, <b>Users (RBAC)</b>, <b>Scheduled Digest</b>, dan <b>Custom Scripts</b>. Langsung berlaku di Encore Gateway tanpa reload engine.</p>
           </div>
           <div class="step-card">
             <span class="save-scope-pill draft" style="margin-bottom:8px">Draft • Apply &amp; Reload</span>
-            <h4>Staged Nagios Config</h4>
+            <h4>Staged Encore Config</h4>
             <p>Digunakan di <b>Hosts</b>, <b>Services</b>, <b>Commands</b>, <b>Groups</b>, dan <b>Contacts</b>. Perubahan ditandai badge <b>NEW / MODIFIED</b>. Anda bisa <b>Review Changes</b>, <b>Discard</b> (batal), <b>Validate</b>, lalu <b>Apply &amp; Reload</b>.</p>
           </div>
           <div class="step-card">
-            <span class="save-scope-pill auto" style="margin-bottom:8px">Auto-Reload Nagios</span>
+            <span class="save-scope-pill auto" style="margin-bottom:8px">Auto-Reload Encore</span>
             <h4>Secrets (resource.cfg)</h4>
-            <p>Digunakan di <b>Manage → Secrets</b> (<code>$USER2$..$USER32$</code>). Menyimpan nilai ter-masking ke <code>resource.cfg</code> dan langsung me-reload Nagios secara aman.</p>
+            <p>Digunakan di <b>Manage → Secrets</b> (<code>$USER2$..$USER32$</code>). Menyimpan nilai ter-masking ke <code>resource.cfg</code> dan langsung me-reload Encore Engine secara aman.</p>
           </div>
         </div>
       </div>
@@ -125,7 +125,7 @@ async function renderGuide() {
           '<b>Rentang Waktu:</b> Pilih preset <b>24h</b>, <b>7d</b>, <b>30d</b>, atau <b>Custom</b> (pilih tanggal awal &amp; akhir).',
           '<b>Filter Granular:</b> Saring laporan berdasarkan <b>Hostgroup → Host → Service</b> tertentu. Aktifkan tombol <b>Grouped</b> untuk melihat rata-rata SLA per host beserta breakdown service-nya.',
           '<b>Visual Charts:</b> Menampilkan <i>State Breakdown Donut</i> dan <i>Uptime &amp; Incident Trend Bar Chart</i> (titik merah menandakan HARD incident).',
-          '<b>Export:</b> Klik <b>CSV</b> untuk olah data di Excel, atau <b>Print / PDF</b> untuk membuka laporan siap cetak/simpan PDF. Tab <b>Alerts</b> &amp; <b>Event Log</b> menampilkan riwayat log Nagios lengkap.'
+          '<b>Export &amp; Digest:</b> Klik <b>CSV</b> untuk olah data di Excel, <b>Print / PDF</b> untuk cetak, atau <b>Schedule Digest</b> untuk kirim laporan SLA otomatis harian/mingguan. Tab <b>Metrics</b> menampilkan grafik time-series <code>perf_data</code>, sementara <b>Alerts</b> &amp; <b>Event Log</b> menampilkan riwayat log Encore lengkap.'
         ]
       },
       {
@@ -233,7 +233,7 @@ Service Status   check_ncpa!services!-q service=nginx,status=running</pre>
             <br>• <b>Microsoft 365:</b> Host <code>smtp.office365.com</code>, Port <code>587</code> (STARTTLS).
             <br>• <b>SMTP Relay Internal:</b> Port <code>25</code> (Plain) atau <code>587</code> (STARTTLS).</li>
           <li>Isi <b>From Address</b> dan <b>Recipients</b> (pisahkan dengan koma). Jika <i>Include Manage Contacts</i> dicentang, email di tab <b>Groups → Contacts</b> otomatis ikut menerima alert.</li>
-          <li>Biarkan <b>HARD State Only</b> aktif agar tidak terkena spam saat <i>SOFT retry</i>, atur <b>Cooldown</b> (default 10 menit), lalu klik <b>Save &amp; Activate</b> (berlaku langsung tanpa reload Nagios) dan klik <b>Send Test Email</b>.</li>
+          <li>Biarkan <b>HARD State Only</b> aktif agar tidak terkena spam saat <i>SOFT retry</i>, atur <b>Cooldown</b> (default 10 menit), lalu klik <b>Save &amp; Activate</b> (berlaku langsung tanpa reload Encore Engine) dan klik <b>Send Test Email</b>.</li>
         </ol>
       </div>
       <div class="guide-card">
@@ -289,10 +289,11 @@ Service Status   check_ncpa!services!-q service=nginx,status=running</pre>
       <div class="guide-card">
         <div class="guide-card-head"><h3>Troubleshooting Cepat (FAQ)</h3></div>
         <ol class="guide-steps">
-          <li><b>Error <code>command '...' not defined anywhere</code> saat Validate:</b> Command belum terdaftar di Nagios. Untuk NCPA, buka <b>Guide → NCPA Setup</b> lalu klik <b>+ Register check_ncpa</b>.</li>
+          <li><b>Error <code>command '...' not defined anywhere</code> saat Validate:</b> Command belum terdaftar di Encore Engine. Untuk NCPA, buka <b>Guide → NCPA Setup</b> lalu klik <b>+ Register check_ncpa</b>.</li>
           <li><b>Lupa sudah ubah apa saja / ingin batal edit:</b> Klik <b>Review Changes</b> di banner kuning atas, lalu klik <b>Discard</b> untuk kembali ke konfigurasi live terakhir.</li>
           <li><b>Salah konfigurasi setelah Apply:</b> Buka <b>System → Backups</b> dan klik <b>Rollback</b> pada snapshot sebelum perubahan.</li>
-          <li><b>Healthcheck aman untuk monitoring Encore sendiri:</b> Gunakan endpoint publik <code>GET /healthz</code> (bebas Basic Auth, mengembalikan <code>200 ok</code> atau <code>503 degraded</code> tanpa bocor metadata). Contoh di Nagios: <code>check_http!-p 8080 -u /healthz</code>.</li>
+          <li><b>Healthcheck aman untuk monitoring Encore sendiri:</b> Gunakan endpoint publik <code>GET /healthz</code> (bebas auth, mengembalikan <code>200 ok</code> atau <code>503 degraded</code> tanpa bocor metadata). Contoh command: <code>check_http!-p 8080 -u /healthz</code>.</li>
+          <li><b>Cek Kadaluarsa Sertifikat SSL (In-Process):</b> Gunakan preset <b>SSL Cert</b> (<code>check_http!-S -C 30,14</code>) untuk peringatan 30 hari &amp; kritis 14 hari sebelum sertifikat HTTPS expired.</li>
         </ol>
       </div>`;
   }

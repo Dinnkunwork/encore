@@ -88,6 +88,8 @@
           <option value="30000">Auto 30s</option>
           <option value="0">Paused</option>
         </select>
+        <button class="btn btn-sm desktop-only" id="alert-sound-btn" onclick="toggleAlertSound()" title="Toggle Sound &amp; Desktop Alerts on HARD CRITICAL/DOWN">🔔 Off</button>
+        <button class="btn btn-sm desktop-only" id="tv-mode-btn" onclick="toggleTVMode()" title="NOC Wallboard / TV Mode (Shift+T)">📺 TV</button>
         <button class="btn btn-sm" onclick="refreshAll()" title="Refresh now">↻</button>
         <select id="theme-select" onchange="applyTheme(this.value)" aria-label="Theme" title="Select Theme">
           <option value="light">Crisp Light</option>
@@ -107,7 +109,7 @@
     <div class="pending-banner" id="pending-banner" style="display:none">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span class="badge c-warn">DRAFT</span>
-        <span id="pending-summary-text"><b>Pending Nagios Config Changes</b> — belum aktif sampai Apply &amp; Reload.</span>
+        <span id="pending-summary-text"><b>Pending Encore Config Changes</b> — belum aktif sampai Apply &amp; Reload.</span>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-sm" onclick="openDiffReviewModal()">Review Changes</button>
@@ -299,6 +301,7 @@
           </div>
           <div id="rep-sla-controls" style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
             <button class="btn btn-sm active" id="rep-group-btn" onclick="toggleRepGroupByHost()">Grouped</button>
+            <button class="btn btn-sm" onclick="openDigestModal()">Schedule Digest</button>
             <button class="btn btn-sm" onclick="exportReport('csv')">CSV</button>
             <button class="btn btn-sm primary" onclick="exportReport('html')">Print / PDF</button>
           </div>
@@ -322,6 +325,7 @@
   </div>
 </div>
 <div id="toast"></div>
+<button class="btn primary tv-exit-btn" id="tv-exit-btn" onclick="toggleTVMode()">✕ Exit TV Mode (Esc)</button>
 
 <script src="/js/encore-icons.js"></script>
 <script src="/js/core.js"></script>

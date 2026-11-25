@@ -363,7 +363,7 @@ async function loadReports() {
     el.innerHTML = series.length ? `
       <div style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
         <div class="name-primary">Metrics: ${esc(selHost)} / ${esc(selSvc)} <span class="flag-tag">${esc(mRange)}</span></div>
-        <span class="name-sub">${series.length} metric series recorded from Nagios perf_data</span>
+        <span class="name-sub">${series.length} metric series recorded from Encore perf_data</span>
       </div>
       <div class="metric-grid">${series.map(ser => `
         <div class="chart-card">
@@ -411,15 +411,74 @@ async function loadReports() {
     const evs = data.events || [];
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head"><div class="panel-title">Nagios Event Log (${data.total || 0} entries)</div></div>
+        <div class="panel-head"><div class="panel-title">Encore Event Log (${data.total || 0} entries)</div></div>
         <div class="table-wrap"><table><thead><tr><th>Time</th><th>Type</th><th>Target</th><th>Message</th></tr></thead><tbody>
           ${evs.length ? evs.map(e => `<tr>
             <td class="mono" style="white-space:nowrap">${new Date(e.timestamp*1000).toLocaleString()}</td>
             <td><span class="flag-tag">${esc(e.type)}</span></td>
             <td class="mono">${esc(e.host || '-')} ${e.service ? '/ ' + esc(e.service) : ''}</td>
             <td class="mono" style="color:var(--text)">${esc(e.message)}</td>
-          </tr>`).join('') : '<tr><td colspan="4" class="empty">No log entries found (check -nagios-log path).</td></tr>'}
+          </tr>`).join('') : '<tr><td colspan="4" class="empty">No log entries found (check -encore-log path).</td></tr>'}
         </tbody></table></div>
       </div>`;
   }
+}
+
+/* ====== SCHEDULED SLA REPORT DIGEST ====== */
+async function openDigestModal() {
+  const res = await fetch('/api/v1/reports/digest');
+  if (res.status === 403) { toast('Admin role required to configure Scheduled Digest'); return; }
+  const d = (await res.json()).config || {};
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  openModal(`<h2>Scheduled SLA Report Digest</h2>
+    <div style="margin-bottom:10px"><span class="save-scope-pill instant">Instant Save — menggunakan SMTP / Webhook dari Manage → Notifications</span></div>
+    <div class="form-grid">
+      <div class="form-row"><label>Frequency</label>
+        <select id="dg-freq" onchange="document.getElementById('dg-day-row').style.display=this.value==='weekly'?'':'none'">
+          <option value="weekly" ${d.frequency!=='daily'?'selected':''}>Weekly</option>
+          <option value="daily" ${d.frequency==='daily'?'selected':''}>Daily</option>
+        </select>
+      </div>
+      <div class="form-row" id="dg-day-row" style="${d.frequency==='daily'?'display:none':''}"><label>Day of Week</label>
+        <select id="dg-day">${days.map((n,i)=>`<option value="${i}" ${(d.day_of_week??1)===i?'selected':''}>${n}</option>`).join('')}</select>
+      </div>
+      <div class="form-row"><label>Send Time (24h HH:MM)</label><input id="dg-time" type="text" value="${esc(d.send_time||'08:00')}"></div>
+      <div class="form-row"><label>SLA Window (Days)</label>
+        <select id="dg-win"><option value="1" ${d.window_days===1?'selected':''}>Last 24 Hours (1d)</option><option value="7" ${(d.window_days||7)===7?'selected':''}>Last 7 Days (7d)</option><option value="30" ${d.window_days===30?'selected':''}>Last 30 Days (30d)</option></select>
+      </div>
+      <div class="form-row full"><label>Hostgroup Filter (blank = All)</label><input id="dg-hg" type="text" value="${esc(d.hostgroup||'')}" placeholder="All infrastructure"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+      <label class="chk-pill"><input type="checkbox" id="dg-en" ${d.enabled?'checked':''}> Enable Schedule</label>
+      <label class="chk-pill"><input type="checkbox" id="dg-email" ${d.send_email!==false?'checked':''}> Send Email</label>
+      <label class="chk-pill"><input type="checkbox" id="dg-wh" ${d.send_webhook?'checked':''}> Send Webhook</label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">Close</button>
+      <button class="btn" onclick="sendDigestNow()">Send Now</button>
+      <button class="btn primary" onclick="saveDigestConfig()">Save Schedule</button>
+    </div>`);
+}
+async function saveDigestConfig() {
+  const payload = {
+    enabled: document.getElementById('dg-en').checked,
+    frequency: document.getElementById('dg-freq').value,
+    day_of_week: Number(document.getElementById('dg-day').value),
+    send_time: document.getElementById('dg-time').value.trim(),
+    window_days: Number(document.getElementById('dg-win').value) || 7,
+    hostgroup: document.getElementById('dg-hg').value.trim(),
+    send_email: document.getElementById('dg-email').checked,
+    send_webhook: document.getElementById('dg-wh').checked
+  };
+  const res = await fetch('/api/v1/reports/digest', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+  const d = await res.json();
+  toast(res.ok ? 'Digest schedule saved (instant)' : ('Error: ' + d.error));
+  if (res.ok) closeModal();
+}
+async function sendDigestNow() {
+  await saveDigestConfig();
+  toast('Generating & sending SLA digest...');
+  const res = await fetch('/api/v1/reports/digest/send-now', { method:'POST' });
+  const d = await res.json();
+  toast(res.ok ? `Digest sent via ${d.channels}` : ('Send failed: ' + d.error));
 }

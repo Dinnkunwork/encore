@@ -34,7 +34,10 @@ const S = {
   repGroupByHost: true,
   repExpandedHosts: new Set(),
   ovTrendCache: { ts: 0, data: null },
-  me: { auth_enabled: false, user: { username: 'local-admin', display_name: 'Local Admin', role: 'admin' } }
+  me: { auth_enabled: false, user: { username: 'local-admin', display_name: 'Local Admin', role: 'admin' } },
+  sseConnected: false,
+  alertSound: localStorage.getItem('encore-alert-sound') === '1',
+  tvMode: false
 };
 
 function canOperate() { const r = S.me?.user?.role || 'admin'; return r === 'admin' || r === 'operator'; }
@@ -71,6 +74,97 @@ async function initAuthAndBoot() {
   } catch (e) {}
   refreshAll();
   setAutoInterval();
+  connectSSE();
+  updateAlertSoundBtn();
+}
+
+/* Real-time SSE Push Client + Optional Web Audio Chime & Desktop Notification */
+let _sseSource = null;
+let _sseRefreshTimer = null;
+function connectSSE() {
+  if (typeof EventSource === 'undefined') return;
+  if (_sseSource) { try { _sseSource.close(); } catch (e) {} }
+  const es = new EventSource('/api/v1/stream');
+  _sseSource = es;
+  es.addEventListener('ready', () => {
+    S.sseConnected = true;
+    const lbl = document.getElementById('conn-label');
+    if (lbl) lbl.textContent = 'Live (SSE)';
+    setAutoInterval(); // Slow fallback polling to 30s when SSE is active
+  });
+  es.addEventListener('state', e => {
+    try {
+      const ev = JSON.parse(e.data);
+      // Optional sound & desktop notification on new HARD CRITICAL/DOWN
+      if (S.alertSound && ev.state_type === 1 && ev.state > 0 && ev.prev_state !== ev.state) {
+        playAlertChime();
+        if ('Notification' in window && Notification.permission === 'granted') {
+          const target = ev.service ? `${ev.host} / ${ev.service}` : ev.host;
+          new Notification(`Encore Alert: ${target}`, { body: ev.output || 'State changed to problem' });
+        }
+      }
+    } catch (err) {}
+    if (!isUserInteracting() && !_sseRefreshTimer) {
+      _sseRefreshTimer = setTimeout(() => {
+        _sseRefreshTimer = null;
+        refreshAll();
+      }, 280);
+    }
+  });
+  es.onerror = () => {
+    S.sseConnected = false;
+    setAutoInterval();
+  };
+}
+
+function updateAlertSoundBtn() {
+  const b = document.getElementById('alert-sound-btn');
+  if (!b) return;
+  b.textContent = S.alertSound ? '🔔 On' : '🔔 Off';
+  b.classList.toggle('active', S.alertSound);
+}
+function toggleAlertSound() {
+  S.alertSound = !S.alertSound;
+  localStorage.setItem('encore-alert-sound', S.alertSound ? '1' : '0');
+  updateAlertSoundBtn();
+  if (S.alertSound) {
+    playAlertChime();
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    toast('Real-time HARD alert sound enabled');
+  } else {
+    toast('Alert sound muted');
+  }
+}
+function playAlertChime() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.16);
+    gain.gain.setValueAtTime(0.14, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(); osc.stop(ctx.currentTime + 0.28);
+  } catch (e) {}
+}
+
+/* NOC Wallboard / TV Mode */
+function toggleTVMode() {
+  S.tvMode = !S.tvMode;
+  document.body.classList.toggle('tv-mode', S.tvMode);
+  if (S.tvMode) {
+    setView('overview');
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+    toast('NOC TV Mode active — press Esc to exit');
+  } else if (document.fullscreenElement && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {});
+  }
 }
 
 function openAccountModal() {
@@ -133,10 +227,16 @@ document.addEventListener('keydown', e => {
     openQuickJump();
     return;
   }
+  if (e.shiftKey && e.key.toLowerCase() === 't' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
+    e.preventDefault();
+    toggleTVMode();
+    return;
+  }
   if (e.key === '/' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
     e.preventDefault();
     document.getElementById('global-search').focus();
   } else if (e.key === 'Escape') {
+    if (S.tvMode) { toggleTVMode(); return; }
     if (document.getElementById('confirm-backdrop')?.classList.contains('open')) resolveConfirm(false);
     else { closeDrawer(); closeModal(); closeQuickJump(); closeMobileSidebar(); }
   }
@@ -333,7 +433,9 @@ function setView(v, sub) {
 }
 
 function setAutoInterval() {
-  S.autoMs = Number(document.getElementById('auto-select').value);
+  const userMs = Number(document.getElementById('auto-select').value);
+  // When SSE real-time push is active, relax fallback poll to 30s to save ~85% HTTP traffic
+  S.autoMs = (S.sseConnected && userMs > 0 && userMs < 30000) ? 30000 : userMs;
   clearInterval(S.timer);
   if (S.autoMs > 0) {
     S.timer = setInterval(() => {

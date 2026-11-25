@@ -56,7 +56,7 @@ async function openDiffReviewModal() {
   const entries = diff.entries || [];
   openModal(`
     <h2>Pending Configuration Changes (${diff.total || 0})</h2>
-    <p class="name-sub" style="margin-bottom:12px">Perubahan di bawah masih berstatus <b>Draft</b> dan belum aktif di Nagios Core sampai Anda klik <b>Apply &amp; Reload</b>.</p>
+    <p class="name-sub" style="margin-bottom:12px">Perubahan di bawah masih berstatus <b>Draft</b> dan belum aktif di Encore Engine sampai Anda klik <b>Apply &amp; Reload</b>.</p>
     ${entries.length ? `<div class="table-wrap" style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table>
       <thead><tr><th>Status</th><th>Type</th><th>Object</th><th>Changed Fields</th></tr></thead><tbody>
       ${entries.map(e => {
@@ -176,6 +176,7 @@ function renderManageObjects(el, c) {
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           <span class="save-scope-pill draft">Draft • Apply &amp; Reload</span>
+          <button class="btn btn-sm" onclick="openDiscoveryModal()">Discover</button>
           <button class="btn btn-sm" onclick="openLegacyImportModal()">Import .cfg</button>
           <button class="btn btn-sm" onclick="openSvcForm(-1)">+ Add Service</button>
           <button class="btn btn-sm primary" onclick="openHostForm(-1)">+ Add Host</button>
@@ -481,30 +482,118 @@ function renderTemplatesTab(el, c) {
     </div>`;
 }
 
-function openTemplateForm(idx, isClone) {
+function tplRowHTML(desc, cmd, interval) {
+  return `<div class="tpl-row">
+    <input type="text" class="tpl-r-desc" placeholder="Service Name (e.g. NCPA Disk /)" value="${esc(desc||'')}">
+    <input type="text" class="tpl-r-cmd" list="active-cmd-list" placeholder="check_ncpa!disk/logical/|/used_percent!-w 80 -c 90" value="${esc(cmd||'')}">
+    <input type="number" class="tpl-r-int" min="1" value="${Number(interval)||5}" title="Check interval (min)">
+    <button type="button" class="icon-btn" title="Remove row" onclick="this.parentElement.remove()">✕</button>
+  </div>`;
+}
+function addTplRow(desc, cmd, interval) {
+  const wrap = document.getElementById('tpl-rows-wrap');
+  if (!wrap) return;
+  wrap.insertAdjacentHTML('beforeend', tplRowHTML(desc, cmd, interval));
+}
+function parseBulkTplPaste() {
+  const ta = document.getElementById('tpl-paste-area');
+  if (!ta) return;
+  const lines = ta.value.replace(/\r\n?/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
+  let added = 0;
+  for (const line of lines) {
+    let desc = '', cmd = '', interval = 5;
+    if (line.includes(' | ')) {
+      // Split ONLY on spaced " | " so internal "|" inside NCPA Disk paths (disk/logical/|/used_percent) is 100% preserved!
+      const parts = line.split(' | ').map(x => x.trim());
+      desc = parts[0] || '';
+      if (parts.length >= 3 && /^\d+$/.test(parts[parts.length - 1])) {
+        interval = Number(parts[parts.length - 1]) || 5;
+        cmd = parts.slice(1, -1).join(' | ');
+      } else {
+        cmd = parts.slice(1).join(' | ');
+      }
+    } else if (line.includes('\t')) {
+      const parts = line.split('\t').map(x => x.trim()).filter(Boolean);
+      desc = parts[0] || ''; cmd = parts[1] || ''; interval = Number(parts[2]) || 5;
+    } else if (/\s{2,}/.test(line)) {
+      const parts = line.split(/\s{2,}/).map(x => x.trim()).filter(Boolean);
+      desc = parts[0] || ''; cmd = parts[1] || ''; interval = Number(parts[2]) || 5;
+    } else if (line.includes('|')) {
+      const first = line.indexOf('|');
+      desc = line.slice(0, first).trim();
+      cmd = line.slice(first + 1).trim();
+    } else {
+      continue;
+    }
+    if (desc && cmd) { addTplRow(desc, cmd, interval); added++; }
+  }
+  ta.value = '';
+  document.getElementById('tpl-paste-box').style.display = 'none';
+  toast(added ? `Added ${added} service row(s) — click Save Template` : 'No valid lines detected (use "Name | command" or Tab/2-spaces)');
+}
+async function openTemplateForm(idx, isClone) {
+  await ensureCatalogCommands();
   const t = idx >= 0 ? S.managed.config.templates[idx] : {
     name: '', description: '',
     services: [{ service_description: 'HTTP', check_command: 'check_http', check_interval: 5, max_check_attempts: 3 }]
   };
-  const lines = (t.services || []).map(s => `${s.service_description} | ${s.check_command} | ${s.check_interval||5}`).join('\n');
+  const cmdOpts = (S.catalogCmds || []).map(c => `<option value="${esc(c.example || c.command_name)}">${esc(c.command_name)}</option>`).join('');
   openModal(`<h2>${isClone ? 'Clone Template' : (idx >= 0 ? 'Edit Template' : 'New Service Template')}</h2>
-    <div style="margin-bottom:10px"><span class="save-scope-pill instant">Instant Save — langsung tersimpan tanpa reload Nagios</span></div>
-    <div class="form-row"><label>Template Name *</label><input id="tpl-name" type="text" value="${esc(isClone ? t.name + '-copy' : t.name)}" ${idx>=0 && !isClone ? 'readonly' : ''}></div>
-    <div class="form-row"><label>Description</label><input id="tpl-desc" type="text" value="${esc(t.description || '')}"></div>
-    <div class="form-row"><label>Services (1 per line: <code class="code-chip">Service Name | check_command | interval_min</code>)</label>
-      <textarea id="tpl-svcs" class="raw-editor" style="min-height:170px">${esc(lines)}</textarea>
+    <div style="margin-bottom:10px"><span class="save-scope-pill instant">Instant Save — langsung tersimpan tanpa reload Encore Engine</span></div>
+    <datalist id="active-cmd-list">${cmdOpts}</datalist>
+    <div class="form-grid">
+      <div class="form-row"><label>Template Name *</label><input id="tpl-name" type="text" value="${esc(isClone ? t.name + '-copy' : t.name)}" ${idx>=0 && !isClone ? 'readonly' : ''}></div>
+      <div class="form-row"><label>Description</label><input id="tpl-desc" type="text" value="${esc(t.description || '')}"></div>
     </div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveTemplateForm()">Save Template</button></div>`);
+    <div class="presets" style="margin-bottom:8px">
+      <button type="button" class="btn btn-sm" onclick="addTplRow('NCPA CPU','check_ncpa!cpu/percent!-w 80 -c 90',5)">+ NCPA CPU</button>
+      <button type="button" class="btn btn-sm" onclick="addTplRow('NCPA RAM','check_ncpa!memory/virtual!-w 80 -c 90',5)">+ NCPA RAM</button>
+      <button type="button" class="btn btn-sm" onclick="addTplRow('NCPA Disk /','check_ncpa!disk/logical/|/used_percent!-w 80 -c 90',5)">+ NCPA Disk /</button>
+      <button type="button" class="btn btn-sm" onclick="addTplRow('SSL Cert','check_http!-S -C 30,14',60)">+ SSL Cert</button>
+      <button type="button" class="btn btn-sm" onclick="addTplRow('','','5')">+ Blank Row</button>
+      <button type="button" class="btn btn-sm" onclick="const b=document.getElementById('tpl-paste-box');b.style.display=b.style.display==='none'?'block':'none'">Paste Bulk</button>
+    </div>
+    <div id="tpl-paste-box" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+      <div class="name-sub" style="margin-bottom:6px">Paste baris (mendukung <code class="code-chip">Name | command | 5</code>, Tab, atau 2+ spasi — karakter <code class="code-chip">|</code> di dalam NCPA Disk aman!):</div>
+      <textarea id="tpl-paste-area" class="raw-editor" style="min-height:90px" placeholder="NCPA Disk / | check_ncpa!disk/logical/|/used_percent!-w 80 -c 90 | 5"></textarea>
+      <div style="margin-top:6px;text-align:right"><button type="button" class="btn btn-sm primary" onclick="parseBulkTplPaste()">Add Pasted Lines</button></div>
+    </div>
+    <div class="tpl-row" style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase"><span>Service Name</span><span>Check Command</span><span>Min</span><span></span></div>
+    <div id="tpl-rows-wrap" style="max-height:240px;overflow-y:auto;padding-right:2px">
+      ${(t.services || []).map(s => tplRowHTML(s.service_description, s.check_command, s.check_interval || 5)).join('')}
+    </div>
+    <div class="tpl-err" id="tpl-err"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveTemplateForm()">Save &amp; Activate</button></div>`);
 }
 async function saveTemplateForm() {
+  const errEl = document.getElementById('tpl-err');
+  if (errEl) errEl.style.display = 'none';
   const name = document.getElementById('tpl-name').value.trim();
   const description = document.getElementById('tpl-desc').value.trim();
-  const rawLines = document.getElementById('tpl-svcs').value.split('\n').map(l => l.trim()).filter(Boolean);
-  const services = rawLines.map(line => {
-    const parts = line.split('|').map(x => x.trim());
-    return { service_description: parts[0] || '', check_command: parts[1] || '', check_interval: Number(parts[2]) || 5, retry_interval: 1, max_check_attempts: 3, check_period: '24x7' };
-  });
-  await apiPost('/api/v1/config/templates', { name, description, services }, 'Template saved (instant)', true);
+  const rows = [...document.querySelectorAll('#tpl-rows-wrap .tpl-row')];
+  const services = [];
+  for (const r of rows) {
+    const desc = r.querySelector('.tpl-r-desc').value.replace(/[\r\n]/g, '').trim();
+    const cmd = r.querySelector('.tpl-r-cmd').value.replace(/[\r\n]/g, '').trim();
+    const iv = Number(r.querySelector('.tpl-r-int').value) || 5;
+    if (!desc && !cmd) continue;
+    services.push({ service_description: desc, check_command: cmd, check_interval: iv, retry_interval: 1, max_check_attempts: 3, check_period: '24x7' });
+  }
+  try {
+    const res = await fetch('/api/v1/config/templates', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ name, description, services })
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || res.statusText);
+    closeModal(); S.catalogCmds = [];
+    toast('Template saved & active immediately');
+    if (S.view === 'manage') await loadManage(true);
+    await loadMeta();
+  } catch (e) {
+    if (errEl) { errEl.textContent = e.message; errEl.style.display = 'block'; }
+    toast('Error: ' + e.message);
+  }
 }
 function openSaveTplFromHostModal() {
   const hosts = S.managed.config.hosts || [];
@@ -633,7 +722,7 @@ async function renderNotificationsTab(el) {
   const hist = data.history || [];
   el.innerHTML = `
     <div class="callout-banner" style="background:var(--ok-bg);border-color:var(--ok);color:var(--ok-fg)">
-      <div><b>Instant Save:</b> Pengaturan Email (SMTP) &amp; Webhook berjalan langsung di <b>Encore Gateway</b> — klik <b>Save &amp; Activate</b> langsung berlaku tanpa perlu <i>Apply &amp; Reload</i> Nagios.</div>
+      <div><b>Instant Save:</b> Pengaturan Email (SMTP) &amp; Webhook berjalan langsung di <b>Encore Gateway</b> — klik <b>Save &amp; Activate</b> langsung berlaku tanpa perlu <i>Apply &amp; Reload</i> Encore Engine.</div>
     </div>
     <div class="split-2">
       <div class="panel">
@@ -764,7 +853,7 @@ async function saveNotifyConfig() {
   };
   const res = await fetch('/api/v1/notifications/config', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
   const d = await res.json();
-  toast(res.ok ? 'Saved & active immediately (no Nagios reload needed)' : ('Error: ' + d.error));
+  toast(res.ok ? 'Saved & active immediately (no Encore Engine reload needed)' : ('Error: ' + d.error));
 }
 
 async function testNotify(channel) {
@@ -817,7 +906,7 @@ async function renderSecretsTab(el) {
   el.innerHTML = `
     <div class="panel">
       <div class="panel-head">
-        <div class="panel-title">Resource Secrets (<code class="code-chip">$USER2$..$USER32$</code>) <span class="save-scope-pill auto">Auto-Reload Nagios</span></div>
+        <div class="panel-title">Resource Secrets (<code class="code-chip">$USER2$..$USER32$</code>) <span class="save-scope-pill auto">Auto-Reload Encore</span></div>
         <button class="btn btn-sm primary" onclick="openSecretModal()">+ Set Secret</button>
       </div>
       <div class="table-wrap"><table><thead><tr><th>Macro</th><th>Value (Masked)</th><th>Usage</th><th style="text-align:right">Actions</th></tr></thead><tbody>
@@ -832,7 +921,7 @@ async function renderSecretsTab(el) {
 }
 function openSecretModal(key) {
   openModal(`<h2>${key ? 'Update ' + esc(key) : 'Set Resource Secret'}</h2>
-    <div style="margin-bottom:10px"><span class="save-scope-pill auto">Auto-Reload — menyimpan ke resource.cfg &amp; reload Nagios otomatis</span></div>
+    <div style="margin-bottom:10px"><span class="save-scope-pill auto">Auto-Reload — menyimpan ke resource.cfg &amp; reload Encore Engine otomatis</span></div>
     <div class="form-row"><label>Macro Key ($USER2$ .. $USER32$)</label><input id="sec-key" type="text" value="${esc(key || '$USER2$')}" ${key?'readonly':''}></div>
     <div class="form-row"><label>Secret Value (e.g. NCPA Token)</label><input id="sec-val" type="password" placeholder="Enter secret token..."></div>
     <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveSecretModal()">Save &amp; Auto-Reload</button></div>`);
@@ -843,10 +932,10 @@ async function saveSecretModal() {
   const res = await fetch('/api/v1/secrets', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key, value}) });
   const d = await res.json();
   if (!res.ok) { toast('Error: ' + (d.error || res.statusText)); return; }
-  closeModal(); toast('Secret saved & Nagios reloading'); loadManage();
+  closeModal(); toast('Secret saved & Encore Engine reloading'); loadManage();
 }
 async function deleteSecret(key) {
-  const ok = await encoreConfirm({ title: `Delete Secret ${key}?`, message: 'Macro secret akan dihapus dari resource.cfg dan Nagios akan otomatis reload.', confirmText: 'Delete Secret', danger: true });
+  const ok = await encoreConfirm({ title: `Delete Secret ${key}?`, message: 'Macro secret akan dihapus dari resource.cfg dan Encore Engine akan otomatis reload.', confirmText: 'Delete Secret', danger: true });
   if (!ok) return;
   const res = await fetch('/api/v1/secrets?key=' + encodeURIComponent(key), { method:'DELETE' });
   if (res.ok) { toast('Deleted & reloading'); loadManage(); }
@@ -877,7 +966,7 @@ async function loadSystem() {
         <div class="panel-title">Configuration Backups (${backups.length})</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <a class="btn btn-sm" href="/api/v1/config/backups/download?name=current" style="text-decoration:none">Download Current</a>
-          <button class="btn btn-sm" onclick="openLegacyImportModal()">Import Nagios .cfg</button>
+          <button class="btn btn-sm" onclick="openLegacyImportModal()">Import Legacy .cfg</button>
           <button class="btn btn-sm primary" onclick="openImportJSONModal()">Import Encore JSON</button>
         </div>
       </div>
@@ -971,6 +1060,7 @@ async function openSvcForm(idx, preHost) {
     <div style="margin-bottom:10px"><span class="save-scope-pill draft">Draft — klik Apply &amp; Reload setelah selesai</span></div>
     <div class="presets">
       <button class="btn btn-sm" onclick="applySvcPreset('HTTP','check_http')">HTTP</button>
+      <button class="btn btn-sm" onclick="applySvcPreset('HTTPS SSL Cert','check_http!-S -C 30,14')">SSL Cert</button>
       <button class="btn btn-sm" onclick="applySvcPreset('TCP 443','check_tcp!443')">TCP</button>
       <button class="btn btn-sm" onclick="applySvcPreset('PING','check_ping!100.0,20%!500.0,60%')">Ping</button>
       <button class="btn btn-sm" onclick="applySvcPreset('SSH','check_ssh')">SSH</button>
@@ -1132,11 +1222,11 @@ async function runValidate(apply) {
   const res = await fetch(apply ? '/api/v1/config/apply' : '/api/v1/config/validate', { method:'POST' });
   const d = await res.json();
   if (con) con.textContent = (d.error ? 'ERROR: '+d.error+'\n\n' : 'OK\n\n') + (d.output||'');
-  toast(res.ok ? (apply ? 'Applied & reloading Nagios!' : 'Configuration valid!') : 'Validation failed');
+  toast(res.ok ? (apply ? 'Applied & reloading Encore Engine!' : 'Configuration valid!') : 'Validation failed');
   if (res.ok && apply) { if (S.view === 'manage') await loadManage(); setTimeout(refreshAll, 1400); }
 }
 async function rollbackBackup(name) {
-  const ok = await encoreConfirm({ title: `Rollback to ${name}?`, message: 'Konfigurasi saat ini akan diganti dengan snapshot backup ini dan Nagios akan langsung reload.', confirmText: 'Rollback & Reload', danger: true });
+  const ok = await encoreConfirm({ title: `Rollback to ${name}?`, message: 'Konfigurasi saat ini akan diganti dengan snapshot backup ini dan Encore Engine akan langsung reload.', confirmText: 'Rollback & Reload', danger: true });
   if (!ok) return;
   const res = await fetch('/api/v1/config/rollback', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({backup:name}) });
   toast(res.ok ? 'Rolled back & reloading!' : 'Rollback failed');
@@ -1269,12 +1359,12 @@ async function deleteUser(username) {
   toast('User deleted'); renderUsersTab(document.getElementById('manage-content'));
 }
 
-/* ====== LEGACY NAGIOS .CFG IMPORTER & ENCORE JSON IMPORT ====== */
+/* ====== LEGACY .CFG IMPORTER & ENCORE JSON IMPORT ====== */
 function openLegacyImportModal() {
-  openModal(`<h2>Import Legacy Nagios Core (.cfg)</h2>
-    <p class="name-sub" style="margin-bottom:10px">Upload 1 atau banyak file <code class="code-chip">.cfg</code> (hosts, services, commands, hostgroups, contacts) dari server Nagios lama atau paste isinya di bawah. Hasil import masuk sebagai <b>Draft</b> agar aman divalidasi dulu.</p>
+  openModal(`<h2>Import Legacy Monitoring Config (.cfg)</h2>
+    <p class="name-sub" style="margin-bottom:10px">Upload 1 atau banyak file <code class="code-chip">.cfg</code> (hosts, services, commands, hostgroups, contacts) dari server monitoring lama atau paste isinya di bawah. Hasil import masuk sebagai <b>Draft</b> agar aman divalidasi dulu.</p>
     <div class="form-row"><label>Upload File(s) (.cfg)</label><input id="imp-files" type="file" multiple accept=".cfg,.conf,.txt" onchange="readLegacyCfgFiles(this.files)"></div>
-    <div class="form-row"><label>Nagios .cfg Content</label><textarea id="imp-raw" class="raw-editor" style="min-height:170px" placeholder="define host {\n  host_name web-01\n  address 10.0.0.10\n  check_command check-host-alive\n}"></textarea></div>
+    <div class="form-row"><label>Legacy .cfg Content</label><textarea id="imp-raw" class="raw-editor" style="min-height:170px" placeholder="define host {\n  host_name web-01\n  address 10.0.0.10\n  check_command check-host-alive\n}"></textarea></div>
     <label class="chk-pill"><input type="checkbox" id="imp-ow"> Overwrite existing objects with same name</label>
     <pre class="console-out" id="imp-preview" style="margin:10px 0 0"></pre>
     <div class="modal-foot">
@@ -1330,4 +1420,78 @@ async function submitImportJSON() {
   closeModal();
   toast(`Imported ${d.hosts} hosts, ${d.services} services to draft — click Validate & Apply`);
   await loadMeta(); setView('manage', 'objects');
+}
+
+/* ====== QUICK NETWORK DISCOVERY / PORT PROBE ====== */
+let _discoveredHosts = [];
+function openDiscoveryModal() {
+  _discoveredHosts = [];
+  openModal(`<h2>Network Host Discovery (Guardrailed)</h2>
+    <p class="name-sub" style="margin-bottom:10px">Scan IP atau subnet (maks. <code class="code-chip">/24</code> = 254 host) untuk mendeteksi port aktif (SSH 22, HTTP 80, HTTPS 443, NCPA 5693, DB) dan tambah cepat ke Draft.</p>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input id="disc-target" type="text" style="flex:1" placeholder="e.g. 10.10.2.0/24 or 10.10.2.10,10.10.2.11">
+      <button class="btn primary" id="disc-btn" onclick="runDiscoveryScan()">Scan</button>
+    </div>
+    <div id="disc-results" style="max-height:280px;overflow:auto"><div class="empty" style="padding:18px">Enter an IP or /24 CIDR and click Scan.</div></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">Close</button>
+      <button class="btn primary" id="disc-add-btn" style="display:none" onclick="addDiscoveredHosts()">Add Selected to Draft</button>
+    </div>`);
+}
+async function runDiscoveryScan() {
+  const target = document.getElementById('disc-target').value.trim();
+  const resEl = document.getElementById('disc-results');
+  const btn = document.getElementById('disc-btn');
+  btn.disabled = true; btn.textContent = 'Scanning...';
+  resEl.innerHTML = '<div class="empty"><encore-icon name="loader" size="2" live></encore-icon> Probing network targets...</div>';
+  try {
+    const res = await fetch('/api/v1/discovery/scan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ target }) });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || res.statusText);
+    _discoveredHosts = d.hosts || [];
+    if (!_discoveredHosts.length) {
+      resEl.innerHTML = `<div class="art-empty">${artSVG('search')}<h4>No Responsive Hosts Found</h4><p>Scanned ${d.scanned} target(s) in ${d.duration_ms}ms.</p></div>`;
+      document.getElementById('disc-add-btn').style.display = 'none';
+      return;
+    }
+    resEl.innerHTML = `<div class="name-sub" style="margin-bottom:6px">Found <b>${_discoveredHosts.length}</b> active host(s) out of ${d.scanned} in ${d.duration_ms}ms:</div>
+      <div class="table-wrap"><table><thead><tr><th style="width:28px"></th><th>Host / IP</th><th>Open Ports</th><th>Template</th></tr></thead><tbody>
+      ${_discoveredHosts.map((h, i) => `<tr>
+        <td><input type="checkbox" class="disc-chk" value="${i}" ${h.already_managed?'disabled':'checked'}></td>
+        <td><b>${esc(h.hostname)}</b>${h.already_managed?' <span class="flag-tag">MANAGED</span>':''}<div class="mono">${esc(h.ip)}</div></td>
+        <td class="mono">${(h.open_ports||[]).join(', ')}</td>
+        <td>${h.suggested_template ? `<span class="badge c-ok">${esc(h.suggested_template)}</span>` : '-'}</td>
+      </tr>`).join('')}
+      </tbody></table></div>`;
+    document.getElementById('disc-add-btn').style.display = 'inline-flex';
+  } catch (e) {
+    resEl.innerHTML = `<div class="empty" style="color:var(--crit-fg)">${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Scan';
+  }
+}
+async function addDiscoveredHosts() {
+  const idxs = [...document.querySelectorAll('.disc-chk:checked')].map(c => Number(c.value));
+  if (!idxs.length) { toast('Select at least one host'); return; }
+  let added = 0;
+  for (const idx of idxs) {
+    const h = _discoveredHosts[idx];
+    if (!h) continue;
+    const res = await fetch('/api/v1/config/hosts', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ name: h.hostname, alias: h.hostname, address: h.ip, check_command: 'check-host-alive', check_interval: 5, retry_interval: 1, max_check_attempts: 3, check_period: '24x7', enabled: true })
+    });
+    if (res.ok) {
+      added++;
+      if (h.suggested_template) {
+        await fetch('/api/v1/config/templates/apply', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ template: h.suggested_template, hosts: [h.hostname], overwrite: false })
+        });
+      }
+    }
+  }
+  closeModal();
+  toast(`Added ${added} discovered host(s) to draft — click Validate & Apply`);
+  await loadManage(true); await loadMeta();
 }
