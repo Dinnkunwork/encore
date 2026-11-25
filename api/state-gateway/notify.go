@@ -161,12 +161,40 @@ func NewNotifier(managedDir string, cs *ConfigStore) *Notifier {
 	return n
 }
 
+func maskWebhookURL(u string) string {
+	u = strings.TrimSpace(u)
+	if u == "" {
+		return ""
+	}
+	if len(u) <= 24 {
+		return "••••••••"
+	}
+	return u[:16] + "••••••••" + u[len(u)-4:]
+}
+
+func sanitizeSMTPHeader(s string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
+}
+
 func (n *Notifier) ConfigMasked() NotifyConfig {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	c := n.cfg
 	if c.SMTPPass != "" {
 		c.SMTPPass = "••••••••"
+	}
+	if c.WebhookURL != "" {
+		c.WebhookURL = maskWebhookURL(c.WebhookURL)
+	}
+	if len(c.Routes) > 0 {
+		routes := make([]NotifyRoute, len(c.Routes))
+		copy(routes, c.Routes)
+		for i := range routes {
+			if routes[i].WebhookURL != "" {
+				routes[i].WebhookURL = maskWebhookURL(routes[i].WebhookURL)
+			}
+		}
+		c.Routes = routes
 	}
 	return c
 }
@@ -197,9 +225,27 @@ func (n *Notifier) UpdateConfig(in NotifyConfig) error {
 	in.Recipients = cleaned
 
 	n.mu.Lock()
-	// Keep existing password if UI sent mask or empty when user didn't change it
+	// Keep existing password/webhook URLs if UI sent masked values back unchanged
 	if in.SMTPPass == "••••••••" || (in.SMTPPass == "" && n.cfg.SMTPPass != "" && in.SMTPHost == n.cfg.SMTPHost && in.SMTPUser == n.cfg.SMTPUser) {
 		in.SMTPPass = n.cfg.SMTPPass
+	}
+	if strings.Contains(in.WebhookURL, "••••••••") {
+		in.WebhookURL = n.cfg.WebhookURL
+	}
+	if len(in.Routes) > 0 && len(n.cfg.Routes) > 0 {
+		oldByID := make(map[string]string, len(n.cfg.Routes))
+		for _, r := range n.cfg.Routes {
+			if r.ID != "" {
+				oldByID[r.ID] = r.WebhookURL
+			}
+		}
+		for i := range in.Routes {
+			if strings.Contains(in.Routes[i].WebhookURL, "••••••••") {
+				if orig, ok := oldByID[in.Routes[i].ID]; ok {
+					in.Routes[i].WebhookURL = orig
+				}
+			}
+		}
 	}
 	n.cfg = in
 	path := n.cfgPath
@@ -446,16 +492,31 @@ func (n *Notifier) resolveRecipients(cfg NotifyConfig) []string {
 	return out
 }
 
+func alertStateMeta(ev AlertEvent) (emoji, label string) {
+	if ev.PrevState == "TEST" {
+		return "🧪", "TEST"
+	}
+	switch strings.ToUpper(ev.State) {
+	case "OK", "UP":
+		return "✅", "RESOLVED"
+	case "CRITICAL", "DOWN":
+		return "🚨", strings.ToUpper(ev.State)
+	case "WARNING", "UNREACHABLE":
+		return "⚠️", strings.ToUpper(ev.State)
+	case "DIGEST":
+		return "📊", "SLA DIGEST"
+	default:
+		return "❓", strings.ToUpper(ev.State)
+	}
+}
+
 func formatAlertSubject(ev AlertEvent) string {
 	target := ev.Host
 	if ev.Service != "" {
 		target = ev.Host + " / " + ev.Service
 	}
-	prefix := "ALERT"
-	if ev.State == "OK" || ev.State == "UP" {
-		prefix = "RECOVERY"
-	}
-	return fmt.Sprintf("[Encore %s] %s is %s", prefix, target, ev.State)
+	emoji, label := alertStateMeta(ev)
+	return fmt.Sprintf("%s [Encore %s] %s", emoji, label, target)
 }
 
 func formatAlertHTML(ev AlertEvent, dashURL string) string {
@@ -650,14 +711,18 @@ func sendSMTPEmail(cfg NotifyConfig, to []string, subject, htmlBody string) erro
 	if err != nil {
 		return fmt.Errorf("smtp data: %w", err)
 	}
-	fromHeader := cfg.FromAddress
+	fromHeader := sanitizeSMTPHeader(cfg.FromAddress)
 	if cfg.FromName != "" {
-		fromHeader = fmt.Sprintf("%s <%s>", cfg.FromName, cfg.FromAddress)
+		fromHeader = fmt.Sprintf("%s <%s>", sanitizeSMTPHeader(cfg.FromName), sanitizeSMTPHeader(cfg.FromAddress))
+	}
+	safeTo := make([]string, len(to))
+	for i, r := range to {
+		safeTo[i] = sanitizeSMTPHeader(r)
 	}
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nDate: %s\r\n\r\n%s",
 		fromHeader,
-		strings.Join(to, ", "),
-		subject,
+		strings.Join(safeTo, ", "),
+		sanitizeSMTPHeader(subject),
 		time.Now().Format(time.RFC1123Z),
 		htmlBody,
 	)
@@ -672,27 +737,71 @@ func sendSMTPEmail(cfg NotifyConfig, to []string, subject, htmlBody string) erro
 	return nil
 }
 
-func (n *Notifier) sendWebhook(cfg NotifyConfig, ev AlertEvent, subject string) error {
-	if strings.TrimSpace(cfg.WebhookURL) == "" {
-		return errors.New("webhook_url is required")
-	}
+func formatWebhookText(ev AlertEvent, dashURL string, htmlMode bool) string {
+	emoji, label := alertStateMeta(ev)
 	target := ev.Host
 	if ev.Service != "" {
 		target += " / " + ev.Service
 	}
-	text := fmt.Sprintf("%s\nTarget: %s\nState: %s -> %s\nOutput: %s", subject, target, ev.PrevState, ev.State, ev.Output)
-	if cfg.DashboardURL != "" {
-		text += "\nDashboard: " + cfg.DashboardURL
+	ts := ev.Time.Format("2006-01-02 15:04:05 MST")
+	out := strings.TrimSpace(ev.Output)
+	if out == "" {
+		out = "-"
+	}
+
+	if htmlMode {
+		var b strings.Builder
+		fmt.Fprintf(&b, "%s <b>%s</b> — %s\n\n", emoji, html.EscapeString(label), html.EscapeString(target))
+		fmt.Fprintf(&b, "<b>Host:</b> <code>%s</code>\n", html.EscapeString(ev.Host))
+		if ev.Service != "" {
+			fmt.Fprintf(&b, "<b>Service:</b> <code>%s</code>\n", html.EscapeString(ev.Service))
+		}
+		fmt.Fprintf(&b, "<b>Status:</b> %s → <b>%s</b>\n", html.EscapeString(ev.PrevState), html.EscapeString(ev.State))
+		fmt.Fprintf(&b, "<b>Time:</b> %s\n\n", html.EscapeString(ts))
+		fmt.Fprintf(&b, "<b>Output:</b>\n<code>%s</code>", html.EscapeString(out))
+		if dashURL != "" {
+			fmt.Fprintf(&b, "\n\n🔗 <a href=\"%s\">Open Encore Dashboard</a>", html.EscapeString(dashURL))
+		}
+		return b.String()
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s **%s** — %s\n\n", emoji, label, target)
+	fmt.Fprintf(&b, "Host: %s\n", ev.Host)
+	if ev.Service != "" {
+		fmt.Fprintf(&b, "Service: %s\n", ev.Service)
+	}
+	fmt.Fprintf(&b, "Status: %s → %s\n", ev.PrevState, ev.State)
+	fmt.Fprintf(&b, "Time: %s\n\n", ts)
+	fmt.Fprintf(&b, "Output:\n%s", out)
+	if dashURL != "" {
+		fmt.Fprintf(&b, "\n\n🔗 Dashboard: %s", dashURL)
+	}
+	return b.String()
+}
+
+func (n *Notifier) sendWebhook(cfg NotifyConfig, ev AlertEvent, subject string) error {
+	u := strings.TrimSpace(cfg.WebhookURL)
+	if u == "" {
+		return errors.New("webhook_url is required")
+	}
+	if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+		return errors.New("webhook_url must start with http:// or https://")
 	}
 
 	var payload any
 	switch strings.ToLower(cfg.WebhookType) {
 	case "slack":
-		payload = map[string]any{"text": text}
+		payload = map[string]any{"text": formatWebhookText(ev, cfg.DashboardURL, false)}
 	case "discord":
-		payload = map[string]any{"content": text}
+		payload = map[string]any{"content": formatWebhookText(ev, cfg.DashboardURL, false)}
 	case "telegram":
-		payload = map[string]any{"chat_id": cfg.WebhookChatID, "text": text}
+		payload = map[string]any{
+			"chat_id":                  cfg.WebhookChatID,
+			"text":                     formatWebhookText(ev, cfg.DashboardURL, true),
+			"parse_mode":               "HTML",
+			"disable_web_page_preview": true,
+		}
 	default:
 		payload = map[string]any{
 			"subject":    subject,
@@ -710,7 +819,7 @@ func (n *Notifier) sendWebhook(cfg NotifyConfig, ev AlertEvent, subject string) 
 	if err != nil {
 		return err
 	}
-	resp, err := n.httpClient.Post(cfg.WebhookURL, "application/json", bytes.NewReader(body))
+	resp, err := n.httpClient.Post(u, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

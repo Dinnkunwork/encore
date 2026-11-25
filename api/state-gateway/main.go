@@ -948,8 +948,39 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		if r.TLS != nil {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1/stream" {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+var operatorAllowedCommands = map[string]bool{
+	"SCHEDULE_FORCED_HOST_CHECK":   true,
+	"SCHEDULE_FORCED_SVC_CHECK":    true,
+	"ACKNOWLEDGE_HOST_PROBLEM":     true,
+	"ACKNOWLEDGE_SVC_PROBLEM":      true,
+	"REMOVE_HOST_ACKNOWLEDGEMENT":  true,
+	"REMOVE_SVC_ACKNOWLEDGEMENT":   true,
+	"SCHEDULE_HOST_DOWNTIME":       true,
+	"SCHEDULE_SVC_DOWNTIME":        true,
+	"DEL_HOST_DOWNTIME":            true,
+	"DEL_SVC_DOWNTIME":             true,
+	"ADD_HOST_COMMENT":             true,
+	"ADD_SVC_COMMENT":              true,
+	"DEL_HOST_COMMENT":             true,
+	"DEL_SVC_COMMENT":              true,
+}
+
+func isOperatorAllowedCommand(cmd string) bool {
+	name := cmd
+	if idx := strings.IndexByte(cmd, ';'); idx > 0 {
+		name = cmd[:idx]
+	}
+	return operatorAllowedCommands[strings.ToUpper(strings.TrimSpace(name))]
 }
 
 func basicAuthMiddleware(user, pass string, next http.Handler) http.Handler {
@@ -1225,6 +1256,10 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid command"})
 			return
 		}
+		if actorRoleFromRequest(r) != RoleAdmin && !isOperatorAllowedCommand(cmd) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden: engine control command requires admin role"})
+			return
+		}
 		f, err := os.OpenFile(cmdPipePath, os.O_WRONLY, 0)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -1259,6 +1294,14 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 		if len(req.Commands) == 0 || len(req.Commands) > 200 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "commands must contain 1..200 entries"})
 			return
+		}
+		isAdm := actorRoleFromRequest(r) == RoleAdmin
+		for _, raw := range req.Commands {
+			c := strings.TrimSpace(raw)
+			if c != "" && !isAdm && !isOperatorAllowedCommand(c) {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden: batch contains admin-only engine command"})
+				return
+			}
 		}
 		f, err := os.OpenFile(cmdPipePath, os.O_WRONLY, 0)
 		if err != nil {

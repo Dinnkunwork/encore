@@ -238,12 +238,15 @@ func (am *AuthManager) IsEnabled() bool {
 }
 
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	// Only trust X-Forwarded-For when request arrives from a local reverse proxy (loopback)
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			return strings.TrimSpace(strings.Split(xff, ",")[0])
+		}
 	}
 	return host
 }
@@ -379,6 +382,13 @@ func actorFromRequest(r *http.Request) string {
 	return ""
 }
 
+func actorRoleFromRequest(r *http.Request) string {
+	if u, ok := r.Context().Value(actorCtxKey).(*UserRecord); ok && u != nil {
+		return u.Role
+	}
+	return RoleAdmin // when auth middleware is disabled (local-admin mode)
+}
+
 // Required RBAC role for a given HTTP method + path
 func requiredRoleForRoute(method, path string) string {
 	// Public routes handled before RBAC
@@ -391,13 +401,14 @@ func requiredRoleForRoute(method, path string) string {
 	if path == "/api/v1/auth/me" || path == "/api/v1/auth/password" {
 		return RoleViewer
 	}
-	// Admin-only read & write routes (sensitive data & config management)
+	// Admin-only read & write routes (sensitive data, audit & config management)
 	if strings.HasPrefix(path, "/api/v1/users") ||
 		strings.HasPrefix(path, "/api/v1/secrets") ||
 		strings.HasPrefix(path, "/api/v1/notifications") ||
 		strings.HasPrefix(path, "/api/v1/scripts") ||
 		strings.HasPrefix(path, "/api/v1/discovery") ||
-		strings.HasPrefix(path, "/api/v1/reports/digest") {
+		strings.HasPrefix(path, "/api/v1/reports/digest") ||
+		strings.HasPrefix(path, "/api/v1/audit") {
 		return RoleAdmin
 	}
 	if strings.HasPrefix(path, "/api/v1/config") {
@@ -570,7 +581,7 @@ func (am *AuthManager) DeleteUser(username, actor string) error {
 	return nil
 }
 
-func (am *AuthManager) ChangeOwnPassword(username, oldPass, newPass string) error {
+func (am *AuthManager) ChangeOwnPassword(username, oldPass, newPass, keepToken string) error {
 	am.mu.Lock()
 	defer am.mu.Unlock()
 	u, ok := am.users[username]
@@ -585,6 +596,12 @@ func (am *AuthManager) ChangeOwnPassword(username, oldPass, newPass string) erro
 		return err
 	}
 	u.PasswordHash = h
+	// Revoke all other active sessions for this user to invalidate stolen cookies
+	for k, s := range am.sessions {
+		if s.Username == username && k != keepToken {
+			delete(am.sessions, k)
+		}
+	}
 	am.basicCache = make(map[string]basicCacheEntry)
 	return am.saveLocked()
 }
@@ -654,11 +671,14 @@ func registerAuthRoutes(mux *http.ServeMux, am *AuthManager) {
 		if ck, err := r.Cookie(sessionCookie); err == nil && ck.Value != "" {
 			am.RevokeSession(ck.Value)
 		}
+		isHTTPS := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookie,
 			Value:    "",
 			Path:     "/",
 			HttpOnly: true,
+			Secure:   isHTTPS,
+			SameSite: http.SameSiteLaxMode,
 			MaxAge:   -1,
 		})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
@@ -699,7 +719,11 @@ func registerAuthRoutes(mux *http.ServeMux, am *AuthManager) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := am.ChangeOwnPassword(u.Username, req.CurrentPassword, req.NewPassword); err != nil {
+		keepTok := ""
+		if ck, err := r.Cookie(sessionCookie); err == nil {
+			keepTok = ck.Value
+		}
+		if err := am.ChangeOwnPassword(u.Username, req.CurrentPassword, req.NewPassword, keepTok); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}

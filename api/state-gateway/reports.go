@@ -47,28 +47,34 @@ type AvailabilityRow struct {
 	CritPct     float64 `json:"crit_pct"`
 	UnkPct      float64 `json:"unk_pct"`
 	DowntimePct float64 `json:"downtime_pct"`
+	OKSec       float64 `json:"ok_sec"`
+	ProblemSec  float64 `json:"problem_sec"`
 	Incidents   int     `json:"incidents"`
 	MTTRSec     float64 `json:"mttr_sec"`
 }
 
 type AvailabilitySummary struct {
-	From           int64   `json:"from"`
-	To             int64   `json:"to"`
-	Target         string  `json:"target"`
-	TotalObjects   int     `json:"total_objects"`
-	OverallSLAPct  float64 `json:"overall_sla_pct"`
-	WarnPct        float64 `json:"warn_pct"`
-	CritPct        float64 `json:"crit_pct"`
-	UnkPct         float64 `json:"unk_pct"`
-	DowntimePct    float64 `json:"downtime_pct"`
-	TotalIncidents int     `json:"total_incidents"`
-	AvgMTTRSec     float64 `json:"avg_mttr_sec"`
+	From            int64   `json:"from"`
+	To              int64   `json:"to"`
+	Target          string  `json:"target"`
+	TotalObjects    int     `json:"total_objects"`
+	OverallSLAPct   float64 `json:"overall_sla_pct"`
+	WarnPct         float64 `json:"warn_pct"`
+	CritPct         float64 `json:"crit_pct"`
+	UnkPct          float64 `json:"unk_pct"`
+	DowntimePct     float64 `json:"downtime_pct"`
+	TotalProblemSec float64 `json:"total_problem_sec"`
+	TotalIncidents  int     `json:"total_incidents"`
+	AvgMTTRSec      float64 `json:"avg_mttr_sec"`
+	LogEventsUsed   int     `json:"log_events_used"`
 }
 
 type TimelineBucket struct {
 	Timestamp int64   `json:"timestamp"`
 	Label     string  `json:"label"`
 	OKPct     float64 `json:"ok_pct"`
+	WarnPct   float64 `json:"warn_pct"`
+	CritPct   float64 `json:"crit_pct"`
 	Incidents int     `json:"incidents"`
 }
 
@@ -129,10 +135,37 @@ func parseNagiosLogLine(line string) (LogEvent, bool) {
 				ev.Message = parts[4]
 			}
 		}
+	case strings.HasPrefix(rest, "INITIAL HOST STATE: "), strings.HasPrefix(rest, "CURRENT HOST STATE: "):
+		body := strings.TrimPrefix(strings.TrimPrefix(rest, "INITIAL HOST STATE: "), "CURRENT HOST STATE: ")
+		parts := strings.SplitN(body, ";", 5)
+		if len(parts) >= 4 {
+			ev.Type = "host_state"
+			ev.Host = parts[0]
+			ev.State = parts[1]
+			ev.StateType = parts[2]
+			ev.Attempt = parts[3]
+			if len(parts) >= 5 {
+				ev.Message = parts[4]
+			}
+		}
 	case strings.HasPrefix(rest, "SERVICE ALERT: "):
 		parts := strings.SplitN(strings.TrimPrefix(rest, "SERVICE ALERT: "), ";", 6)
 		if len(parts) >= 5 {
 			ev.Type = "service_alert"
+			ev.Host = parts[0]
+			ev.Service = parts[1]
+			ev.State = parts[2]
+			ev.StateType = parts[3]
+			ev.Attempt = parts[4]
+			if len(parts) >= 6 {
+				ev.Message = parts[5]
+			}
+		}
+	case strings.HasPrefix(rest, "INITIAL SERVICE STATE: "), strings.HasPrefix(rest, "CURRENT SERVICE STATE: "):
+		body := strings.TrimPrefix(strings.TrimPrefix(rest, "INITIAL SERVICE STATE: "), "CURRENT SERVICE STATE: ")
+		parts := strings.SplitN(body, ";", 6)
+		if len(parts) >= 5 {
+			ev.Type = "service_state"
 			ev.Host = parts[0]
 			ev.Service = parts[1]
 			ev.State = parts[2]
@@ -253,22 +286,33 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 		target = "services"
 	}
 	windowSec := float64(to - from)
+	healthyState := "OK"
+	defaultProblemState := "CRITICAL"
+	if target == "hosts" {
+		healthyState = "UP"
+		defaultProblemState = "DOWN"
+	}
 
 	type objTrack struct {
-		host        string
-		service     string
-		curState    string
-		lastTS      int64
-		inDowntime  bool
-		okSec       float64
-		warnSec     float64
-		critSec     float64
-		unkSec      float64
-		dtSec       float64
-		incidents   int
-		probStartTS int64
-		mttrSum     float64
-		mttrCount   int
+		host            string
+		service         string
+		liveState       string
+		hasBeenChecked  int
+		lastStateChange int64
+		preState        string // last known HARD state at or before `from`
+		curState        string
+		lastTS          int64
+		inDowntime      bool
+		events          []LogEvent // in-window events (from < ts <= to)
+		okSec           float64
+		warnSec         float64
+		critSec         float64
+		unkSec          float64
+		dtSec           float64
+		incidents       int
+		probStartTS     int64
+		mttrSum         float64
+		mttrCount       int
 	}
 
 	tracks := make(map[string]*objTrack)
@@ -286,7 +330,10 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 			} else if h.CurrentState == 2 {
 				st = "UNREACHABLE"
 			}
-			tracks[h.Name] = &objTrack{host: h.Name, curState: st, lastTS: from}
+			tracks[h.Name] = &objTrack{
+				host: h.Name, liveState: st, hasBeenChecked: h.HasBeenChecked,
+				lastStateChange: h.LastStateChange, lastTS: from,
+			}
 		}
 	} else {
 		svcs, _ := store.QueryServices(QueryOpts{Host: hostFilter, Hostgroup: hostgroup})
@@ -304,7 +351,10 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 				st = "UNKNOWN"
 			}
 			k := svcKey(s.HostName, s.Description)
-			tracks[k] = &objTrack{host: s.HostName, service: s.Description, curState: st, lastTS: from}
+			tracks[k] = &objTrack{
+				host: s.HostName, service: s.Description, liveState: st,
+				hasBeenChecked: s.HasBeenChecked, lastStateChange: s.LastStateChange, lastTS: from,
+			}
 		}
 	}
 
@@ -324,6 +374,8 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 		numBuckets = int((to - from + bucketSec - 1) / bucketSec)
 	}
 	bOK := make([]float64, numBuckets)
+	bWarn := make([]float64, numBuckets)
+	bCrit := make([]float64, numBuckets)
 	bTot := make([]float64, numBuckets)
 	bInc := make([]int, numBuckets)
 
@@ -337,6 +389,8 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 			tr.dtSec += dt
 		}
 		isOK := tr.curState == "UP" || tr.curState == "OK"
+		isWarn := tr.curState == "WARNING" || tr.curState == "UNREACHABLE"
+		isCrit := tr.curState == "DOWN" || tr.curState == "CRITICAL"
 		switch tr.curState {
 		case "UP", "OK":
 			tr.okSec += dt
@@ -363,6 +417,10 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 				bTot[bIdx] += seg
 				if isOK {
 					bOK[bIdx] += seg
+				} else if isWarn {
+					bWarn[bIdx] += seg
+				} else if isCrit {
+					bCrit[bIdx] += seg
 				}
 			}
 			cur = bEnd
@@ -378,57 +436,105 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 		}
 	}
 
-	events := readLogEvents(nagiosLog, archivesDir, from, to)
+	// Read log events with 24h lookback before `from` to establish exact starting state at `from`
+	lookbackFrom := from - 86400
+	events := readLogEvents(nagiosLog, archivesDir, lookbackFrom, to)
+	logEventsUsed := 0
 	for _, ev := range events {
+		var tr *objTrack
+		var ok bool
 		if target == "hosts" {
-			if ev.Type != "host_alert" && ev.Type != "downtime" {
+			if ev.Type != "host_alert" && ev.Type != "host_state" && ev.Type != "downtime" {
 				continue
 			}
 			if ev.Service != "" {
 				continue
 			}
-			tr, ok := tracks[ev.Host]
-			if !ok {
-				continue
-			}
-			addDuration(tr, ev.Timestamp)
-			if ev.Type == "downtime" {
-				tr.inDowntime = ev.State == "STARTED"
-				continue
-			}
-			if ev.StateType == "HARD" {
-				wasHealthy := tr.curState == "UP"
-				isHealthy := ev.State == "UP"
-				if wasHealthy && !isHealthy {
-					tr.incidents++
-					tr.probStartTS = ev.Timestamp
-					recordBucketInc(ev.Timestamp)
-				} else if !wasHealthy && isHealthy && tr.probStartTS > 0 {
-					tr.mttrSum += float64(ev.Timestamp - tr.probStartTS)
-					tr.mttrCount++
-					tr.probStartTS = 0
-				}
-				tr.curState = ev.State
-			}
+			tr, ok = tracks[ev.Host]
 		} else {
-			if ev.Type != "service_alert" && ev.Type != "downtime" {
+			if ev.Type != "service_alert" && ev.Type != "service_state" && ev.Type != "downtime" {
 				continue
 			}
 			if ev.Service == "" {
 				continue
 			}
-			tr, ok := tracks[svcKey(ev.Host, ev.Service)]
-			if !ok {
-				continue
+			tr, ok = tracks[svcKey(ev.Host, ev.Service)]
+		}
+		if !ok {
+			continue
+		}
+
+		if ev.Timestamp <= from {
+			if ev.Type == "downtime" {
+				tr.inDowntime = ev.State == "STARTED"
+			} else if ev.StateType == "HARD" && ev.State != "" {
+				tr.preState = ev.State
 			}
+			continue
+		}
+		// Inside (from, to]
+		if ev.Type == "host_state" || ev.Type == "service_state" {
+			// Midnight/startup snapshot: only useful if we have no preState yet and no prior events
+			if tr.preState == "" && len(tr.events) == 0 && ev.StateType == "HARD" && ev.State != "" {
+				tr.preState = ev.State
+			}
+			continue
+		}
+		tr.events = append(tr.events, ev)
+		logEventsUsed++
+	}
+
+	rows := make([]AvailabilityRow, 0, len(tracks))
+	var slaSum, warnSum, critSum, unkSum, dtSum, probSecSum, mttrTotalSum float64
+	var totalInc, mttrTotalCnt int
+
+	for _, tr := range tracks {
+		// Determine accurate initial state at t = from
+		hasHardEvent := false
+		var firstHard LogEvent
+		for _, ev := range tr.events {
+			if ev.Type != "downtime" && ev.StateType == "HARD" {
+				hasHardEvent = true
+				firstHard = ev
+				break
+			}
+		}
+
+		if tr.preState != "" {
+			tr.curState = tr.preState
+		} else if hasHardEvent {
+			// Infer pre-alert state from the first HARD transition inside the window
+			if firstHard.State == healthyState {
+				tr.curState = defaultProblemState
+				tr.probStartTS = from
+			} else {
+				tr.curState = healthyState
+			}
+		} else {
+			// No HARD alerts recorded in logs for this window: rely on live StateStore
+			if tr.liveState != healthyState && tr.hasBeenChecked == 1 && tr.lastStateChange > from && tr.lastStateChange <= to {
+				// Ongoing problem that started inside this window (e.g. log rotated or not yet flushed)
+				tr.curState = healthyState
+				addDuration(tr, tr.lastStateChange)
+				tr.incidents++
+				tr.probStartTS = tr.lastStateChange
+				recordBucketInc(tr.lastStateChange)
+				tr.curState = tr.liveState
+			} else {
+				tr.curState = tr.liveState
+			}
+		}
+
+		// Replay in-window events chronologically
+		for _, ev := range tr.events {
 			addDuration(tr, ev.Timestamp)
 			if ev.Type == "downtime" {
 				tr.inDowntime = ev.State == "STARTED"
 				continue
 			}
 			if ev.StateType == "HARD" {
-				wasHealthy := tr.curState == "OK"
-				isHealthy := ev.State == "OK"
+				wasHealthy := tr.curState == healthyState
+				isHealthy := ev.State == healthyState
 				if wasHealthy && !isHealthy {
 					tr.incidents++
 					tr.probStartTS = ev.Timestamp
@@ -441,18 +547,14 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 				tr.curState = ev.State
 			}
 		}
-	}
 
-	rows := make([]AvailabilityRow, 0, len(tracks))
-	var slaSum, warnSum, critSum, unkSum, dtSum, mttrTotalSum float64
-	var totalInc, mttrTotalCnt int
-	for _, tr := range tracks {
 		addDuration(tr, to)
 		okPct := round2((tr.okSec / windowSec) * 100.0)
 		warnPct := round2((tr.warnSec / windowSec) * 100.0)
 		critPct := round2((tr.critSec / windowSec) * 100.0)
 		unkPct := round2((tr.unkSec / windowSec) * 100.0)
 		dtPct := round2((tr.dtSec / windowSec) * 100.0)
+		probSec := tr.warnSec + tr.critSec + tr.unkSec
 		mttr := 0.0
 		if tr.mttrCount > 0 {
 			mttr = round2(tr.mttrSum / float64(tr.mttrCount))
@@ -464,6 +566,7 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 		critSum += critPct
 		unkSum += unkPct
 		dtSum += dtPct
+		probSecSum += probSec
 		totalInc += tr.incidents
 		rows = append(rows, AvailabilityRow{
 			Host:        tr.host,
@@ -473,6 +576,8 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 			CritPct:     critPct,
 			UnkPct:      unkPct,
 			DowntimePct: dtPct,
+			OKSec:       math.Round(tr.okSec),
+			ProblemSec:  math.Round(probSec),
 			Incidents:   tr.incidents,
 			MTTRSec:     mttr,
 		})
@@ -505,30 +610,36 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 	timeline := make([]TimelineBucket, numBuckets)
 	for i := 0; i < numBuckets; i++ {
 		ts := from + int64(i)*bucketSec
-		pct := 100.0
+		pct, wp, cp := 100.0, 0.0, 0.0
 		if bTot[i] > 0 {
 			pct = round2((bOK[i] / bTot[i]) * 100.0)
+			wp = round2((bWarn[i] / bTot[i]) * 100.0)
+			cp = round2((bCrit[i] / bTot[i]) * 100.0)
 		}
 		timeline[i] = TimelineBucket{
 			Timestamp: ts,
 			Label:     time.Unix(ts, 0).Format(labelFmt),
 			OKPct:     pct,
+			WarnPct:   wp,
+			CritPct:   cp,
 			Incidents: bInc[i],
 		}
 	}
 
 	return AvailabilitySummary{
-		From:           from,
-		To:             to,
-		Target:         target,
-		TotalObjects:   len(rows),
-		OverallSLAPct:  overallSLA,
-		WarnPct:        avgWarn,
-		CritPct:        avgCrit,
-		UnkPct:         avgUnk,
-		DowntimePct:    avgDT,
-		TotalIncidents: totalInc,
-		AvgMTTRSec:     avgMTTR,
+		From:            from,
+		To:              to,
+		Target:          target,
+		TotalObjects:    len(rows),
+		OverallSLAPct:   overallSLA,
+		WarnPct:         avgWarn,
+		CritPct:         avgCrit,
+		UnkPct:          avgUnk,
+		DowntimePct:     avgDT,
+		TotalProblemSec: math.Round(probSecSum),
+		TotalIncidents:  totalInc,
+		AvgMTTRSec:      avgMTTR,
+		LogEventsUsed:   logEventsUsed,
 	}, rows, timeline
 }
 

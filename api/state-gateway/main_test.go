@@ -465,7 +465,7 @@ func TestTemplatesBulkAndNotifications(t *testing.T) {
 		t.Fatalf("webhook test failed: %d %s", rec.Code, rec.Body.String())
 	}
 	got := <-webhookHit
-	if !bytes.Contains([]byte(got), []byte("Encore TEST")) {
+	if !bytes.Contains([]byte(got), []byte("TEST")) || !bytes.Contains([]byte(got), []byte("Notification Test")) {
 		t.Fatalf("unexpected webhook payload: %s", got)
 	}
 
@@ -643,4 +643,78 @@ define service {
 		t.Fatalf("unexpected SSE event payload: %s", string(msg))
 	}
 	broker.Unsubscribe(sub)
+}
+
+func TestSLAAccuracyWebhookAndSecurityHardening(t *testing.T) {
+	// 1. SLA Accuracy: service currently CRITICAL for the last 5 minutes of a 24h window
+	// MUST report ~99.65% OK and 1 HARD incident (not 0% OK / 0 incidents!)
+	dir := t.TempDir()
+	logPath := dir + "/nagios.log"
+	from := int64(1700000000)
+	to := from + 86400
+	critAt := to - 300 // 5 min before end of window
+	sampleLog := "[1700086100] SERVICE ALERT: web-01;HTTP;CRITICAL;HARD;3;Connection refused\n"
+	if err := os.WriteFile(logPath, []byte(sampleLog), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	store := NewStateStore()
+	store.ReplaceSnapshot(
+		ProgramInfo{PID: 1},
+		[]HostState{{Name: "web-01", CurrentState: 0, HasBeenChecked: 1}},
+		[]ServiceState{{HostName: "web-01", Description: "HTTP", CurrentState: 2, StateType: 1, HasBeenChecked: 1, LastStateChange: critAt}},
+	)
+	sum, rows, _ := computeAvailability(store, logPath, "", from, to, "services", "", "", "")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].Incidents != 1 || rows[0].OKPct < 99.6 || rows[0].OKPct > 99.7 || rows[0].ProblemSec != 300 {
+		t.Fatalf("inaccurate SLA calculation: got row=%+v sum=%+v", rows[0], sum)
+	}
+
+	// 2. Telegram/Webhook Emoji Formatting & WebhookURL Masking
+	evCrit := AlertEvent{Kind: "service", Host: "db-01", Service: "MySQL", State: "CRITICAL", PrevState: "OK", Output: "Conn refused"}
+	evOk := AlertEvent{Kind: "service", Host: "db-01", Service: "MySQL", State: "OK", PrevState: "CRITICAL", Output: "OK"}
+	if tg := formatWebhookText(evCrit, "https://encore.local", true); !bytes.Contains([]byte(tg), []byte("🚨")) || !bytes.Contains([]byte(tg), []byte("<b>CRITICAL</b>")) {
+		t.Fatalf("unexpected Telegram CRITICAL format: %s", tg)
+	}
+	if tg := formatWebhookText(evOk, "", true); !bytes.Contains([]byte(tg), []byte("✅")) || !bytes.Contains([]byte(tg), []byte("<b>RESOLVED</b>")) {
+		t.Fatalf("unexpected Telegram RESOLVED format: %s", tg)
+	}
+	cs, _ := NewConfigStore(dir, "", "", "")
+	ntf := NewNotifier(dir, cs)
+	secretURL := "https://api.telegram.org/bot123456:SECRET_TOKEN_XYZ/sendMessage"
+	if err := ntf.UpdateConfig(NotifyConfig{WebhookEnabled: true, WebhookType: "telegram", WebhookURL: secretURL}); err != nil {
+		t.Fatalf("UpdateConfig: %v", err)
+	}
+	masked := ntf.ConfigMasked()
+	if bytes.Contains([]byte(masked.WebhookURL), []byte("SECRET_TOKEN_XYZ")) {
+		t.Fatalf("WebhookURL token leaked in ConfigMasked: %s", masked.WebhookURL)
+	}
+	// Saving masked value back must preserve original secret URL
+	if err := ntf.UpdateConfig(masked); err != nil {
+		t.Fatalf("UpdateConfig masked: %v", err)
+	}
+	if ntf.cfg.WebhookURL != secretURL {
+		t.Fatalf("masked WebhookURL overwrote original secret")
+	}
+
+	// 3. Security Hardening: Operator command allowlist + X-Forwarded-For spoofing defense
+	if !isOperatorAllowedCommand("SCHEDULE_FORCED_SVC_CHECK;web-01;HTTP;1700000000") {
+		t.Fatalf("expected SCHEDULE_FORCED_SVC_CHECK to be allowed for operator")
+	}
+	if isOperatorAllowedCommand("SHUTDOWN_PROGRAM") || isOperatorAllowedCommand("RESTART_PROGRAM") || isOperatorAllowedCommand("DISABLE_NOTIFICATIONS") {
+		t.Fatalf("admin-only engine commands must be blocked for operator")
+	}
+	spoofReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	spoofReq.RemoteAddr = "203.0.113.55:44321"
+	spoofReq.Header.Set("X-Forwarded-For", "1.2.3.4")
+	if got := clientIP(spoofReq); got != "203.0.113.55" {
+		t.Fatalf("expected clientIP to ignore spoofed XFF from non-loopback, got %q", got)
+	}
+	proxyReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	proxyReq.RemoteAddr = "127.0.0.1:51234"
+	proxyReq.Header.Set("X-Forwarded-For", "198.51.100.7")
+	if got := clientIP(proxyReq); got != "198.51.100.7" {
+		t.Fatalf("expected clientIP to trust XFF from loopback proxy, got %q", got)
+	}
 }
