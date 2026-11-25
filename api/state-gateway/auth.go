@@ -395,7 +395,9 @@ func requiredRoleForRoute(method, path string) string {
 	if strings.HasPrefix(path, "/api/v1/users") ||
 		strings.HasPrefix(path, "/api/v1/secrets") ||
 		strings.HasPrefix(path, "/api/v1/notifications") ||
-		strings.HasPrefix(path, "/api/v1/scripts") {
+		strings.HasPrefix(path, "/api/v1/scripts") ||
+		strings.HasPrefix(path, "/api/v1/discovery") ||
+		strings.HasPrefix(path, "/api/v1/reports/digest") {
 		return RoleAdmin
 	}
 	if strings.HasPrefix(path, "/api/v1/config") {

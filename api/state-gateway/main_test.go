@@ -615,4 +615,32 @@ define service {
 	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("Sunday Maint")) {
 		t.Fatalf("recurring downtime create failed: %d %s", rec.Code, rec.Body.String())
 	}
+
+	// 7. Encore v8: Scheduled Digest config + Guardrailed Discovery validation + SSE EventBroker publish
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/reports/digest", bytes.NewBufferString(`{"enabled":true,"frequency":"weekly","day_of_week":1,"send_time":"08:00","window_days":7,"send_email":true}`))
+	req.AddCookie(adminCookie)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"window_days":7`)) {
+		t.Fatalf("digest config save failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Discovery rejects oversized /16 subnet guardrail
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/discovery/scan", bytes.NewBufferString(`{"target":"10.0.0.0/16"}`))
+	req.AddCookie(adminCookie)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on oversized /16 scan, got %d", rec.Code)
+	}
+
+	// SSE EventBroker fan-out delivers published event
+	broker := NewEventBroker()
+	sub := broker.Subscribe()
+	broker.Publish(SSEEvent{Kind: "service", Host: "web-01", Service: "SSL", State: 1, StateType: 1})
+	msg := <-sub
+	if !bytes.Contains(msg, []byte(`"SSL"`)) {
+		t.Fatalf("unexpected SSE event payload: %s", string(msg))
+	}
+	broker.Unsubscribe(sub)
 }

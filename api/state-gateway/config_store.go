@@ -1555,10 +1555,10 @@ func (cs *ConfigStore) ValidateAndApply(apply bool) (string, error) {
 		valOut = string(outBytes)
 		if err != nil {
 			restorePrev()
-			return valOut, fmt.Errorf("nagios pre-flight validation failed: %w", err)
+			return valOut, fmt.Errorf("encore engine pre-flight validation failed: %w", err)
 		}
 	} else {
-		valOut = "Validation skipped (nagios-bin/nagios-cfg not configured)"
+		valOut = "Validation skipped (encore-bin/encore-cfg not configured)"
 	}
 
 	if !apply {

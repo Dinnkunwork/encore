@@ -169,6 +169,13 @@ type StateStore struct {
 	connected     atomic.Bool
 	notifier      *Notifier
 	metrics       *MetricsStore
+	broker        *EventBroker
+}
+
+func (s *StateStore) SetBroker(b *EventBroker) {
+	s.mu.Lock()
+	s.broker = b
+	s.mu.Unlock()
 }
 
 func (s *StateStore) SetNotifier(n *Notifier) {
@@ -244,10 +251,21 @@ func (s *StateStore) ApplyHostEvent(h HostState) {
 	s.hosts[hc.Name] = &hc
 	notifier := s.notifier
 	ms := s.metrics
+	broker := s.broker
 	s.mu.Unlock()
 	s.eventsApplied.Add(1)
 	if ms != nil && hc.HasBeenChecked == 1 && hc.PerfData != "" {
 		ms.Record(hc.Name, "_HOST_", hc.PerfData, hc.LastCheck)
+	}
+	if broker != nil {
+		prevSt := hc.CurrentState
+		if prev != nil {
+			prevSt = prev.CurrentState
+		}
+		broker.Publish(SSEEvent{
+			Kind: "host", Host: hc.Name, State: hc.CurrentState, PrevState: prevSt,
+			StateType: hc.StateType, Output: hc.PluginOutput, TS: time.Now().Unix(),
+		})
 	}
 	if notifier != nil && prev != nil {
 		notifier.OnHostTransition(prev, hc)
@@ -262,10 +280,21 @@ func (s *StateStore) ApplyServiceEvent(sv ServiceState) {
 	s.services[k] = &sc
 	notifier := s.notifier
 	ms := s.metrics
+	broker := s.broker
 	s.mu.Unlock()
 	s.eventsApplied.Add(1)
 	if ms != nil && sc.HasBeenChecked == 1 && sc.PerfData != "" {
 		ms.Record(sc.HostName, sc.Description, sc.PerfData, sc.LastCheck)
+	}
+	if broker != nil {
+		prevSt := sc.CurrentState
+		if prev != nil {
+			prevSt = prev.CurrentState
+		}
+		broker.Publish(SSEEvent{
+			Kind: "service", Host: sc.HostName, Service: sc.Description, State: sc.CurrentState, PrevState: prevSt,
+			StateType: sc.StateType, Output: sc.PluginOutput, TS: time.Now().Unix(),
+		})
 	}
 	if notifier != nil && prev != nil {
 		notifier.OnServiceTransition(prev, sc)
@@ -897,7 +926,8 @@ func (g *gzipResponseWriter) Write(b []byte) (int, error) {
 
 func gzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		// Never buffer SSE streaming responses
+		if r.URL.Path == "/api/v1/stream" || !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -909,6 +939,16 @@ func gzipMiddleware(next http.Handler) http.Handler {
 			}
 		}()
 		next.ServeHTTP(gw, r)
+	})
+}
+
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -1251,6 +1291,7 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 	store.mu.RLock()
 	notifier := store.notifier
 	ms := store.metrics
+	broker := store.broker
 	store.mu.RUnlock()
 	if notifier == nil {
 		notifier = NewNotifier(cs.managedDir, cs)
@@ -1260,8 +1301,16 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 		ms = NewMetricsStore(cs.managedDir)
 		store.SetMetrics(ms)
 	}
+	if broker == nil {
+		broker = NewEventBroker()
+		store.SetBroker(broker)
+	}
 	registerNotifyRoutes(mux, notifier)
 	registerMetricsRoutes(mux, ms)
+	registerSSERoutes(mux, broker)
+	dm := NewDigestManager(cs.managedDir, nagiosLogPath, archivesDir, store, notifier, cs)
+	registerDigestRoutes(mux, dm)
+	registerDiscoveryRoutes(mux, cs)
 	rs := NewRecurringStore(cs.managedDir, cmdPipePath, store, cs)
 	registerRecurringRoutes(mux, rs)
 	return mux
@@ -1289,21 +1338,44 @@ func runPeriodicResync(ctx context.Context, sockPath string, store *StateStore, 
 }
 
 func main() {
-	listenAddr := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
-	qhPath := flag.String("qh", "/usr/local/nagios/var/rw/nagios.qh", "Path to Nagios Query Handler Unix socket")
-	cmdPath := flag.String("cmd", "", "Optional path to Nagios external command file (nagios.cmd)")
-	managedDir := flag.String("managed-dir", "", "Optional managed Nagios config directory (e.g. /usr/local/nagios/etc/encore.d)")
-	nagiosBin := flag.String("nagios-bin", "/usr/local/nagios/bin/nagios", "Path to nagios binary for pre-flight validation (-v)")
-	nagiosCfg := flag.String("nagios-cfg", "/usr/local/nagios/etc/nagios.cfg", "Path to nagios.cfg for pre-flight validation")
+	listenAddr := flag.String("listen", "127.0.0.1:8080", "HTTP/HTTPS listen address")
+	qhPath := flag.String("qh", "/usr/local/nagios/var/rw/nagios.qh", "Path to Encore Engine Query Handler Unix socket")
+	encoreQH := flag.String("encore-qh", "", "Alias for -qh")
+	cmdPath := flag.String("cmd", "", "Optional path to Encore external command pipe")
+	encoreCmd := flag.String("encore-cmd", "", "Alias for -cmd")
+	managedDir := flag.String("managed-dir", "", "Optional managed Encore config directory (e.g. /usr/local/nagios/etc/encore.d)")
+	nagiosBin := flag.String("nagios-bin", "/usr/local/nagios/bin/nagios", "Path to Encore Engine binary for pre-flight validation (-v)")
+	encoreBin := flag.String("encore-bin", "", "Alias for -nagios-bin")
+	nagiosCfg := flag.String("nagios-cfg", "/usr/local/nagios/etc/nagios.cfg", "Path to main Encore Engine config for validation")
+	encoreCfg := flag.String("encore-cfg", "", "Alias for -nagios-cfg")
 	localhostCfg := flag.String("localhost-cfg", "/usr/local/nagios/etc/objects/localhost.cfg", "Path to localhost.cfg for dashboard management/adoption")
 	commandsCfg := flag.String("commands-cfg", "/usr/local/nagios/etc/objects/commands.cfg", "Path to built-in commands.cfg for live command catalog")
 	resourceCfg := flag.String("resource-cfg", "/usr/local/nagios/etc/resource.cfg", "Path to resource.cfg for $USER1$ plugin directory discovery")
-	nagiosLog := flag.String("nagios-log", "/usr/local/nagios/var/nagios.log", "Path to active nagios.log for historical reports")
-	archivesDir := flag.String("archives-dir", "/usr/local/nagios/var/archives", "Path to archived nagios-*.log directory")
-	authUser := flag.String("auth-user", "", "Optional HTTP Basic Auth username")
-	authPass := flag.String("auth-pass", "", "Optional HTTP Basic Auth password")
+	nagiosLog := flag.String("nagios-log", "/usr/local/nagios/var/nagios.log", "Path to active Encore Engine log for historical reports")
+	encoreLog := flag.String("encore-log", "", "Alias for -nagios-log")
+	archivesDir := flag.String("archives-dir", "/usr/local/nagios/var/archives", "Path to archived Encore Engine log directory")
+	authUser := flag.String("auth-user", "", "Optional seed admin username for RBAC login")
+	authPass := flag.String("auth-pass", "", "Optional seed admin password for RBAC login")
+	tlsCert := flag.String("tls-cert", "", "Optional TLS certificate PEM file for native HTTPS")
+	tlsKey := flag.String("tls-key", "", "Optional TLS private key PEM file for native HTTPS")
 	resyncInterval := flag.Duration("resync-interval", 5*time.Minute, "Periodic full snapshot resync interval (0 to disable)")
 	flag.Parse()
+
+	if *encoreQH != "" {
+		*qhPath = *encoreQH
+	}
+	if *encoreCmd != "" {
+		*cmdPath = *encoreCmd
+	}
+	if *encoreBin != "" {
+		*nagiosBin = *encoreBin
+	}
+	if *encoreCfg != "" {
+		*nagiosCfg = *encoreCfg
+	}
+	if *encoreLog != "" {
+		*nagiosLog = *encoreLog
+	}
 
 	cfgStore, err := NewConfigStore(*managedDir, *nagiosBin, *nagiosCfg, *cmdPath)
 	if err != nil {
@@ -1313,10 +1385,13 @@ func main() {
 	store := NewStateStore()
 	ms := NewMetricsStore(*managedDir)
 	store.SetMetrics(ms)
+	broker := NewEventBroker()
+	store.SetBroker(broker)
 	notifier := NewNotifier(*managedDir, cfgStore)
 	store.SetNotifier(notifier)
 	am := NewAuthManager(*managedDir, *authUser, *authPass, cfgStore)
 	rs := NewRecurringStore(*managedDir, *cmdPath, store, cfgStore)
+	dm := NewDigestManager(*managedDir, *nagiosLog, *archivesDir, store, notifier, cfgStore)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -1324,6 +1399,7 @@ func main() {
 	go runNERDLoop(ctx, *qhPath, store)
 	go runPeriodicResync(ctx, *qhPath, store, *resyncInterval)
 	go rs.RunLoop(ctx)
+	go dm.RunLoop(ctx)
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
@@ -1341,12 +1417,11 @@ func main() {
 	mux := http.NewServeMux()
 	registerAuthRoutes(mux, am)
 	baseHandler := newHTTPHandler(store, *qhPath, *cmdPath, *localhostCfg, *commandsCfg, *resourceCfg, *nagiosCfg, *nagiosLog, *archivesDir, cfgStore)
-	// Mount all non-auth routes on mux via fallback
 	mux.Handle("/", baseHandler)
 
 	srv := &http.Server{
 		Addr:              *listenAddr,
-		Handler:           gzipMiddleware(am.Middleware(mux)),
+		Handler:           securityHeadersMiddleware(gzipMiddleware(am.Middleware(mux))),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -1357,7 +1432,14 @@ func main() {
 		_ = srv.Shutdown(shutCtx)
 	}()
 
-	log.Printf("[gateway] listening on %s (qh=%s, managed-dir=%s)", *listenAddr, *qhPath, *managedDir)
+	if *tlsCert != "" && *tlsKey != "" {
+		log.Printf("[gateway] listening on https://%s (qh=%s, managed-dir=%s)", *listenAddr, *qhPath, *managedDir)
+		if err := srv.ListenAndServeTLS(*tlsCert, *tlsKey); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("[gateway] TLS server error: %v", err)
+		}
+		return
+	}
+	log.Printf("[gateway] listening on http://%s (qh=%s, managed-dir=%s)", *listenAddr, *qhPath, *managedDir)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("[gateway] server error: %v", err)
 	}
