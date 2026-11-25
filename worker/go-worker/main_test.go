@@ -125,4 +125,16 @@ func TestCheckHTTPStrictTLS(t *testing.T) {
 	if resInsecure.ExitCode != 0 {
 		t.Fatalf("expected OK with -k, got %d (%s)", resInsecure.ExitCode, resInsecure.Stdout)
 	}
+
+	// SSL Certificate expiry check (-C warn,crit)
+	resCertOK := w.ExecuteCommand(context.Background(), "/usr/lib/nagios/plugins/check_http -H "+host+" -p "+port+" -S -k -C 30,14")
+	if resCertOK.ExitCode != 0 || !strings.Contains(resCertOK.Stdout, "SSL OK") || !strings.Contains(resCertOK.Stdout, "cert_days=") {
+		t.Fatalf("expected SSL OK with cert_days perfdata, got %d (%s)", resCertOK.ExitCode, resCertOK.Stdout)
+	}
+
+	// Huge threshold forces CRITICAL on httptest cert (~10 years) -> 50000 days triggers CRIT
+	resCertCrit := w.ExecuteCommand(context.Background(), "/usr/lib/nagios/plugins/check_http -H "+host+" -p "+port+" -S -k -C 60000,50000")
+	if resCertCrit.ExitCode != 2 || !strings.Contains(resCertCrit.Stdout, "SSL CRITICAL") {
+		t.Fatalf("expected SSL CRITICAL when daysLeft <= crit, got %d (%s)", resCertCrit.ExitCode, resCertCrit.Stdout)
+	}
 }

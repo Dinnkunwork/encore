@@ -269,6 +269,8 @@ func (w *Worker) runCheckHTTP(ctx context.Context, args []string) (CheckResult, 
 	var port int
 	useSSL := false
 	insecure := false
+	certCheck := false
+	var certWarnDays, certCritDays float64
 	var warnSec, critSec float64
 	timeoutSec := 10.0
 	expectCode := 0
@@ -307,6 +309,24 @@ func (w *Worker) runCheckHTTP(ctx context.Context, args []string) (CheckResult, 
 			useSSL = true
 		case "-k", "--insecure":
 			insecure = true
+		case "-C", "--certificate":
+			if i+1 >= len(args) {
+				return CheckResult{}, false
+			}
+			i++
+			parts := strings.Split(args[i], ",")
+			wDays, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+			if err != nil {
+				return CheckResult{}, false
+			}
+			certCheck = true
+			useSSL = true
+			certWarnDays = wDays
+			if len(parts) > 1 {
+				if cDays, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil {
+					certCritDays = cDays
+				}
+			}
 		case "-s":
 			if i+1 >= len(args) {
 				return CheckResult{}, false
@@ -400,6 +420,44 @@ func (w *Worker) runCheckHTTP(ctx context.Context, args []string) (CheckResult, 
 		return CheckResult{ExitCode: 2, Stdout: fmt.Sprintf("HTTP CRITICAL - %v\n", err)}, true
 	}
 	defer resp.Body.Close()
+	if certCheck {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		if resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {
+			return CheckResult{ExitCode: 2, Stdout: "SSL CRITICAL - No TLS certificate presented by server\n"}, true
+		}
+		cert := resp.TLS.PeerCertificates[0]
+		daysLeft := time.Until(cert.NotAfter).Hours() / 24.0
+		cn := cert.Subject.CommonName
+		if cn == "" && len(cert.DNSNames) > 0 {
+			cn = cert.DNSNames[0]
+		}
+		if cn == "" {
+			cn = target
+		}
+		state := 0
+		label := "SSL OK"
+		if daysLeft <= 0 {
+			state = 2
+			label = "SSL CRITICAL"
+			return CheckResult{
+				ExitCode: state,
+				Stdout: fmt.Sprintf("%s - Certificate '%s' EXPIRED on %s (%.1f days ago) | cert_days=%.1f;%.0f;%.0f;0\n",
+					label, cn, cert.NotAfter.Format("2006-01-02"), -daysLeft, daysLeft, certWarnDays, certCritDays),
+			}, true
+		}
+		if certCritDays > 0 && daysLeft <= certCritDays {
+			state = 2
+			label = "SSL CRITICAL"
+		} else if certWarnDays > 0 && daysLeft <= certWarnDays {
+			state = 1
+			label = "SSL WARNING"
+		}
+		return CheckResult{
+			ExitCode: state,
+			Stdout: fmt.Sprintf("%s - Certificate '%s' valid for %.1f days (expires %s) | cert_days=%.1f;%.0f;%.0f;0\n",
+				label, cn, daysLeft, cert.NotAfter.Format("2006-01-02"), daysLeft, certWarnDays, certCritDays),
+		}, true
+	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 
 	state := 0
