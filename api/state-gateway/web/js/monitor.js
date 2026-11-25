@@ -132,33 +132,41 @@ function renderOverviewFleetMap(hosts) {
   }
 
   if (S.ovMapMode === 'topo') {
-    const list = hosts.slice(0, 14);
-    const w = 560, h = Math.max(210, 44 + Math.ceil(list.length / 2) * 38);
-    const cx = 86, cy = h / 2;
+    const list = hosts.slice(0, 16);
+    const w = 560, h = 290, cx = 280, cy = 145;
+    const rx = 205, ry = 104;
+    const okHosts = hosts.filter(ho => ho.has_been_checked && ho.current_state === 0 && ho.svc_crit === 0).length;
+    const healthPct = hosts.length ? Math.round((okHosts / hosts.length) * 100) : 100;
+
     const nodes = list.map((ho, i) => {
-      const col = i % 2 === 0 ? 0 : 1;
-      const row = Math.floor(i / 2);
-      const nx = col === 0 ? 255 : 420;
-      const ny = 30 + row * 38;
+      const ang = -Math.PI / 2 + (i / Math.max(1, list.length)) * Math.PI * 2;
+      const nx = cx + Math.cos(ang) * rx;
+      const ny = cy + Math.sin(ang) * ry;
       const stTxt = !ho.has_been_checked ? 'PEND' : (ho.current_state === 1 ? 'DOWN' : (ho.svc_crit > 0 ? `${ho.svc_crit}C` : (ho.svc_warn > 0 ? `${ho.svc_warn}W` : 'OK')));
       const stroke = !ho.has_been_checked ? 'var(--muted)' : (ho.current_state === 1 || ho.svc_crit > 0 ? 'var(--crit)' : (ho.current_state === 2 || ho.svc_warn > 0 ? 'var(--warn)' : 'var(--ok)'));
-      const lineCol = ho.current_state === 1 ? 'var(--crit)' : 'var(--border)';
+      const lineCol = ho.current_state === 1 || ho.svc_crit > 0 ? 'var(--crit)' : 'var(--border-strong)';
+      const shortName = ho.name.length > 10 ? ho.name.slice(0, 9) + '…' : ho.name;
       return `
-        <path d="M ${cx+38} ${cy} C ${cx+95} ${cy}, ${nx-60} ${ny}, ${nx-62} ${ny}" fill="none" stroke="${lineCol}" stroke-width="1.6"/>
+        <line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="${lineCol}" stroke-width="${ho.current_state===1||ho.svc_crit>0?'1.6':'1'}" stroke-dasharray="${ho.current_state===1?'4 2':''}" opacity="0.75"/>
         <g style="cursor:pointer" role="button" tabindex="0" aria-label="${esc(ho.name)} (${stTxt})" onclick="focusHostFromMap('${jsEsc(ho.name)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();focusHostFromMap('${jsEsc(ho.name)}');}">
           <title>${esc(ho.name)} (${esc(ho.address)}) — ${ho.svc_ok}/${ho.svc_total} OK, ${ho.svc_warn} WARN, ${ho.svc_crit} CRIT</title>
-          <rect x="${nx-62}" y="${ny-14}" width="136" height="28" rx="7" fill="var(--surface)" stroke="${stroke}" stroke-width="1.6"/>
-          <circle cx="${nx-50}" cy="${ny}" r="4" fill="${stroke}"/>
-          <text x="${nx-40}" y="${ny+4}" fill="var(--text)" font-size="11" font-weight="600">${esc(ho.name.length > 12 ? ho.name.slice(0,11)+'…' : ho.name)}</text>
-          <text x="${nx+66}" y="${ny+4}" text-anchor="end" fill="${stroke}" font-size="10" font-weight="700">${stTxt}</text>
+          <rect x="${(nx-52).toFixed(1)}" y="${(ny-12).toFixed(1)}" width="104" height="24" rx="2" fill="var(--surface)" stroke="${stroke}" stroke-width="1.4"/>
+          <rect x="${(nx-46).toFixed(1)}" y="${(ny-3).toFixed(1)}" width="6" height="6" rx="1" fill="${stroke}"/>
+          <text x="${(nx-36).toFixed(1)}" y="${(ny+3.5).toFixed(1)}" fill="var(--text)" font-family="var(--font-mono)" font-size="9.5" font-weight="600">${esc(shortName)}</text>
+          <text x="${(nx+47).toFixed(1)}" y="${(ny+3.5).toFixed(1)}" text-anchor="end" fill="${stroke}" font-family="var(--font-mono)" font-size="9" font-weight="700">${stTxt}</text>
         </g>`;
     }).join('');
-    el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block" role="img" aria-label="Fleet topology diagram">
-      <rect x="${cx-44}" y="${cy-26}" width="84" height="52" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.8"/>
-      <text x="${cx-2}" y="${cy-2}" text-anchor="middle" fill="var(--accent)" font-size="12" font-weight="700">ENCORE</text>
-      <text x="${cx-2}" y="${cy+12}" text-anchor="middle" fill="var(--muted)" font-size="9.5">${hosts.length} hosts</text>
+
+    el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block" role="img" aria-label="Swiss radial fleet topology">
+      <line x1="24" y1="${cy}" x2="${w-24}" y2="${cy}" stroke="var(--border)" stroke-width="0.8" stroke-dasharray="3 4"/>
+      <line x1="${cx}" y1="12" x2="${cx}" y2="${h-12}" stroke="var(--border)" stroke-width="0.8" stroke-dasharray="3 4"/>
+      <ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="none" stroke="var(--border)" stroke-width="1" stroke-dasharray="4 4"/>
+      <ellipse cx="${cx}" cy="${cy}" rx="${Math.round(rx*0.56)}" ry="${Math.round(ry*0.56)}" fill="none" stroke="var(--border)" stroke-width="0.8"/>
       ${nodes}
-    </svg>${hosts.length > 14 ? `<div class="name-sub" style="text-align:right;margin-top:6px">Showing 14 of ${hosts.length} hosts — switch to Health Grid or Inventory for full list</div>` : ''}`;
+      <circle cx="${cx}" cy="${cy}" r="34" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+      <text x="${cx}" y="${cy-4}" text-anchor="middle" fill="var(--text)" font-family="var(--font-mono)" font-size="11" font-weight="800" letter-spacing="0.06em">ENCORE</text>
+      <text x="${cx}" y="${cy+10}" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)" font-size="9.5">${healthPct}% · ${hosts.length}H</text>
+    </svg>${hosts.length > 16 ? `<div class="name-sub" style="text-align:right;margin-top:6px">Showing 16 of ${hosts.length} hosts — switch to Health Grid or Inventory for full list</div>` : ''}`;
     return;
   }
 
@@ -226,10 +234,10 @@ async function renderOverviewMiniCharts(sum) {
   // Update 4th KPI Card (24h Service SLA)
   const slaVal = document.getElementById('ov-sla-val');
   const slaSub = document.getElementById('ov-sla-sub');
-  const slaIcon = document.getElementById('kpi-sla-icon');
+  const slaLed = document.getElementById('kpi-sla-led');
   if (slaVal) slaVal.textContent = sla24.toFixed(2) + '%';
   if (slaSub) slaSub.textContent = `${inc24} HARD inc` + (prob24 > 0 ? ` · ${fmtDurationSec(prob24)} down` : ' · No downtime');
-  if (slaIcon) slaIcon.src = sla24 >= 99.5 ? '/assets/status/status-ok.svg' : (sla24 >= 95 ? '/assets/status/status-warn.svg' : '/assets/status/status-critical.svg');
+  if (slaLed) slaLed.className = 'kpi-led ' + (sla24 >= 99.5 ? '' : (sla24 >= 95 ? 'warn' : 'crit'));
 
   let sparkHTML = '';
   if (tl.length) {
@@ -269,17 +277,20 @@ async function loadOverview() {
   document.getElementById('ov-h-up').textContent = sum.hosts.up + ' UP';
   document.getElementById('ov-h-down').textContent = sum.hosts.down + ' DOWN';
   document.getElementById('ov-h-tot').textContent = sum.hosts.total + ' total';
-  document.getElementById('kpi-h-icon').src = sum.hosts.down > 0 ? '/assets/status/status-critical.svg' : '/assets/status/status-ok.svg';
+  const hLed = document.getElementById('kpi-h-led');
+  if (hLed) hLed.className = 'kpi-led ' + (sum.hosts.down > 0 ? 'crit' : '');
 
   document.getElementById('ov-s-pct').textContent = sPct + '%';
   document.getElementById('ov-s-ok').textContent = sum.services.ok + ' OK';
   document.getElementById('ov-s-warn').textContent = sum.services.warning + ' WARN';
   document.getElementById('ov-s-crit').textContent = sum.services.critical + ' CRIT';
-  document.getElementById('kpi-s-icon').src = sum.services.critical > 0 ? '/assets/status/status-critical.svg' : (sum.services.warning > 0 ? '/assets/status/status-warn.svg' : '/assets/status/status-ok.svg');
+  const sLed = document.getElementById('kpi-s-led');
+  if (sLed) sLed.className = 'kpi-led ' + (sum.services.critical > 0 ? 'crit' : (sum.services.warning > 0 ? 'warn' : ''));
 
   document.getElementById('ov-unhandled').textContent = unhand;
   document.getElementById('ov-u-sub').textContent = unhand > 0 ? `${sum.hosts.unhandled} hosts · ${sum.services.unhandled} services` : 'All clear';
-  document.getElementById('kpi-u-icon').src = unhand > 0 ? '/assets/status/status-critical.svg' : '/assets/status/status-ok.svg';
+  const uLed = document.getElementById('kpi-u-led');
+  if (uLed) uLed.className = 'kpi-led ' + (unhand > 0 ? 'crit' : '');
   document.getElementById('kpi-unhandled-card')?.classList.toggle('is-alert', unhand > 0);
 
   // Incident-First Ordering: promote Unhandled Problems above Fleet Map whenever unhandled > 0

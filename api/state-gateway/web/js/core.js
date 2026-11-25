@@ -178,6 +178,65 @@ async function initAuthAndBoot() {
   setAutoInterval();
   connectSSE();
   updateAlertSoundBtn();
+  initTelemetryRibbon();
+}
+
+/* ==========================================================================
+   LIVE SSE OSCILLOSCOPE RIBBON (60fps Canvas Pulse + Live Event Ticker + Clock)
+   ========================================================================== */
+const _waveBuf = new Array(58).fill(0);
+let _waveAccent = '#0e835a';
+function pushTelemetryPulse(state, text) {
+  const amp = state >= 2 ? 1.0 : (state === 1 ? 0.72 : 0.45);
+  _waveBuf.push(amp, -amp * 0.55);
+  while (_waveBuf.length > 58) _waveBuf.shift();
+  const cs = getComputedStyle(document.documentElement);
+  _waveAccent = state >= 2 ? cs.getPropertyValue('--crit').trim() : (state === 1 ? cs.getPropertyValue('--warn').trim() : cs.getPropertyValue('--ok').trim());
+  const ticker = document.getElementById('tr-ticker');
+  if (ticker && text) {
+    const t = new Date().toLocaleTimeString([], { hour12: false });
+    ticker.innerHTML = `<span class="tr-tag">${esc(t)}</span>${esc(text)}`;
+  }
+}
+function initTelemetryRibbon() {
+  const clockEl = document.getElementById('tr-clock');
+  const tickClock = () => { if (clockEl) clockEl.textContent = new Date().toLocaleTimeString([], { hour12: false }); };
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  const canvas = document.getElementById('sse-wave-canvas');
+  if (!canvas || !canvas.getContext) return;
+  const ctx = canvas.getContext('2d');
+  let frame = 0;
+  function draw() {
+    if (!document.hidden) {
+      frame++;
+      if (frame % 4 === 0) {
+        // Decay tail gently toward quiet instrument baseline
+        _waveBuf.push((Math.sin(frame * 0.08) * 0.04));
+        if (_waveBuf.length > 58) _waveBuf.shift();
+      }
+      const w = canvas.width, h = canvas.height, mid = h / 2;
+      ctx.clearRect(0, 0, w, h);
+      const borderCol = getComputedStyle(document.documentElement).getPropertyValue('--border-strong').trim() || '#b8b3a6';
+      ctx.strokeStyle = borderCol;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid); ctx.stroke();
+
+      ctx.strokeStyle = _waveAccent || '#0e835a';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const step = w / (_waveBuf.length - 1);
+      for (let i = 0; i < _waveBuf.length; i++) {
+        const x = i * step;
+        const y = mid - _waveBuf[i] * (mid - 4);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
 }
 
 /* Real-time SSE Push Client + Optional Web Audio Chime & Desktop Notification */
@@ -198,10 +257,12 @@ function connectSSE() {
   es.addEventListener('state', e => {
     try {
       const ev = JSON.parse(e.data);
+      const target = ev.service ? `${ev.host} / ${ev.service}` : ev.host;
+      const stLabels = ev.service ? ['OK','WARN','CRIT','UNK'] : ['UP','DOWN','UNREACH','UNK'];
+      pushTelemetryPulse(ev.state, `${target} → ${stLabels[ev.state] || ev.state}${ev.output ? ' · ' + ev.output.slice(0, 68) : ''}`);
       if (S.alertSound && ev.state_type === 1 && ev.state > 0 && ev.prev_state !== ev.state) {
         playAlertChime();
         if ('Notification' in window && Notification.permission === 'granted') {
-          const target = ev.service ? `${ev.host} / ${ev.service}` : ev.host;
           new Notification(`Encore Alert: ${target}`, { body: ev.output || 'State changed to problem' });
         }
       }
@@ -495,57 +556,65 @@ const VIEW_TITLES = {
 };
 
 function setView(v, sub, fromHash) {
-  if (S.view === 'inventory' || S.view === 'problems') saveMonitorFilterState(S.view);
-  S.view = v;
-  S.offset = 0;
-  S.selectedMon.clear();
-  closeMobileSidebar();
-  closeDisplayMenu();
-  document.getElementById('page-title').textContent = VIEW_TITLES[v] || v;
-  document.querySelectorAll('.nav-item').forEach(el => {
-    const isAct = el.id === 'nav-' + v;
-    el.classList.toggle('active', isAct);
-    if (isAct) el.setAttribute('aria-current', 'page');
-    else el.removeAttribute('aria-current');
-  });
+  const apply = () => {
+    if (S.view === 'inventory' || S.view === 'problems') saveMonitorFilterState(S.view);
+    S.view = v;
+    S.offset = 0;
+    S.selectedMon.clear();
+    closeMobileSidebar();
+    closeDisplayMenu();
+    document.getElementById('page-title').textContent = VIEW_TITLES[v] || v;
+    document.querySelectorAll('.nav-item').forEach(el => {
+      const isAct = el.id === 'nav-' + v;
+      el.classList.toggle('active', isAct);
+      if (isAct) el.setAttribute('aria-current', 'page');
+      else el.removeAttribute('aria-current');
+    });
 
-  ['sec-overview','sec-monitor','sec-reports','sec-manage','sec-system','sec-guide'].forEach(id => {
-    document.getElementById(id).style.display = 'none';
-  });
+    ['sec-overview','sec-monitor','sec-reports','sec-manage','sec-system','sec-guide'].forEach(id => {
+      document.getElementById(id).style.display = 'none';
+    });
 
-  if (v === 'overview') {
-    document.getElementById('sec-overview').style.display = 'block';
-    loadOverview();
-  } else if (v === 'inventory') {
-    document.getElementById('sec-monitor').style.display = 'block';
-    if (sub) S.invTab = sub;
-    restoreMonitorFilterState('inventory');
-    renderMonitorSubtabs();
-    loadMonitorView();
-  } else if (v === 'problems') {
-    document.getElementById('sec-monitor').style.display = 'block';
-    if (sub) S.probTab = sub;
-    restoreMonitorFilterState('problems');
-    renderMonitorSubtabs();
-    loadMonitorView();
-  } else if (v === 'reports') {
-    document.getElementById('sec-reports').style.display = 'block';
-    if (sub) S.repTab = sub;
-    setReportTab(S.repTab);
-  } else if (v === 'manage') {
-    document.getElementById('sec-manage').style.display = 'block';
-    if (sub) S.manageTab = sub;
-    setManageTab(S.manageTab);
-  } else if (v === 'system') {
-    document.getElementById('sec-system').style.display = 'block';
-    if (sub) S.sysTab = sub;
-    setSysTab(S.sysTab);
-  } else if (v === 'guide') {
-    document.getElementById('sec-guide').style.display = 'block';
-    if (sub) S.guideTab = sub;
-    setGuideTab(S.guideTab);
+    if (v === 'overview') {
+      document.getElementById('sec-overview').style.display = 'block';
+      loadOverview();
+    } else if (v === 'inventory') {
+      document.getElementById('sec-monitor').style.display = 'block';
+      if (sub) S.invTab = sub;
+      restoreMonitorFilterState('inventory');
+      renderMonitorSubtabs();
+      loadMonitorView();
+    } else if (v === 'problems') {
+      document.getElementById('sec-monitor').style.display = 'block';
+      if (sub) S.probTab = sub;
+      restoreMonitorFilterState('problems');
+      renderMonitorSubtabs();
+      loadMonitorView();
+    } else if (v === 'reports') {
+      document.getElementById('sec-reports').style.display = 'block';
+      if (sub) S.repTab = sub;
+      setReportTab(S.repTab);
+    } else if (v === 'manage') {
+      document.getElementById('sec-manage').style.display = 'block';
+      if (sub) S.manageTab = sub;
+      setManageTab(S.manageTab);
+    } else if (v === 'system') {
+      document.getElementById('sec-system').style.display = 'block';
+      if (sub) S.sysTab = sub;
+      setSysTab(S.sysTab);
+    } else if (v === 'guide') {
+      document.getElementById('sec-guide').style.display = 'block';
+      if (sub) S.guideTab = sub;
+      setGuideTab(S.guideTab);
+    }
+    if (!fromHash) syncHashFromState();
+  };
+
+  if (document.startViewTransition && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.startViewTransition(apply);
+  } else {
+    apply();
   }
-  if (!fromHash) syncHashFromState();
 }
 
 function toggleLiveUpdates() {

@@ -3,80 +3,132 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign In — Encore Monitoring</title>
+<title>Sign In — Encore Control Room</title>
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="stylesheet" href="/css/app.css">
 <style>
   body.login-page {
-    min-height: 100vh; display: grid; place-items: center; padding: 20px;
-    background: #0b1020 url('/assets/scenes/radar-bg-1920x1080.png') center/cover no-repeat fixed;
-    image-rendering: pixelated;
+    min-height: 100vh; display: grid; grid-template-columns: 1.1fr 1fr;
+    background: var(--bg); color: var(--text);
   }
-  .login-scrim {
-    position: fixed; inset: 0;
-    background: radial-gradient(circle at 50% 35%, rgba(11,16,32,0.45), rgba(6,10,20,0.86));
-    pointer-events: none;
+  .login-mast {
+    background: #141413; color: #f3f1ec; padding: 48px 44px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    border-right: 1px solid #2b2a27; position: relative;
   }
-  .login-card {
-    position: relative; z-index: 2; width: min(410px, 94vw);
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--border); border-radius: 16px;
-    padding: 28px 26px 24px; box-shadow: 0 24px 64px rgba(0,0,0,0.48);
-    animation: modal-pop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  .mast-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .mast-brand { display: flex; align-items: center; gap: 12px; }
+  .mast-mark {
+    width: 34px; height: 34px; border-radius: 3px; background: #d9381e; color: #ffffff;
+    display: grid; place-items: center; font-family: var(--font-mono); font-weight: 800; font-size: 15px;
   }
-  .login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
-  .login-brand h1 { font-size: 20px; font-weight: 750; letter-spacing: -0.02em; }
-  .login-brand p { font-size: 12.5px; color: var(--muted); }
+  .mast-brand strong { font-size: 16px; letter-spacing: 0.06em; text-transform: uppercase; display: block; }
+  .mast-brand span { font-family: var(--font-mono); font-size: 10.5px; color: #9c988e; letter-spacing: 0.08em; text-transform: uppercase; }
+  .mast-clock { font-family: var(--font-mono); font-size: 13px; color: #d8d5cd; font-variant-numeric: tabular-nums; }
+  .mast-body { margin: auto 0; padding: 36px 0; }
+  .mast-body h1 {
+    font-size: clamp(28px, 3.4vw, 42px); font-weight: 750; letter-spacing: -0.03em; line-height: 1.1;
+    max-width: 16ch; margin-bottom: 16px;
+  }
+  .mast-body p { font-size: 14px; color: #a8a49b; max-width: 44ch; line-height: 1.6; }
+  .mast-specs {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
+    background: #2b2a27; border: 1px solid #2b2a27; border-radius: 3px; overflow: hidden;
+  }
+  .mast-spec { background: #191917; padding: 12px 14px; }
+  .mast-spec .k { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #9c988e; }
+  .mast-spec .v { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: #faf9f5; margin-top: 3px; }
+
+  .login-pane {
+    display: grid; place-items: center; padding: 36px 24px; background: var(--bg);
+  }
+  .login-box {
+    width: min(390px, 100%); background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--radius); padding: 28px 26px 22px;
+  }
+  .login-box h2 { font-size: 18px; font-weight: 750; letter-spacing: -0.02em; margin-bottom: 4px; }
+  .login-box .sub { font-size: 12.5px; color: var(--muted); margin-bottom: 18px; }
   .login-err {
-    display: none; margin-bottom: 12px; padding: 9px 12px; border-radius: 8px;
+    display: none; margin-bottom: 12px; padding: 9px 12px; border-radius: var(--radius);
     background: var(--crit-bg); border: 1px solid var(--crit); color: var(--crit-fg); font-size: 12.5px; font-weight: 600;
   }
-  .login-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted); }
+  .login-foot {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border);
+    font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  }
+  @media (max-width: 860px) {
+    body.login-page { grid-template-columns: 1fr; }
+    .login-mast { padding: 24px 20px; border-right: none; border-bottom: 1px solid #2b2a27; }
+    .mast-body { padding: 20px 0; }
+    .mast-specs { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body class="login-page">
-  <div class="login-scrim"></div>
-  <div class="login-card">
-    <div class="login-brand">
-      <encore-icon name="logo" size="3" live></encore-icon>
-      <div>
-        <h1>Encore Console</h1>
-        <p>Sign in to continue monitoring</p>
+  <section class="login-mast" aria-label="System Overview">
+    <div class="mast-top">
+      <div class="mast-brand">
+        <span class="mast-mark">EN</span>
+        <div><strong>Encore</strong><span>Control Room</span></div>
+      </div>
+      <div class="mast-clock" id="mast-clock">--:--:--</div>
+    </div>
+    <div class="mast-body">
+      <h1>Real-time fleet telemetry, built for clarity.</h1>
+      <p>Low-latency state streaming over NERD &amp; SSE, in-process Go check workers, and host-centric incident triage in one precision console.</p>
+    </div>
+    <div class="mast-specs">
+      <div class="mast-spec"><div class="k">Transport</div><div class="v">SSE + QH</div></div>
+      <div class="mast-spec"><div class="k">Security</div><div class="v">PBKDF2 / RBAC</div></div>
+      <div class="mast-spec"><div class="k">Workers</div><div class="v">In-Process Go</div></div>
+    </div>
+  </section>
+
+  <main class="login-pane">
+    <div class="login-box">
+      <h2>Operator Sign In</h2>
+      <p class="sub">Authenticate to access Encore Monitoring &amp; Configuration.</p>
+      <div class="login-err" id="err-box" role="alert"></div>
+      <form id="login-form" onsubmit="doLogin(event)">
+        <div class="form-row">
+          <label for="u-inp">Username</label>
+          <input id="u-inp" type="text" autocomplete="username" required autofocus placeholder="admin">
+        </div>
+        <div class="form-row">
+          <label for="p-inp">Password</label>
+          <input id="p-inp" type="password" autocomplete="current-password" required placeholder="••••••••">
+        </div>
+        <button type="submit" class="btn primary" id="submit-btn" style="width:100%;padding:9px 14px;margin-top:6px">Sign In</button>
+      </form>
+      <div class="login-foot">
+        <span>HttpOnly Session</span>
+        <select id="theme-sel" onchange="setTheme(this.value)" aria-label="Select Theme" style="padding:3px 6px;font-size:11px">
+          <option value="light">Alabaster Field</option>
+          <option value="dark">Carbon Studio</option>
+          <option value="cyber">Encore Cyber</option>
+          <option value="nord">Nordic Frost</option>
+          <option value="emerald">Terminal Ops</option>
+        </select>
       </div>
     </div>
-    <div class="login-err" id="err-box"></div>
-    <form id="login-form" onsubmit="doLogin(event)">
-      <div class="form-row">
-        <label for="u-inp">Username</label>
-        <input id="u-inp" type="text" autocomplete="username" required autofocus placeholder="admin">
-      </div>
-      <div class="form-row">
-        <label for="p-inp">Password</label>
-        <input id="p-inp" type="password" autocomplete="current-password" required placeholder="••••••••">
-      </div>
-      <button type="submit" class="btn primary" id="submit-btn" style="width:100%;justify-content:center;padding:9px 14px;margin-top:6px">Sign In</button>
-    </form>
-    <div class="login-foot">
-      <span>RBAC Protected • Session Cookie</span>
-      <select id="theme-sel" onchange="setTheme(this.value)" style="padding:3px 6px;font-size:11.5px">
-        <option value="light">Crisp Light</option>
-        <option value="dark">Midnight Slate</option>
-        <option value="cyber">Encore Cyber</option>
-        <option value="nord">Nordic Frost</option>
-        <option value="emerald">Terminal Ops</option>
-      </select>
-    </div>
-  </div>
-  <script src="/js/encore-icons.js"></script>
+  </main>
+
   <script>
     function setTheme(t) {
       document.documentElement.setAttribute('data-theme', t);
       localStorage.setItem('encore-theme', t);
     }
-    const saved = localStorage.getItem('encore-theme') || 'cyber';
+    const saved = localStorage.getItem('encore-theme') || 'light';
     setTheme(saved);
     document.getElementById('theme-sel').value = saved;
+
+    function tickClock() {
+      const el = document.getElementById('mast-clock');
+      if (el) el.textContent = new Date().toLocaleTimeString([], { hour12: false });
+    }
+    tickClock();
+    setInterval(tickClock, 1000);
 
     async function doLogin(e) {
       e.preventDefault();

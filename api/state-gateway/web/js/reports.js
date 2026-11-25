@@ -429,10 +429,10 @@ async function loadReports() {
     const scopeTag = [hg, host, service].filter(Boolean).join(' / ') || 'All Scope';
     const srcNote = sum.log_events_used > 0 ? `${sum.log_events_used} log events + live state` : 'Live state (0 alert transitions in window)';
     el.innerHTML = `
-      <div class="kpi-grid" style="margin-bottom:14px">
-        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">Overall Uptime (SLA)</span><img class="kpi-icon" src="/assets/status/${sum.overall_sla_pct >= 99 ? 'status-ok.svg' : 'status-warn.svg'}"></div><div class="kpi-val">${(sum.overall_sla_pct ?? 100).toFixed(2)}%</div><div class="kpi-sub"><span>${sum.total_objects || 0} ${esc(target)} • ${esc(scopeTag)}</span></div></div>
-        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">HARD Incidents</span><img class="kpi-icon" src="/assets/icons/alert.svg"></div><div class="kpi-val">${sum.total_incidents || 0}</div><div class="kpi-sub"><span>Total problem time: <b>${fmtDurationSec(sum.total_problem_sec)}</b></span></div></div>
-        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">Avg Recovery (MTTR)</span><img class="kpi-icon" src="/assets/icons/bell.svg"></div><div class="kpi-val">${sum.avg_mttr_sec ? fmtDurationSec(sum.avg_mttr_sec) : '0s'}</div><div class="kpi-sub"><span>Source: ${esc(srcNote)}</span></div></div>
+      <div class="kpi-grid" style="margin-bottom:14px;grid-template-columns:repeat(3,minmax(0,1fr))">
+        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">01 / Overall Uptime (SLA)</span><span class="kpi-led ${sum.overall_sla_pct >= 99 ? '' : (sum.overall_sla_pct >= 95 ? 'warn' : 'crit')}"></span></div><div class="kpi-val">${(sum.overall_sla_pct ?? 100).toFixed(2)}%</div><div class="kpi-sub"><span>${sum.total_objects || 0} ${esc(target)} · ${esc(scopeTag)}</span></div></div>
+        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">02 / HARD Incidents</span><span class="kpi-led ${(sum.total_incidents||0) > 0 ? 'crit' : ''}"></span></div><div class="kpi-val">${sum.total_incidents || 0}</div><div class="kpi-sub"><span>Problem time: <b>${fmtDurationSec(sum.total_problem_sec)}</b></span></div></div>
+        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">03 / Avg Recovery (MTTR)</span><span class="kpi-led"></span></div><div class="kpi-val">${sum.avg_mttr_sec ? fmtDurationSec(sum.avg_mttr_sec) : '0s'}</div><div class="kpi-sub"><span>Source: ${esc(srcNote)}</span></div></div>
       </div>
       <div class="charts-row">
         <div class="chart-card">

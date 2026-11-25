@@ -520,7 +520,7 @@ func TestV7AuthRBACMetricsLegacyImportAndRecurring(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("Encore Console")) {
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("Operator Sign In")) {
 		t.Fatalf("expected 200 for /login, got %d", rec.Code)
 	}
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/summary", nil)

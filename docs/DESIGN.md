@@ -1,16 +1,18 @@
-# Encore Design System (`DESIGN.md`)
+# Encore Design System (`DESIGN.md`) — Swiss Control Room
 
-Panduan sistem desain permanen untuk **Encore Operations Console** (`api/state-gateway/web/`), disusun dengan standar **Operate Mode** (presisi, bebas dekorasi berlebih, kontras WCAG 2.1 AA, *incident-first*).
+Panduan sistem desain permanen untuk **Encore Control Room** (`api/state-gateway/web/`), dibangun pada dunia visual **Swiss Control Room** (Braun / Dieter Rams / Teenage Engineering Field — *Operate Mode*):
 
 ---
 
-## 1. Mode & Prinsip Visual
+## 1. Visual World & Signature Elements
 
-- **Surface Mode:** `Operate` (NOC Monitoring & Infrastructure Operations).
-- **Elevation:** Gunakan border `1px solid var(--border)` untuk panel dan kartu di bidang kerja; gunakan `var(--shadow-overlay)` **hanya** untuk elemen mengambang (drawer, modal, popover, tooltip, toast). Jangan menggabungkan border + drop-shadow lebar pada kartu statis.
-- **No Decorative Noise:** Dilarang menggunakan tile background dekoratif, maskot pixel-art di layar triage operasional, emoji OS sebagai ikon tombol, atau pseudo-element berulang (`View ›`) pada kartu KPI.
-- **Typography:** Satu keluarga sans sistem + monospace khusus data/IP/metric dengan `font-variant-numeric: tabular-nums`. Judul halaman wajib `<h1>`.
-- **Copy:** 100% **English** konsisten pada seluruh tampilan Operate (`Overview`, `Inventory`, `Problems`, `Reports`, `Manage`, `System`).
+- **Material & Palette:** Warm alabaster paper (`#F3F1EC` / `#FAF9F5`) + deep graphite ink (`#141413`) + **Signal Vermilion** (`#D9381E`, 5.02:1 WCAG AA) di tema default *Alabaster Field*, serta matte carbon (`#0D0E10`) + `#FF5733` di *Carbon Studio*.
+- **Architectural Hairline Grid (`--radius: 4px`):** Mengganti kartu melayang SaaS generik dengan papan instrumen terbagi garis `1px` presisi (`--border-strong`), termasuk **Chronograph KPI Strip** 4-kolom terpadu dengan LED annunciator.
+- **Live SSE Oscilloscope Ribbon (`#telemetry-ribbon`):** Pita telemetri 60fps Canvas 2D di bawah topbar yang memancarkan pulsa real-time setiap SSE event masuk + live event ticker + NOC wall clock.
+- **Aviation Annunciator Badges (`2px` radius):** Pill status bertepi tajam dengan indikator LED kotak 6px (`UP`, `DOWN`, `OK`, `WARN`, `CRIT`, `PEND`).
+- **Native View Transitions API:** Transisi halaman halus (`document.startViewTransition`) dengan fallback instan & hormat pada `prefers-reduced-motion`.
+- **Interactive Radial Orbital Topology:** Diagram hub-and-spoke dengan cincin jarak konsentris, sumbu crosshair, dan node host radial yang dapat diklik.
+- **Swiss Split Login (`web/login.html`):** Layout 2-kolom arsitektural (masthead karbon dengan jam live + panel sign-in alabaster).
 
 ---
 
