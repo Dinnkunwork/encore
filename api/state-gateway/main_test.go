@@ -469,12 +469,33 @@ func TestTemplatesBulkAndNotifications(t *testing.T) {
 		t.Fatalf("unexpected webhook payload: %s", got)
 	}
 
-	// 6. Real-time HARD state transition dispatches webhook automatically
+	// 6. Real-time SOFT -> HARD state transition dispatches webhook EXACTLY when becoming HARD (and no false recovery from SOFT)
+	// First: OK(HARD) -> CRIT(SOFT 1/3) -> OK(HARD) must NOT dispatch alert or recovery
 	store.ApplyServiceEvent(ServiceState{
-		HostName: "app-01", Description: "HTTP", CurrentState: 2, HasBeenChecked: 1, StateType: 1, PluginOutput: "502 Bad Gateway",
+		HostName: "app-01", Description: "HTTP", CurrentState: 2, HasBeenChecked: 1, StateType: 0, PluginOutput: "Transient blip",
+	})
+	store.ApplyServiceEvent(ServiceState{
+		HostName: "app-01", Description: "HTTP", CurrentState: 0, HasBeenChecked: 1, StateType: 1, PluginOutput: "HTTP OK",
+	})
+	// Next: OK(HARD) -> CRIT(SOFT 1/3) -> CRIT(SOFT 2/3) -> CRIT(HARD 3/3) MUST dispatch HARD alert
+	store.ApplyServiceEvent(ServiceState{
+		HostName: "app-01", Description: "HTTP", CurrentState: 2, HasBeenChecked: 1, StateType: 0, PluginOutput: "502 SOFT 1",
+	})
+	store.ApplyServiceEvent(ServiceState{
+		HostName: "app-01", Description: "HTTP", CurrentState: 2, HasBeenChecked: 1, StateType: 0, PluginOutput: "502 SOFT 2",
+	})
+	store.ApplyServiceEvent(ServiceState{
+		HostName: "app-01", Description: "HTTP", CurrentState: 2, HasBeenChecked: 1, StateType: 1, PluginOutput: "502 Bad Gateway HARD",
 	})
 	gotAlert := <-webhookHit
-	if !bytes.Contains([]byte(gotAlert), []byte("502 Bad Gateway")) {
-		t.Fatalf("expected transition alert in webhook, got: %s", gotAlert)
+	if !bytes.Contains([]byte(gotAlert), []byte("502 Bad Gateway HARD")) {
+		t.Fatalf("expected SOFT->HARD transition alert in webhook, got: %s", gotAlert)
+	}
+	// Verify /api/v1/hosts/health aggregate endpoint
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/hosts/health", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"svc_crit":2`)) {
+		t.Fatalf("unexpected /api/v1/hosts/health response: %d %s", rec.Code, rec.Body.String())
 	}
 }

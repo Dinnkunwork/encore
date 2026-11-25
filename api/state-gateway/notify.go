@@ -24,6 +24,7 @@ type NotifyConfig struct {
 	SMTPHost               string   `json:"smtp_host"`
 	SMTPPort               int      `json:"smtp_port"`
 	SMTPTLS                string   `json:"smtp_tls"` // "starttls", "tls", "none"
+	SMTPInsecureTLS        bool     `json:"smtp_insecure_tls"`
 	SMTPUser               string   `json:"smtp_user"`
 	SMTPPass               string   `json:"smtp_pass"`
 	FromAddress            string   `json:"from_address"`
@@ -65,14 +66,15 @@ type AlertEvent struct {
 }
 
 type Notifier struct {
-	mu         sync.RWMutex
-	cfgPath    string
-	cs         *ConfigStore
-	cfg        NotifyConfig
-	lastSent   map[string]time.Time
-	history    []NotifyDelivery
-	queue      chan AlertEvent
-	httpClient *http.Client
+	mu          sync.RWMutex
+	cfgPath     string
+	historyPath string
+	cs          *ConfigStore
+	cfg         NotifyConfig
+	lastSent    map[string]time.Time
+	history     []NotifyDelivery
+	queue       chan AlertEvent
+	httpClient  *http.Client
 }
 
 func defaultNotifyConfig() NotifyConfig {
@@ -104,6 +106,13 @@ func NewNotifier(managedDir string, cs *ConfigStore) *Notifier {
 	}
 	if managedDir != "" {
 		n.cfgPath = filepath.Join(managedDir, "encore-notify.json")
+		n.historyPath = filepath.Join(managedDir, "encore-notify-history.json")
+		if raw, err := os.ReadFile(n.historyPath); err == nil && len(raw) > 0 {
+			var loadedHist []NotifyDelivery
+			if json.Unmarshal(raw, &loadedHist) == nil && loadedHist != nil {
+				n.history = loadedHist
+			}
+		}
 		if raw, err := os.ReadFile(n.cfgPath); err == nil && len(raw) > 0 {
 			var loaded NotifyConfig
 			if json.Unmarshal(raw, &loaded) == nil {
@@ -207,7 +216,16 @@ func (n *Notifier) recordDelivery(d NotifyDelivery) {
 	if len(n.history) > 50 {
 		n.history = n.history[:50]
 	}
+	hPath := n.historyPath
+	var raw []byte
+	if hPath != "" {
+		raw, _ = json.Marshal(n.history)
+	}
 	n.mu.Unlock()
+	if hPath != "" && len(raw) > 0 {
+		_ = os.WriteFile(hPath+".tmp", raw, 0o600)
+		_ = os.Rename(hPath+".tmp", hPath)
+	}
 	if n.cs != nil {
 		n.cs.RecordAudit("notify_"+d.Status, d.Channel+":"+d.Target, d.Subject)
 	}
@@ -243,9 +261,6 @@ func (n *Notifier) OnHostTransition(prev *HostState, next HostState) {
 	if n == nil || prev == nil || prev.HasBeenChecked == 0 || next.HasBeenChecked == 0 {
 		return
 	}
-	if prev.CurrentState == next.CurrentState {
-		return
-	}
 	if next.DowntimeDepth > 0 || next.Acknowledged > 0 {
 		return
 	}
@@ -255,10 +270,31 @@ func (n *Notifier) OnHostTransition(prev *HostState, next HostState) {
 	if !cfg.Enabled && !cfg.WebhookEnabled {
 		return
 	}
-	if cfg.HardOnly && next.StateType != 1 {
-		return
+
+	isRecov := false
+	if cfg.HardOnly {
+		if next.StateType != 1 {
+			return
+		}
+		if next.CurrentState == 0 {
+			// Send RECOVERY only if it was previously in a HARD problem state
+			if prev.CurrentState == 0 || prev.StateType != 1 {
+				return
+			}
+			isRecov = true
+		} else {
+			// Send HARD problem alert when entering HARD problem (from OK/other state OR from SOFT)
+			if prev.CurrentState == next.CurrentState && prev.StateType == 1 {
+				return
+			}
+		}
+	} else {
+		if prev.CurrentState == next.CurrentState {
+			return
+		}
+		isRecov = next.CurrentState == 0 && prev.CurrentState > 0
 	}
-	isRecov := next.CurrentState == 0 && prev.CurrentState > 0
+
 	if isRecov && !cfg.NotifyRecovery {
 		return
 	}
@@ -279,9 +315,6 @@ func (n *Notifier) OnServiceTransition(prev *ServiceState, next ServiceState) {
 	if n == nil || prev == nil || prev.HasBeenChecked == 0 || next.HasBeenChecked == 0 {
 		return
 	}
-	if prev.CurrentState == next.CurrentState {
-		return
-	}
 	if next.DowntimeDepth > 0 || next.Acknowledged > 0 {
 		return
 	}
@@ -291,10 +324,31 @@ func (n *Notifier) OnServiceTransition(prev *ServiceState, next ServiceState) {
 	if !cfg.Enabled && !cfg.WebhookEnabled {
 		return
 	}
-	if cfg.HardOnly && next.StateType != 1 {
-		return
+
+	isRecov := false
+	if cfg.HardOnly {
+		if next.StateType != 1 {
+			return
+		}
+		if next.CurrentState == 0 {
+			// Send RECOVERY only if it was previously in a HARD problem state
+			if prev.CurrentState == 0 || prev.StateType != 1 {
+				return
+			}
+			isRecov = true
+		} else {
+			// Send HARD problem alert when entering HARD problem (from OK/other state OR from SOFT)
+			if prev.CurrentState == next.CurrentState && prev.StateType == 1 {
+				return
+			}
+		}
+	} else {
+		if prev.CurrentState == next.CurrentState {
+			return
+		}
+		isRecov = next.CurrentState == 0 && prev.CurrentState > 0
 	}
-	isRecov := next.CurrentState == 0 && prev.CurrentState > 0
+
 	switch {
 	case isRecov:
 		if !cfg.NotifyRecovery {
@@ -477,7 +531,7 @@ func sendSMTPEmail(cfg NotifyConfig, to []string, subject, htmlBody string) erro
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.SMTPHost, cfg.SMTPPort)
-	tlsCfg := &tls.Config{ServerName: cfg.SMTPHost}
+	tlsCfg := &tls.Config{ServerName: cfg.SMTPHost, InsecureSkipVerify: cfg.SMTPInsecureTLS}
 
 	var client *smtp.Client
 	var err error

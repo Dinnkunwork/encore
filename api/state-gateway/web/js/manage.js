@@ -645,6 +645,7 @@ async function renderNotificationsTab(el) {
             <div class="form-row"><label>Cooldown (minutes per object)</label><input id="nf-cool" type="number" min="0" value="${n.cooldown_min ?? 10}"></div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 14px">
+            <label class="chk-pill"><input type="checkbox" id="nf-insecure" ${n.smtp_insecure_tls?'checked':''}> Skip TLS Verify (Self-Signed)</label>
             <label class="chk-pill"><input type="checkbox" id="nf-contacts" ${n.include_managed_contacts!==false?'checked':''}> Include Manage Contacts</label>
             <label class="chk-pill"><input type="checkbox" id="nf-hard" ${n.hard_only!==false?'checked':''}> HARD State Only</label>
             <label class="chk-pill"><input type="checkbox" id="nf-down" ${n.notify_down!==false?'checked':''}> DOWN</label>
@@ -704,6 +705,7 @@ async function saveNotifyConfig() {
     smtp_host: document.getElementById('nf-host').value.trim(),
     smtp_port: Number(document.getElementById('nf-port').value) || 587,
     smtp_tls: document.getElementById('nf-tls').value,
+    smtp_insecure_tls: document.getElementById('nf-insecure').checked,
     smtp_user: document.getElementById('nf-user').value.trim(),
     smtp_pass: document.getElementById('nf-pass').value,
     from_address: document.getElementById('nf-from').value.trim(),

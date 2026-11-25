@@ -21,18 +21,14 @@ async function loadMeta() {
     if (pbBanner) pbBanner.style.display = 'flex';
     if (navPend) navPend.style.display = 'inline-block';
     if (revBtn) revBtn.style.display = 'inline-flex';
-    // Fetch compact diff counts for banner
-    try {
-      const diff = await (await fetch('/api/v1/config/diff')).json();
-      S.managed.diff = diff;
-      const parts = [];
-      if (diff.added) parts.push(`+${diff.added} new`);
-      if (diff.modified) parts.push(`${diff.modified} modified`);
-      if (diff.deleted) parts.push(`${diff.deleted} deleted`);
-      const sumEl = document.getElementById('pending-summary-text');
-      if (sumEl) sumEl.innerHTML = `<b>Pending Nagios Config</b>${parts.length ? ' (' + parts.join(' • ') + ')' : ''} — belum aktif sampai Apply &amp; Reload.`;
-      if (navPend) navPend.textContent = diff.total || '•';
-    } catch (e) {}
+    const diff = health.pending_diff || {};
+    const parts = [];
+    if (diff.added) parts.push(`+${diff.added} new`);
+    if (diff.modified) parts.push(`${diff.modified} modified`);
+    if (diff.deleted) parts.push(`${diff.deleted} deleted`);
+    const sumEl = document.getElementById('pending-summary-text');
+    if (sumEl) sumEl.innerHTML = `<b>Pending Nagios Config</b>${parts.length ? ' (' + parts.join(' • ') + ')' : ''} — belum aktif sampai Apply &amp; Reload.`;
+    if (navPend) navPend.textContent = diff.total || '•';
   } else {
     if (pbBanner) pbBanner.style.display = 'none';
     if (navPend) navPend.style.display = 'none';
@@ -84,27 +80,15 @@ function setOvMapMode(mode) {
   loadOverview();
 }
 
-function renderOverviewFleetMap(hosts, services) {
+function renderOverviewFleetMap(hosts) {
   const el = document.getElementById('ov-fleet-map');
   if (!el) return;
   if (!hosts.length) {
     el.innerHTML = `<div class="art-empty">${artSVG('servers')}<h4>No Hosts Monitored Yet</h4><p>Tambahkan host pertama Anda di menu Manage untuk mulai melihat peta kesehatan infrastruktur.</p></div>`;
     return;
   }
-  const svcMap = new Map();
-  services.forEach(s => {
-    if (!svcMap.has(s.host_name)) svcMap.set(s.host_name, { ok: 0, warn: 0, crit: 0, unk: 0, tot: 0 });
-    const c = svcMap.get(s.host_name);
-    c.tot++;
-    if (!s.has_been_checked) return;
-    if (s.current_state === 0) c.ok++;
-    else if (s.current_state === 1) c.warn++;
-    else if (s.current_state === 2) c.crit++;
-    else c.unk++;
-  });
 
   if (S.ovMapMode === 'topo') {
-    // Pure SVG Hub-and-Spoke Topology Map
     const list = hosts.slice(0, 14);
     const w = 560, h = Math.max(210, 44 + Math.ceil(list.length / 2) * 38);
     const cx = 86, cy = h / 2;
@@ -113,17 +97,16 @@ function renderOverviewFleetMap(hosts, services) {
       const row = Math.floor(i / 2);
       const nx = col === 0 ? 255 : 420;
       const ny = 30 + row * 38;
-      const sc = svcMap.get(ho.name) || { ok: 0, warn: 0, crit: 0, tot: 0 };
-      const stroke = !ho.has_been_checked ? 'var(--muted)' : (ho.current_state === 1 || sc.crit > 0 ? 'var(--crit)' : (ho.current_state === 2 || sc.warn > 0 ? 'var(--warn)' : 'var(--ok)'));
+      const stroke = !ho.has_been_checked ? 'var(--muted)' : (ho.current_state === 1 || ho.svc_crit > 0 ? 'var(--crit)' : (ho.current_state === 2 || ho.svc_warn > 0 ? 'var(--warn)' : 'var(--ok)'));
       const lineCol = ho.current_state === 1 ? 'var(--crit)' : 'var(--border)';
       return `
         <path d="M ${cx+38} ${cy} C ${cx+95} ${cy}, ${nx-60} ${ny}, ${nx-62} ${ny}" fill="none" stroke="${lineCol}" stroke-width="1.6"/>
         <g style="cursor:pointer" onclick="focusHostFromMap('${esc(ho.name)}')">
-          <title>${esc(ho.name)} (${esc(ho.address)}) — ${sc.ok}/${sc.tot} OK, ${sc.warn} WARN, ${sc.crit} CRIT</title>
+          <title>${esc(ho.name)} (${esc(ho.address)}) — ${ho.svc_ok}/${ho.svc_total} OK, ${ho.svc_warn} WARN, ${ho.svc_crit} CRIT</title>
           <rect x="${nx-62}" y="${ny-14}" width="132" height="28" rx="7" fill="var(--surface)" stroke="${stroke}" stroke-width="1.8"/>
           <circle cx="${nx-50}" cy="${ny}" r="4" fill="${stroke}"/>
           <text x="${nx-40}" y="${ny+4}" fill="var(--text)" font-size="11" font-weight="600">${esc(ho.name.length > 13 ? ho.name.slice(0,12)+'…' : ho.name)}</text>
-          <text x="${nx+62}" y="${ny+4}" text-anchor="end" fill="var(--muted)" font-size="10">${sc.ok}/${sc.tot}</text>
+          <text x="${nx+62}" y="${ny+4}" text-anchor="end" fill="var(--muted)" font-size="10">${ho.svc_ok}/${ho.svc_total}</text>
         </g>`;
     }).join('');
     el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block">
@@ -135,21 +118,19 @@ function renderOverviewFleetMap(hosts, services) {
     return;
   }
 
-  // Health Grid Mode
   el.innerHTML = `<div class="fleet-grid">${hosts.slice(0, 24).map(ho => {
-    const sc = svcMap.get(ho.name) || { ok: 0, warn: 0, crit: 0, tot: 0 };
-    const t = sc.tot || 1;
-    const stCls = !ho.has_been_checked ? 'st-pend' : (ho.current_state === 1 || sc.crit > 0 ? 'st-down' : (ho.current_state === 2 || sc.warn > 0 ? 'st-warn' : ''));
+    const t = ho.svc_total || 1;
+    const stCls = !ho.has_been_checked ? 'st-pend' : (ho.current_state === 1 || ho.svc_crit > 0 ? 'st-down' : (ho.current_state === 2 || ho.svc_warn > 0 ? 'st-warn' : ''));
     return `<div class="host-tile ${stCls}" onclick="focusHostFromMap('${esc(ho.name)}')" title="${esc(ho.name)} (${esc(ho.address)}) — Click to inspect services">
       <div class="host-tile-top">
         <span class="host-tile-name">${esc(ho.name)}</span>
         ${hostBadge(ho)}
       </div>
       <div class="mono" style="font-size:11px;margin-bottom:6px">${esc(ho.address)}</div>
-      <div class="bar"><div class="bar-ok" style="width:${(sc.ok/t)*100}%"></div><div class="bar-warn" style="width:${(sc.warn/t)*100}%"></div><div class="bar-crit" style="width:${(sc.crit/t)*100}%"></div></div>
+      <div class="bar"><div class="bar-ok" style="width:${(ho.svc_ok/t)*100}%"></div><div class="bar-warn" style="width:${(ho.svc_warn/t)*100}%"></div><div class="bar-crit" style="width:${(ho.svc_crit/t)*100}%"></div></div>
       <div class="host-tile-meta">
-        <span>${sc.ok}/${sc.tot} OK</span>
-        <span>${sc.crit ? `<b style="color:var(--crit-fg)">${sc.crit} CRIT</b>` : (sc.warn ? `<b style="color:var(--warn-fg)">${sc.warn} WARN</b>` : 'Healthy')}</span>
+        <span>${ho.svc_ok}/${ho.svc_total} OK</span>
+        <span>${ho.svc_crit ? `<b style="color:var(--crit-fg)">${ho.svc_crit} CRIT</b>` : (ho.svc_warn ? `<b style="color:var(--warn-fg)">${ho.svc_warn} WARN</b>` : 'Healthy')}</span>
       </div>
     </div>`;
   }).join('')}</div>`;
@@ -255,17 +236,15 @@ async function loadOverview() {
   document.getElementById('ov-pid').textContent = 'PID ' + sum.program.pid;
   document.getElementById('ov-flags').textContent = `Checks: ${sum.program.execute_service_checks ? 'ON' : 'OFF'} • Notify: ${sum.program.notifications_enabled ? 'ON' : 'OFF'}`;
 
-  const [pRes, aRes, hRes, svRes] = await Promise.all([
+  const [pRes, aRes, fhRes] = await Promise.all([
     fetch('/api/v1/services?unhandled=1&sort=severity&limit=10'),
     fetch('/api/v1/audit?limit=5'),
-    fetch('/api/v1/hosts?limit=100'),
-    fetch('/api/v1/services?limit=500')
+    fetch('/api/v1/hosts/health')
   ]);
   const probs = (await pRes.json()).services || [];
-  const fleetHosts = (await hRes.json()).hosts || [];
-  const fleetSvcs = (await svRes.json()).services || [];
+  const fleetHosts = (await fhRes.json()).hosts || [];
 
-  renderOverviewFleetMap(fleetHosts, fleetSvcs);
+  renderOverviewFleetMap(fleetHosts);
   renderOverviewMiniCharts(sum);
 
   const pBody = document.getElementById('ov-prob-body');

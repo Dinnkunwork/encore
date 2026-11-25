@@ -906,6 +906,11 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 		lastSync := store.lastSync
 		store.mu.RUnlock()
 		_, pending, cfgEnabled := cs.Snapshot()
+		var pDiff map[string]int
+		if pending {
+			d := cs.Diff()
+			pDiff = map[string]int{"added": d.Added, "modified": d.Modified, "deleted": d.Deleted, "total": d.Total}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":          "ok",
 			"connected":       store.connected.Load(),
@@ -915,7 +920,67 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 			"last_sync":       lastSync,
 			"config_enabled":  cfgEnabled,
 			"pending_changes": pending,
+			"pending_diff":    pDiff,
 		})
+	})
+
+	// Lightweight aggregate endpoint for Overview Fleet Health Map (scales to 1000+ services)
+	mux.HandleFunc("/api/v1/hosts/health", func(w http.ResponseWriter, r *http.Request) {
+		type hostHealthItem struct {
+			Name           string `json:"name"`
+			Address        string `json:"address"`
+			CurrentState   int    `json:"current_state"`
+			HasBeenChecked int    `json:"has_been_checked"`
+			SvcOK          int    `json:"svc_ok"`
+			SvcWarn        int    `json:"svc_warn"`
+			SvcCrit        int    `json:"svc_crit"`
+			SvcUnk         int    `json:"svc_unk"`
+			SvcTotal       int    `json:"svc_total"`
+		}
+		store.mu.RLock()
+		m := make(map[string]*hostHealthItem, len(store.hosts))
+		list := make([]*hostHealthItem, 0, len(store.hosts))
+		for _, h := range store.hosts {
+			it := &hostHealthItem{
+				Name:           h.Name,
+				Address:        h.Address,
+				CurrentState:   h.CurrentState,
+				HasBeenChecked: h.HasBeenChecked,
+			}
+			m[h.Name] = it
+			list = append(list, it)
+		}
+		for _, sv := range store.services {
+			it, ok := m[sv.HostName]
+			if !ok {
+				continue
+			}
+			it.SvcTotal++
+			if sv.HasBeenChecked == 0 {
+				continue
+			}
+			switch sv.CurrentState {
+			case 0:
+				it.SvcOK++
+			case 1:
+				it.SvcWarn++
+			case 2:
+				it.SvcCrit++
+			default:
+				it.SvcUnk++
+			}
+		}
+		store.mu.RUnlock()
+		sort.Slice(list, func(i, j int) bool {
+			// Unhealthy hosts first, then alphabetical
+			iBad := list[i].CurrentState > 0 || list[i].SvcCrit > 0
+			jBad := list[j].CurrentState > 0 || list[j].SvcCrit > 0
+			if iBad != jBad {
+				return iBad
+			}
+			return list[i].Name < list[j].Name
+		})
+		writeJSON(w, http.StatusOK, map[string]any{"hosts": list})
 	})
 
 	mux.HandleFunc("/api/v1/summary", func(w http.ResponseWriter, r *http.Request) {
