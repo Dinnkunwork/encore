@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Encore — Monitoring & Management</title>
+<title>Encore — Monitoring &amp; Operations Console</title>
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon/favicon-32.png">
 <link rel="apple-touch-icon" href="/assets/favicon/apple-touch-icon.png">
@@ -14,54 +14,54 @@
   <!-- Mobile Sidebar Backdrop -->
   <div class="sb-backdrop" id="sb-backdrop" onclick="closeMobileSidebar()"></div>
 
-  <!-- Refined Left Sidebar -->
-  <aside class="sidebar" id="sidebar">
+  <!-- Left Sidebar -->
+  <aside class="sidebar" id="sidebar" aria-label="Primary Navigation">
     <div class="sb-head">
-      <a class="sb-brand" href="#" onclick="setView('overview');return false">
+      <a class="sb-brand" href="#overview" onclick="setView('overview');return false">
         <encore-icon name="logo" size="2" live></encore-icon>
-        <div class="brand-text"><strong>Encore</strong><span>Monitoring Console</span></div>
+        <div class="brand-text"><strong>Encore</strong><span>Operations Console</span></div>
       </a>
-      <button class="sb-toggle desktop-only" id="sb-toggle-btn" onclick="toggleSidebar()" title="Collapse sidebar">«</button>
-      <button class="sb-toggle mobile-only" onclick="closeMobileSidebar()" title="Close menu">✕</button>
+      <button class="sb-toggle desktop-only" id="sb-toggle-btn" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Collapse sidebar" aria-expanded="true">«</button>
+      <button class="sb-toggle mobile-only" onclick="closeMobileSidebar()" title="Close menu" aria-label="Close menu">✕</button>
     </div>
 
     <nav class="sb-nav">
       <div class="nav-section">Monitoring</div>
-      <button class="nav-item active" id="nav-overview" onclick="setView('overview')">
+      <button class="nav-item active" id="nav-overview" onclick="setView('overview')" title="Overview" aria-label="Overview">
         <img src="/assets/icons/dashboard.svg" alt=""><span class="nav-text">Overview</span>
       </button>
-      <button class="nav-item" id="nav-inventory" onclick="setView('inventory')">
+      <button class="nav-item" id="nav-inventory" onclick="setView('inventory')" title="Inventory" aria-label="Inventory">
         <img src="/assets/icons/server.svg" alt=""><span class="nav-text">Inventory</span>
       </button>
-      <button class="nav-item" id="nav-problems" onclick="setView('problems')">
+      <button class="nav-item" id="nav-problems" onclick="setView('problems')" title="Problems" aria-label="Problems">
         <img src="/assets/icons/alert.svg" alt=""><span class="nav-text">Problems</span>
         <span class="nav-badge" id="nav-prob-badge" style="display:none">0</span>
       </button>
-      <button class="nav-item" id="nav-reports" onclick="setView('reports')">
+      <button class="nav-item" id="nav-reports" onclick="setView('reports')" title="Reports" aria-label="Reports">
         <img src="/assets/icons/database.svg" alt=""><span class="nav-text">Reports</span>
       </button>
 
       <div class="nav-divider"></div>
       <div class="nav-section">Configuration</div>
-      <button class="nav-item" id="nav-manage" onclick="setView('manage')">
+      <button class="nav-item" id="nav-manage" onclick="setView('manage')" title="Manage Configuration" aria-label="Manage Configuration">
         <img src="/assets/icons/settings.svg" alt=""><span class="nav-text">Manage</span>
-        <span class="nav-badge warn" id="nav-pending-badge" style="display:none" title="Pending changes">•</span>
+        <span class="nav-badge warn" id="nav-pending-badge" style="display:none" title="Pending configuration changes">•</span>
       </button>
-      <button class="nav-item" id="nav-system" onclick="setView('system')">
+      <button class="nav-item" id="nav-system" onclick="setView('system')" title="System Controls" aria-label="System Controls">
         <img src="/assets/icons/log.svg" alt=""><span class="nav-text">System</span>
       </button>
 
       <div class="nav-divider"></div>
       <div class="nav-section">Help</div>
-      <button class="nav-item" id="nav-guide" onclick="setView('guide')">
+      <button class="nav-item" id="nav-guide" onclick="setView('guide')" title="User Guide" aria-label="User Guide">
         <img src="/assets/icons/cloud.svg" alt=""><span class="nav-text">User Guide</span>
       </button>
     </nav>
 
     <div class="sb-foot">
-      <div class="sb-status">
+      <div class="sb-status" role="status" aria-live="polite">
         <span class="pulse-dot ok" id="conn-dot"></span>
-        <span class="sb-foot-text"><b id="conn-label">Live</b> • <span id="events-pill">0 ev</span></span>
+        <span class="sb-foot-text"><b id="conn-label">Live</b> · <span id="events-pill">0 ev</span></span>
       </div>
     </div>
   </aside>
@@ -70,29 +70,35 @@
   <div class="main">
     <header class="topbar">
       <div class="topbar-left">
-        <button class="btn btn-sm mobile-menu-btn" onclick="openMobileSidebar()" aria-label="Menu">☰</button>
+        <button class="btn btn-sm mobile-menu-btn" onclick="openMobileSidebar()" aria-label="Open navigation menu">☰</button>
         <div>
-          <div class="page-title" id="page-title">Overview</div>
+          <h1 class="page-title" id="page-title">Overview</h1>
           <div class="page-sub" id="sub-meta">Connecting...</div>
         </div>
       </div>
       <div class="topbar-right">
         <div class="search-box">
-          <img src="/assets/icons/search.svg" alt="">
-          <input type="search" id="global-search" placeholder="Search (/) ..." oninput="onGlobalSearch()">
+          <span class="search-ico" aria-hidden="true">
+            <svg class="ui-ico sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          </span>
+          <input type="search" id="global-search" placeholder="Search hosts or services..." aria-label="Search hosts or services" oninput="onGlobalSearch()">
+          <button type="button" class="kbd-hint desktop-only" onclick="openQuickJump()" title="Open Quick Jump (Ctrl+K)">Ctrl+K</button>
         </div>
-        <button class="btn btn-sm desktop-only" onclick="openQuickJump()" title="Quick Jump (Ctrl+K)">⌘K</button>
-        <button class="btn btn-sm" id="live-toggle-btn" onclick="toggleLiveUpdates()" title="Real-time SSE active — click to pause/resume auto updates">● Live</button>
-        <button class="btn btn-sm desktop-only" id="alert-sound-btn" onclick="toggleAlertSound()" title="Toggle Sound &amp; Desktop Alerts on HARD CRITICAL/DOWN">🔔 Off</button>
-        <button class="btn btn-sm desktop-only" id="tv-mode-btn" onclick="toggleTVMode()" title="NOC Wallboard / TV Mode (Shift+T)">📺 TV</button>
-        <button class="btn btn-sm" onclick="refreshAll()" title="Refresh now">↻</button>
-        <select id="theme-select" onchange="applyTheme(this.value)" aria-label="Theme" title="Select Theme">
-          <option value="light">Crisp Light</option>
-          <option value="dark">Midnight Slate</option>
-          <option value="cyber">Encore Cyber</option>
-          <option value="nord">Nordic Frost</option>
-          <option value="emerald">Terminal Ops</option>
-        </select>
+
+        <div style="display:inline-flex;gap:4px">
+          <button class="btn btn-sm active" id="live-toggle-btn" onclick="toggleLiveUpdates()" title="Real-time SSE active — click to pause/resume">Live</button>
+          <button class="icon-btn" onclick="refreshAll()" title="Refresh now" aria-label="Refresh data now">
+            <svg class="ui-ico sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+          </button>
+        </div>
+
+        <div class="menu-anchor">
+          <button class="btn btn-sm" id="display-menu-btn" onclick="toggleDisplayMenu(event)" aria-haspopup="true" aria-expanded="false" title="Display, Theme, Alerts &amp; TV Mode">
+            <svg class="ui-ico sm" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4"/></svg>
+            <span class="desktop-only">Display</span>
+          </button>
+        </div>
+
         <button class="user-chip" id="user-chip" onclick="openAccountModal()" title="Account &amp; RBAC Role" style="display:none">
           <span id="user-chip-name">admin</span>
           <span class="flag-tag" id="user-chip-role">ADMIN</span>
@@ -100,11 +106,20 @@
       </div>
     </header>
 
-    <!-- Sticky Pending Changes Banner (with Diff Review & Discard) -->
+    <!-- High-Contrast Connection Lost / Stale Data Banner -->
+    <div class="conn-banner" id="conn-banner" role="alert">
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg class="ui-ico" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/></svg>
+        <span id="conn-banner-text">Connection to Encore State Gateway lost — displayed data may be stale.</span>
+      </div>
+      <button class="btn btn-sm" onclick="refreshAll()">Retry Now</button>
+    </div>
+
+    <!-- Pending Configuration Changes Banner -->
     <div class="pending-banner" id="pending-banner" style="display:none">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span class="badge c-warn">DRAFT</span>
-        <span id="pending-summary-text"><b>Pending Encore Config Changes</b> — belum aktif sampai Apply &amp; Reload.</span>
+        <span id="pending-summary-text"><b>Pending Encore Config</b> — changes are not active until Apply &amp; Reload.</span>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn btn-sm" onclick="openDiffReviewModal()">Review Changes</button>
@@ -118,27 +133,30 @@
       <!-- OVERVIEW -->
       <section id="sec-overview" class="view-section">
         <div class="kpi-grid">
-          <div class="kpi-card" onclick="setView('inventory','hosts')">
+          <button type="button" class="kpi-card" onclick="setView('inventory','byhost')">
             <div class="kpi-top"><span class="kpi-label">Host Health</span><img class="kpi-icon" id="kpi-h-icon" src="/assets/status/status-ok.svg" alt=""></div>
             <div class="kpi-val" id="ov-h-pct">-</div>
             <div class="kpi-sub"><span id="ov-h-up">0 UP</span><span id="ov-h-down" style="color:var(--crit-fg)">0 DOWN</span><span id="ov-h-tot">0 total</span></div>
-          </div>
-          <div class="kpi-card" onclick="setView('inventory','services')">
+          </button>
+          <button type="button" class="kpi-card" onclick="setView('inventory','services')">
             <div class="kpi-top"><span class="kpi-label">Service Health</span><img class="kpi-icon" id="kpi-s-icon" src="/assets/status/status-ok.svg" alt=""></div>
             <div class="kpi-val" id="ov-s-pct">-</div>
             <div class="kpi-sub"><span id="ov-s-ok">0 OK</span><span id="ov-s-warn" style="color:var(--warn-fg)">0 WARN</span><span id="ov-s-crit" style="color:var(--crit-fg)">0 CRIT</span></div>
-          </div>
-          <div class="kpi-card" onclick="quickUnhandled()">
-            <div class="kpi-top"><span class="kpi-label">Unhandled</span><img class="kpi-icon" id="kpi-u-icon" src="/assets/status/status-info.svg" alt=""></div>
+          </button>
+          <button type="button" class="kpi-card" id="kpi-unhandled-card" onclick="quickUnhandled()">
+            <div class="kpi-top"><span class="kpi-label">Unhandled Problems</span><img class="kpi-icon" id="kpi-u-icon" src="/assets/status/status-info.svg" alt=""></div>
             <div class="kpi-val" id="ov-unhandled">0</div>
             <div class="kpi-sub"><span id="ov-u-sub">All clear</span></div>
-          </div>
-          <div class="kpi-card" onclick="setView('system')">
-            <div class="kpi-top"><span class="kpi-label">Engine</span><img class="kpi-icon" src="/assets/icons/settings.svg" alt=""></div>
-            <div class="kpi-val" id="ov-pid">-</div>
-            <div class="kpi-sub"><span id="ov-flags">Checks: - • Notify: -</span></div>
-          </div>
+          </button>
+          <button type="button" class="kpi-card" onclick="setView('reports','sla')">
+            <div class="kpi-top"><span class="kpi-label">24h Service SLA</span><img class="kpi-icon" id="kpi-sla-icon" src="/assets/status/status-ok.svg" alt=""></div>
+            <div class="kpi-val" id="ov-sla-val">-</div>
+            <div class="kpi-sub"><span id="ov-sla-sub">Calculating...</span></div>
+          </button>
         </div>
+
+        <!-- Incident-First Slot: Unhandled Problems moves here automatically when unhandled > 0 -->
+        <div id="ov-incident-top"></div>
 
         <!-- Overview Visual Charts Row -->
         <div class="ov-visuals">
@@ -150,44 +168,46 @@
                 <button class="btn btn-sm" id="ov-map-topo-btn" onclick="setOvMapMode('topo')">Topology</button>
               </div>
             </div>
-            <div id="ov-fleet-map" style="padding:14px 16px"><div class="empty">Loading fleet map...</div></div>
+            <div id="ov-fleet-map" style="padding:14px 16px"><div class="skel-stack"><div class="skel" style="width:60%"></div><div class="skel" style="height:64px"></div></div></div>
           </div>
           <div class="panel" style="margin-bottom:0">
             <div class="panel-head">
-              <div class="panel-title"><img src="/assets/icons/database.svg" alt="">Distribution &amp; 24h Trend</div>
-              <button class="btn btn-sm" onclick="setView('reports','sla')">Full SLA ›</button>
+              <div class="panel-title"><img src="/assets/icons/database.svg" alt="">Distribution &amp; 24h Uptime</div>
+              <button class="btn btn-sm" onclick="setView('reports','sla')">Full SLA</button>
             </div>
-            <div id="ov-mini-charts" style="padding:14px 16px"><div class="empty">Loading charts...</div></div>
+            <div id="ov-mini-charts" style="padding:14px 16px"><div class="skel-stack"><div class="skel" style="height:80px"></div><div class="skel" style="height:56px"></div></div></div>
           </div>
         </div>
 
         <div class="split-2" style="margin-top:16px">
-          <div class="panel">
-            <div class="panel-head">
-              <div class="panel-title"><img src="/assets/icons/alert.svg" alt="">Unhandled Problems</div>
-              <button class="btn btn-sm" onclick="setView('problems')">All Problems ›</button>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>Status</th><th>Target</th><th>Duration</th><th>Output</th><th style="text-align:right">Quick</th></tr></thead>
-                <tbody id="ov-prob-body"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody>
-              </table>
+          <div id="ov-incident-home">
+            <div class="panel" id="ov-prob-panel">
+              <div class="panel-head">
+                <div class="panel-title"><img src="/assets/icons/alert.svg" alt="">Unhandled Problems</div>
+                <button class="btn btn-sm" onclick="setView('problems')">All Problems</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Status</th><th>Target</th><th>Duration</th><th>Output</th><th style="text-align:right">Quick</th></tr></thead>
+                  <tbody id="ov-prob-body"><tr><td colspan="5"><div class="skel-stack"><div class="skel"></div><div class="skel" style="width:75%"></div></div></td></tr></tbody>
+                </table>
+              </div>
             </div>
           </div>
           <div>
             <div class="panel">
               <div class="panel-head">
                 <div class="panel-title"><img src="/assets/icons/network.svg" alt="">Hostgroups</div>
-                <button class="btn btn-sm" onclick="setView('inventory','groups')">View All ›</button>
+                <button class="btn btn-sm" onclick="setView('inventory','groups')">View All</button>
               </div>
-              <div id="ov-hg-list" style="padding:12px 16px"></div>
+              <div id="ov-hg-list" style="padding:12px 16px"><div class="skel-stack"><div class="skel"></div><div class="skel" style="width:80%"></div></div></div>
             </div>
-            <div class="panel">
+            <div class="panel" id="ov-audit-panel">
               <div class="panel-head">
                 <div class="panel-title"><img src="/assets/icons/log.svg" alt="">Recent Activity</div>
-                <button class="btn btn-sm" onclick="setView('system','audit')">Audit ›</button>
+                <button class="btn btn-sm" onclick="setView('system','audit')">Audit Log</button>
               </div>
-              <div id="ov-audit-list" style="padding:10px 16px"></div>
+              <div id="ov-audit-list" style="padding:10px 16px"><div class="skel-stack"><div class="skel"></div></div></div>
             </div>
           </div>
         </div>
@@ -198,18 +218,19 @@
         <div class="subtabs">
           <div class="subtab-list" id="mon-subtabs"></div>
           <div class="subtab-actions" id="mon-filters">
-            <select id="hg-select" onchange="onFilterChange()"><option value="">All Hostgroups</option></select>
-            <select id="sg-select" onchange="onFilterChange()"><option value="">All Servicegroups</option></select>
-            <select id="state-select" onchange="onFilterChange()"><option value="">All States</option></select>
-            <select id="sort-select" onchange="onFilterChange()">
-              <option value="severity">Severity</option>
-              <option value="name">Name</option>
-              <option value="last_check">Last Check</option>
-              <option value="duration">State Age</option>
+            <select id="hg-select" aria-label="Filter by hostgroup" onchange="onFilterChange()"><option value="">All Hostgroups</option></select>
+            <select id="sg-select" aria-label="Filter by servicegroup" onchange="onFilterChange()"><option value="">All Servicegroups</option></select>
+            <select id="state-select" aria-label="Filter by status" onchange="onFilterChange()"><option value="">All States</option></select>
+            <select id="sort-select" aria-label="Sort order" onchange="onFilterChange()">
+              <option value="severity">Sort: Severity</option>
+              <option value="name">Sort: Name</option>
+              <option value="last_check">Sort: Last Check</option>
+              <option value="duration">Sort: State Age</option>
             </select>
             <label class="chk-pill"><input type="checkbox" id="unhandled-chk" onchange="onFilterChange()"> Unhandled</label>
             <button class="btn btn-sm" id="group-view-btn" onclick="toggleGroupByHost()">Grouped</button>
-            <select id="limit-select" onchange="onFilterChange()"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select>
+            <select id="limit-select" aria-label="Items per page" onchange="onFilterChange()"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
+            <button class="btn btn-sm" id="clear-filters-btn" style="display:none" onclick="clearMonitorFilters()">Clear filters</button>
           </div>
         </div>
         <div id="mon-bulk-bar" class="bulk-bar" style="display:none"></div>
@@ -250,7 +271,7 @@
         <div id="system-content"></div>
       </section>
 
-      <!-- GUIDE (6 Comprehensive Tabs + Internal Search) -->
+      <!-- GUIDE -->
       <section id="sec-guide" class="view-section" style="display:none">
         <div class="subtabs">
           <div class="subtab-list">
@@ -262,7 +283,7 @@
             <button class="subtab" id="gtab-paths" onclick="setGuideTab('paths')">Paths &amp; FAQ</button>
           </div>
           <div class="subtab-actions">
-            <input type="search" id="guide-search" placeholder="Filter guide..." style="width:180px" oninput="renderGuide()">
+            <input type="search" id="guide-search" placeholder="Filter guide..." aria-label="Filter guide" style="width:180px" oninput="renderGuide()">
           </div>
         </div>
         <div id="guide-content"></div>
@@ -285,14 +306,14 @@
           </div>
         </div>
         <div class="rep-filterbar" id="rep-filterbar">
-          <select id="rep-target" onchange="onReportFilterChange()"><option value="services">Services</option><option value="hosts">Hosts</option></select>
-          <select id="rep-hg" onchange="onReportFilterChange()"><option value="">All Hostgroups</option></select>
-          <select id="rep-host" onchange="onReportHostChange()"><option value="">All Hosts</option></select>
-          <select id="rep-svc" onchange="onReportFilterChange()"><option value="">All Services</option></select>
+          <select id="rep-target" aria-label="Report target" onchange="onReportFilterChange()"><option value="services">Services</option><option value="hosts">Hosts</option></select>
+          <select id="rep-hg" aria-label="Filter by hostgroup" onchange="onReportFilterChange()"><option value="">All Hostgroups</option></select>
+          <select id="rep-host" aria-label="Filter by host" onchange="onReportHostChange()"><option value="">All Hosts</option></select>
+          <select id="rep-svc" aria-label="Filter by service" onchange="onReportFilterChange()"><option value="">All Services</option></select>
           <div id="rep-custom-dates" style="display:none;gap:6px;align-items:center">
-            <input type="date" id="rep-from" onchange="loadReports()">
+            <input type="date" id="rep-from" aria-label="Start date" onchange="loadReports()">
             <span class="name-sub">to</span>
-            <input type="date" id="rep-to" onchange="loadReports()">
+            <input type="date" id="rep-to" aria-label="End date" onchange="loadReports()">
           </div>
           <div id="rep-sla-controls" style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
             <button class="btn btn-sm active" id="rep-group-btn" onclick="toggleRepGroupByHost()">Grouped</button>
@@ -307,20 +328,43 @@
   </div>
 </div>
 
-<!-- Drawers, Modals, Confirm Dialog & Quick Jump -->
-<div class="drawer-wrap" id="drawer-wrap" onclick="if(event.target===this)closeDrawer()"><div class="drawer" id="drawer-body"></div></div>
-<div class="backdrop" id="modal-backdrop" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal-content"></div></div>
-<div class="backdrop" id="confirm-backdrop" onclick="if(event.target===this)resolveConfirm(false)">
-  <div class="modal confirm-modal" id="confirm-content"></div>
-</div>
-<div class="backdrop" id="qj-backdrop" onclick="if(event.target===this)closeQuickJump()">
-  <div class="qj-box">
-    <input type="text" id="qj-input" placeholder="Jump to host, service, or menu (Ctrl+K)..." oninput="renderQuickJump()">
-    <div class="qj-list" id="qj-list"></div>
+<!-- Display Preferences Popover (Outside overflow containers) -->
+<div class="display-menu" id="display-menu" role="menu" aria-label="Display Preferences">
+  <div class="dm-row">
+    <div><span class="dm-label">Theme</span><span class="dm-sub">WCAG AA palette</span></div>
+    <select id="theme-select" onchange="applyTheme(this.value)" aria-label="Select Theme">
+      <option value="light">Crisp Light</option>
+      <option value="dark">Midnight Slate</option>
+      <option value="cyber">Encore Cyber</option>
+      <option value="nord">Nordic Frost</option>
+      <option value="emerald">Terminal Ops</option>
+    </select>
+  </div>
+  <div class="dm-row">
+    <div><span class="dm-label">Alert Chime</span><span class="dm-sub">On HARD CRIT/DOWN</span></div>
+    <button class="btn btn-sm" id="alert-sound-btn" onclick="toggleAlertSound()">Off</button>
+  </div>
+  <div class="dm-row">
+    <div><span class="dm-label">Wallboard</span><span class="dm-sub">Fullscreen (Shift+T)</span></div>
+    <button class="btn btn-sm" id="tv-mode-btn" onclick="closeDisplayMenu();toggleTVMode()">TV Mode</button>
   </div>
 </div>
-<div id="toast"></div>
-<button class="btn primary tv-exit-btn" id="tv-exit-btn" onclick="toggleTVMode()">✕ Exit TV Mode (Esc)</button>
+
+<!-- Drawers (z:40), Modals & Quick Jump (z:50) -->
+<div class="drawer-wrap" id="drawer-wrap" role="dialog" aria-modal="true" aria-label="Object Details" onclick="if(event.target===this)closeDrawer()"><div class="drawer" id="drawer-body"></div></div>
+<div class="backdrop" id="modal-backdrop" role="dialog" aria-modal="true" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal-content"></div></div>
+<div class="backdrop" id="confirm-backdrop" role="dialog" aria-modal="true" onclick="if(event.target===this)resolveConfirm(false)">
+  <div class="modal confirm-modal" id="confirm-content"></div>
+</div>
+<div class="backdrop" id="qj-backdrop" role="dialog" aria-modal="true" aria-label="Quick Jump" onclick="if(event.target===this)closeQuickJump()">
+  <div class="qj-box">
+    <input type="text" id="qj-input" placeholder="Jump to host, service, or menu..." aria-label="Quick Jump search" oninput="renderQuickJump()" onkeydown="onQuickJumpKey(event)">
+    <div class="qj-list" id="qj-list"></div>
+    <div class="qj-foot"><span>↑↓ Navigate</span><span>Enter Open</span><span>Esc Close</span></div>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<button class="btn primary tv-exit-btn" id="tv-exit-btn" onclick="toggleTVMode()">Exit TV Mode (Esc)</button>
 
 <script src="/js/encore-icons.js"></script>
 <script src="/js/core.js"></script>

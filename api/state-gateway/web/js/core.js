@@ -13,6 +13,7 @@ const S = {
   timer: null,
   groupByHost: false,
   invExpandedHosts: new Set(),
+  invCollapsedHosts: new Set(),
   invExpandInit: false,
   invLastGroups: [],
   summary: null,
@@ -40,12 +41,55 @@ const S = {
   me: { auth_enabled: false, user: { username: 'local-admin', display_name: 'Local Admin', role: 'admin' } },
   sseConnected: false,
   livePaused: false,
+  lastGoodSync: 0,
   alertSound: localStorage.getItem('encore-alert-sound') === '1',
   tvMode: false
 };
 
+/* Unified 16px Stroke SVG Icon System (replaces OS emojis & Unicode glyphs) */
+const UI_ICON_PATHS = {
+  refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/>',
+  chevron: '<path d="m9 6 6 6-6 6"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/>',
+  ok: '<circle cx="12" cy="12" r="9"/><path d="m9 12 2 2 4-4"/>',
+  server: '<rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  shield: '<path d="M12 3 5 6v6c0 5 3.5 8 7 9 3.5-1 7-4 7-9V6l-7-3Z"/>'
+};
+function uiIcon(name, cls = 'sm') {
+  const p = UI_ICON_PATHS[name] || UI_ICON_PATHS.info;
+  return `<svg class="ui-ico ${cls}" viewBox="0 0 24 24" aria-hidden="true">${p}</svg>`;
+}
+
 function canOperate() { const r = S.me?.user?.role || 'admin'; return r === 'admin' || r === 'operator'; }
 function isAdmin() { return (S.me?.user?.role || 'admin') === 'admin'; }
+
+/* Safe JSON fetch helper with explicit status checking */
+async function apiFetchJSON(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) { window.location.href = '/login'; throw new Error('Session expired'); }
+  let data = null;
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  return data;
+}
+
+function setConnectionBanner(offline, detail) {
+  const el = document.getElementById('conn-banner');
+  const txt = document.getElementById('conn-banner-text');
+  if (!el) return;
+  if (!offline) {
+    el.classList.remove('show');
+    return;
+  }
+  const since = S.lastGoodSync ? ` Last valid snapshot: ${new Date(S.lastGoodSync).toLocaleTimeString()}.` : '';
+  if (txt) txt.textContent = (detail || 'Connection to Encore State Gateway lost — displayed data may be stale.') + since;
+  el.classList.add('show');
+}
 
 function applyTheme(t) {
   const valid = ['light','dark','cyber','nord','emerald'];
@@ -56,6 +100,58 @@ function applyTheme(t) {
   localStorage.setItem('encore-theme', t);
 }
 applyTheme(localStorage.getItem('encore-theme') || 'light');
+
+/* Display Preferences Popover */
+function toggleDisplayMenu(ev) {
+  if (ev) ev.stopPropagation();
+  const menu = document.getElementById('display-menu');
+  const btn = document.getElementById('display-menu-btn');
+  if (!menu || !btn) return;
+  const open = !menu.classList.contains('open');
+  if (open) {
+    const r = btn.getBoundingClientRect();
+    menu.style.top = (r.bottom + 6) + 'px';
+    menu.style.right = Math.max(12, window.innerWidth - r.right) + 'px';
+    menu.classList.add('open');
+    btn.setAttribute('aria-expanded', 'true');
+  } else {
+    closeDisplayMenu();
+  }
+}
+function closeDisplayMenu() {
+  const menu = document.getElementById('display-menu');
+  const btn = document.getElementById('display-menu-btn');
+  if (menu) menu.classList.remove('open');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+document.addEventListener('click', e => {
+  const menu = document.getElementById('display-menu');
+  const btn = document.getElementById('display-menu-btn');
+  if (menu && menu.classList.contains('open') && !menu.contains(e.target) && (!btn || !btn.contains(e.target))) {
+    closeDisplayMenu();
+  }
+});
+
+/* URL Hash Routing (Supports Browser Back/Forward & Refresh) */
+function syncHashFromState() {
+  const subMap = { inventory: S.invTab, problems: S.probTab, reports: S.repTab, manage: S.manageTab, system: S.sysTab, guide: S.guideTab };
+  const sub = subMap[S.view];
+  const nextHash = sub ? `#${S.view}/${sub}` : `#${S.view}`;
+  if (window.location.hash !== nextHash) {
+    history.pushState(null, '', nextHash);
+  }
+}
+function applyRouteFromHash() {
+  const raw = (window.location.hash || '').replace(/^#/, '');
+  if (!raw) return false;
+  const [v, sub] = raw.split('/');
+  const validViews = ['overview','inventory','problems','reports','manage','system','guide'];
+  if (!validViews.includes(v)) return false;
+  if ((v === 'manage' || v === 'system') && !isAdmin()) return false;
+  setView(v, sub || undefined, true);
+  return true;
+}
+window.addEventListener('hashchange', () => applyRouteFromHash());
 
 async function initAuthAndBoot() {
   try {
@@ -69,14 +165,16 @@ async function initAuthAndBoot() {
         document.getElementById('user-chip-name').textContent = S.me.user.username;
         document.getElementById('user-chip-role').textContent = (S.me.user.role || 'admin').toUpperCase();
       }
-      // Apply RBAC menu visibility
       if (!isAdmin()) {
         document.getElementById('nav-manage')?.style.setProperty('display', 'none');
         document.getElementById('nav-system')?.style.setProperty('display', 'none');
+        document.getElementById('ov-audit-panel')?.style.setProperty('display', 'none');
       }
     }
   } catch (e) {}
-  refreshAll();
+  const routed = applyRouteFromHash();
+  await refreshAll();
+  if (!routed && S.view === 'overview') syncHashFromState();
   setAutoInterval();
   connectSSE();
   updateAlertSoundBtn();
@@ -94,12 +192,12 @@ function connectSSE() {
     S.sseConnected = true;
     const lbl = document.getElementById('conn-label');
     if (lbl) lbl.textContent = 'Live (SSE)';
-    setAutoInterval(); // Slow fallback polling to 30s when SSE is active
+    setConnectionBanner(false);
+    setAutoInterval();
   });
   es.addEventListener('state', e => {
     try {
       const ev = JSON.parse(e.data);
-      // Optional sound & desktop notification on new HARD CRITICAL/DOWN
       if (S.alertSound && ev.state_type === 1 && ev.state > 0 && ev.prev_state !== ev.state) {
         playAlertChime();
         if ('Notification' in window && Notification.permission === 'granted') {
@@ -124,7 +222,7 @@ function connectSSE() {
 function updateAlertSoundBtn() {
   const b = document.getElementById('alert-sound-btn');
   if (!b) return;
-  b.textContent = S.alertSound ? '🔔 On' : '🔔 Off';
+  b.textContent = S.alertSound ? 'On' : 'Off';
   b.classList.toggle('active', S.alertSound);
 }
 function toggleAlertSound() {
@@ -178,33 +276,33 @@ function openAccountModal() {
       <encore-icon name="user" size="3" live></encore-icon>
       <div>
         <h2 style="margin:0">${esc(u.display_name || u.username)}</h2>
-        <div class="name-sub">@${esc(u.username)} • Role: <b>${esc((u.role||'admin').toUpperCase())}</b></div>
+        <div class="name-sub">@${esc(u.username)} · Role: <b>${esc((u.role||'admin').toUpperCase())}</b></div>
       </div>
     </div>
     ${S.me.auth_enabled ? `
-      <div class="form-row"><label>Current Password</label><input id="pw-cur" type="password"></div>
-      <div class="form-row"><label>New Password (min 4 chars)</label><input id="pw-new" type="password"></div>
+      <div class="form-row"><label for="pw-cur">Current Password</label><input id="pw-cur" type="password"></div>
+      <div class="form-row"><label for="pw-new">New Password (min 4 chars)</label><input id="pw-new" type="password"></div>
       <div class="modal-foot">
         <button class="btn danger" onclick="doLogout()">Sign Out</button>
         <button class="btn" onclick="closeModal()">Close</button>
         <button class="btn primary" onclick="submitChangePassword()">Change Password</button>
       </div>
     ` : `
-      <p class="name-sub" style="margin-bottom:12px">Multi-user login belum diaktifkan. Tambahkan flag <code class="code-chip">-auth-user admin -auth-pass PASSWORD</code> pada service gateway atau buat user pertama di <b>Manage → Users</b>.</p>
+      <p class="name-sub" style="margin-bottom:12px">Multi-user login is not enabled. Start the gateway with <code class="code-chip">-auth-user admin -auth-pass PASSWORD</code> or create the first user under <b>Manage → Users</b>.</p>
       <div class="modal-foot">
         <button class="btn" onclick="closeModal()">Close</button>
-        <button class="btn primary" onclick="closeModal();setView('manage','users')">Manage Users ›</button>
+        <button class="btn primary" onclick="closeModal();setView('manage','users')">Manage Users</button>
       </div>
     `}`);
 }
 async function submitChangePassword() {
-  const res = await fetch('/api/v1/auth/password', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ current_password: document.getElementById('pw-cur').value, new_password: document.getElementById('pw-new').value })
-  });
-  const d = await res.json();
-  if (!res.ok) { toast('Error: ' + d.error); return; }
-  closeModal(); toast('Password updated!');
+  try {
+    await apiFetchJSON('/api/v1/auth/password', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ current_password: document.getElementById('pw-cur').value, new_password: document.getElementById('pw-new').value })
+    });
+    closeModal(); toast('Password updated');
+  } catch (e) { toast('Error: ' + e.message); }
 }
 async function doLogout() {
   await fetch('/api/v1/auth/logout', { method: 'POST' });
@@ -212,9 +310,14 @@ async function doLogout() {
 }
 function toggleSidebar() {
   const sb = document.getElementById('sidebar');
-  sb.classList.toggle('collapsed');
+  const collapsed = sb.classList.toggle('collapsed');
   const btn = document.getElementById('sb-toggle-btn');
-  if (btn) btn.textContent = sb.classList.contains('collapsed') ? '»' : '«';
+  if (btn) {
+    btn.textContent = collapsed ? '»' : '«';
+    btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    btn.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
 }
 function openMobileSidebar() {
   document.getElementById('sidebar').classList.add('mobile-open');
@@ -240,9 +343,12 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     document.getElementById('global-search').focus();
   } else if (e.key === 'Escape') {
+    closeDisplayMenu();
     if (S.tvMode) { toggleTVMode(); return; }
     if (document.getElementById('confirm-backdrop')?.classList.contains('open')) resolveConfirm(false);
-    else { closeDrawer(); closeModal(); closeQuickJump(); closeMobileSidebar(); }
+    else if (document.getElementById('qj-backdrop')?.classList.contains('open')) closeQuickJump();
+    else if (document.getElementById('modal-backdrop')?.classList.contains('open')) closeModal();
+    else { closeDrawer(); closeMobileSidebar(); }
   }
 });
 
@@ -280,23 +386,23 @@ function fmtDurationSec(sec) {
   return `${secs}s`;
 }
 function hostBadge(h) {
-  if (!h.has_been_checked) return '<span class="badge c-pend"><img src="/assets/status/status-offline.svg">PENDING</span>';
+  if (!h.has_been_checked) return '<span class="badge c-pend"><img src="/assets/status/status-offline.svg" alt="">PENDING</span>';
   const m = {0:['UP','c-ok','status-ok.svg'],1:['DOWN','c-crit','status-critical.svg'],2:['UNREACH','c-warn','status-warn.svg']};
   const [l,c,ic] = m[h.current_state] || ['UNK','c-unk','status-info.svg'];
-  return `<span class="badge ${c}"><img src="/assets/status/${ic}">${l}</span>`;
+  return `<span class="badge ${c}"><img src="/assets/status/${ic}" alt="">${l}</span>`;
 }
 function svcBadge(s) {
-  if (!s.has_been_checked) return '<span class="badge c-pend"><img src="/assets/status/status-offline.svg">PENDING</span>';
+  if (!s.has_been_checked) return '<span class="badge c-pend"><img src="/assets/status/status-offline.svg" alt="">PENDING</span>';
   const m = {0:['OK','c-ok','status-ok.svg'],1:['WARN','c-warn','status-warn.svg'],2:['CRIT','c-crit','status-critical.svg'],3:['UNK','c-unk','status-info.svg']};
   const [l,c,ic] = m[s.current_state] || ['UNK','c-unk','status-info.svg'];
-  return `<span class="badge ${c}"><img src="/assets/status/${ic}">${l}</span>`;
+  return `<span class="badge ${c}"><img src="/assets/status/${ic}" alt="">${l}</span>`;
 }
 function flagsHTML(o) {
   let out = '';
-  if (o.acknowledged) out += '<span class="flag-tag">ACK</span>';
-  if (o.downtime_depth > 0) out += '<span class="flag-tag">DT</span>';
-  if (o.is_flapping) out += '<span class="flag-tag">FLAP</span>';
-  if (o.state_type === 0 && o.current_state > 0) out += '<span class="flag-tag">SOFT</span>';
+  if (o.acknowledged) out += '<span class="flag-tag" title="Problem acknowledged">ACK</span>';
+  if (o.downtime_depth > 0) out += '<span class="flag-tag" title="In scheduled downtime">DT</span>';
+  if (o.is_flapping) out += '<span class="flag-tag" title="State is flapping rapidly">FLAP</span>';
+  if (o.state_type === 0 && o.current_state > 0) out += '<span class="flag-tag" title="SOFT state — retrying before HARD alert">SOFT</span>';
   return out ? `<span class="flags">${out}</span>` : '';
 }
 
@@ -304,14 +410,12 @@ function openModal(html) { document.getElementById('modal-content').innerHTML = 
 function closeModal() { document.getElementById('modal-backdrop').classList.remove('open'); }
 function closeDrawer() { document.getElementById('drawer-wrap').classList.remove('open'); }
 
-/* Modern Smooth Confirmation Dialog (replaces native browser confirm()) */
+/* Modern Confirmation Dialog */
 let _confirmResolver = null;
 function encoreConfirm({ title, message, items = [], confirmText = 'Confirm', cancelText = 'Cancel', danger = false }) {
   return new Promise(resolve => {
     _confirmResolver = resolve;
-    const iconSVG = danger
-      ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>`
-      : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>`;
+    const iconSVG = danger ? uiIcon('alert', 'lg') : uiIcon('info', 'lg');
     const itemsHTML = items.length ? `<div class="confirm-items">${items.slice(0, 18).map(it => `<span class="flag-tag">${esc(it)}</span>`).join('')}${items.length > 18 ? `<span class="flag-tag">+${items.length - 18} more</span>` : ''}</div>` : '';
     document.getElementById('confirm-content').innerHTML = `
       <div class="confirm-head">
@@ -339,17 +443,17 @@ function resolveConfirm(ok) {
   }
 }
 
-/* Crisp Pixelated Mascot Art Helpers (from encore-art-templates) */
+/* Crisp Vector Empty-State Icon (Replaces Pixel Mascots in Operate Views) */
 function artSVG(kind) {
   const map = {
-    'radar-ok': '/assets/mascots/bot-ok.svg',
-    'servers': '/assets/mascots/bot-empty.svg',
-    'search': '/assets/mascots/bot-search.svg',
-    '403': '/assets/mascots/bot-403.svg',
-    '503': '/assets/mascots/bot-503.svg'
+    'radar-ok': ['ok', 'ok'],
+    'servers': ['server', ''],
+    'search': ['search', ''],
+    '403': ['shield', ''],
+    '503': ['alert', '']
   };
-  const src = map[kind] || '/assets/mascots/bot-empty.svg';
-  return `<img src="${src}" alt="" class="pixel-art" style="width:76px;height:76px;display:block;margin:0 auto 10px">`;
+  const [ic, cls] = map[kind] || ['server', ''];
+  return `<div class="empty-ico ${cls}">${uiIcon(ic, 'lg')}</div>`;
 }
 
 function isUserInteracting() {
@@ -361,21 +465,19 @@ function isUserInteracting() {
   return false;
 }
 
-async function sendCmd(cmd, label) {
+async function sendCmd(cmd, label, btnEl) {
+  if (btnEl) btnEl.disabled = true;
   try {
-    const res = await fetch('/api/v1/command', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command: cmd}) });
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.error || res.statusText);
+    await apiFetchJSON('/api/v1/command', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command: cmd}) });
     toast(label + ' queued');
     setTimeout(refreshAll, 700);
   } catch (e) { toast('Error: ' + e.message); }
+  finally { if (btnEl) btnEl.disabled = false; }
 }
 
 async function sendBatchCmds(commands, label) {
   try {
-    const res = await fetch('/api/v1/commands/batch', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({commands}) });
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.error || res.statusText);
+    const d = await apiFetchJSON('/api/v1/commands/batch', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({commands}) });
     toast(`${label}: ${d.count} queued`);
     S.selectedMon.clear();
     setTimeout(refreshAll, 700);
@@ -392,16 +494,20 @@ const VIEW_TITLES = {
   guide: 'User Guide'
 };
 
-function setView(v, sub) {
+function setView(v, sub, fromHash) {
   if (S.view === 'inventory' || S.view === 'problems') saveMonitorFilterState(S.view);
   S.view = v;
   S.offset = 0;
   S.selectedMon.clear();
   closeMobileSidebar();
+  closeDisplayMenu();
   document.getElementById('page-title').textContent = VIEW_TITLES[v] || v;
-  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  const activeNav = document.getElementById('nav-' + v);
-  if (activeNav) activeNav.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(el => {
+    const isAct = el.id === 'nav-' + v;
+    el.classList.toggle('active', isAct);
+    if (isAct) el.setAttribute('aria-current', 'page');
+    else el.removeAttribute('aria-current');
+  });
 
   ['sec-overview','sec-monitor','sec-reports','sec-manage','sec-system','sec-guide'].forEach(id => {
     document.getElementById(id).style.display = 'none';
@@ -439,6 +545,7 @@ function setView(v, sub) {
     if (sub) S.guideTab = sub;
     setGuideTab(S.guideTab);
   }
+  if (!fromHash) syncHashFromState();
 }
 
 function toggleLiveUpdates() {
@@ -451,11 +558,11 @@ function updateLiveToggleBtn() {
   const b = document.getElementById('live-toggle-btn');
   if (!b) return;
   if (S.livePaused) {
-    b.textContent = '⏸ Paused';
+    b.textContent = 'Paused';
     b.classList.remove('active');
     b.title = 'Live updates paused — click to resume';
   } else {
-    b.textContent = S.sseConnected ? '● Live' : '● Sync';
+    b.textContent = S.sseConnected ? 'Live' : 'Sync';
     b.classList.add('active');
     b.title = S.sseConnected ? 'Real-time SSE push active (click to pause)' : 'Fallback 5s sync active (click to pause)';
   }
@@ -464,7 +571,6 @@ function setAutoInterval() {
   updateLiveToggleBtn();
   clearInterval(S.timer);
   if (S.livePaused) { S.autoMs = 0; return; }
-  // When SSE real-time push is connected, only do a 30s safety resync; if SSE drops, poll every 5s
   S.autoMs = S.sseConnected ? 30000 : 5000;
   S.timer = setInterval(() => {
     if (!S.livePaused && !isUserInteracting()) refreshAll();
@@ -474,62 +580,96 @@ function setAutoInterval() {
 async function refreshAll() {
   try {
     await loadMeta();
+    S.lastGoodSync = Date.now();
+    setConnectionBanner(false);
     if (S.view === 'overview') await loadOverview();
     else if (S.view === 'inventory' || S.view === 'problems') await loadMonitorView();
   } catch (e) {
     const dot = document.getElementById('conn-dot');
     if (dot) dot.className = 'pulse-dot crit';
-    document.getElementById('conn-label').textContent = 'Offline';
+    const lbl = document.getElementById('conn-label');
+    if (lbl) lbl.textContent = 'Offline';
+    setConnectionBanner(true, 'Unable to reach Encore State Gateway (' + e.message + ').');
   }
 }
 
-/* Quick Jump Palette (Ctrl+K) */
+/* Keyboard-Navigable Quick Jump Palette (Ctrl+K) */
 let qjHostsCache = [];
+let qjSelectedIdx = 0;
 async function openQuickJump() {
   document.getElementById('qj-backdrop').classList.add('open');
   const inp = document.getElementById('qj-input');
   inp.value = '';
+  qjSelectedIdx = 0;
   inp.focus();
   try {
-    const res = await fetch('/api/v1/hosts?limit=200');
-    qjHostsCache = (await res.json()).hosts || [];
+    const d = await apiFetchJSON('/api/v1/hosts?limit=200');
+    qjHostsCache = d.hosts || [];
   } catch (e) {}
   renderQuickJump();
 }
 function closeQuickJump() { document.getElementById('qj-backdrop').classList.remove('open'); }
+function onQuickJumpKey(e) {
+  const list = window._qjActions || [];
+  if (!list.length) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    qjSelectedIdx = (qjSelectedIdx + 1) % list.length;
+    highlightQuickJumpRow();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    qjSelectedIdx = (qjSelectedIdx - 1 + list.length) % list.length;
+    highlightQuickJumpRow();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const act = list[qjSelectedIdx];
+    if (act) { closeQuickJump(); act.run(); }
+  }
+}
+function highlightQuickJumpRow() {
+  document.querySelectorAll('#qj-list .qj-item').forEach((el, i) => {
+    const active = i === qjSelectedIdx;
+    el.classList.toggle('qj-active', active);
+    if (active) el.scrollIntoView({ block: 'nearest' });
+  });
+}
 function renderQuickJump() {
   const q = (document.getElementById('qj-input')?.value || '').trim().toLowerCase();
   const staticItems = [
-    { label: 'Overview — Fleet Map & Charts', tag: 'Page', run: () => setView('overview') },
+    { label: 'Overview — Fleet Map & Incidents', tag: 'Page', run: () => setView('overview') },
     { label: 'Inventory — By Host (Host & Services)', tag: 'Page', run: () => setView('inventory','byhost') },
     { label: 'Inventory — All Services', tag: 'Page', run: () => setView('inventory','services') },
     { label: 'Inventory — Hosts Only', tag: 'Page', run: () => setView('inventory','hosts') },
     { label: 'Active Problems', tag: 'Page', run: () => setView('problems','active') },
     { label: 'Historical Reports & SLA Charts', tag: 'Page', run: () => setView('reports','sla') },
-    { label: 'Manage — Hosts & Services', tag: 'Config', run: () => setView('manage','objects') },
-    { label: 'Manage — Service Templates', tag: 'Config', run: () => setView('manage','templates') },
-    { label: 'Manage — Email & Webhook Notifications', tag: 'Config', run: () => setView('manage','notifications') },
-    { label: 'Manage — Commands & Scripts', tag: 'Config', run: () => setView('manage','commands') },
-    { label: 'Manage — Secrets ($USERn$)', tag: 'Config', run: () => setView('manage','secrets') },
-    { label: 'Review Pending Config Diff', tag: 'Config', run: () => openDiffReviewModal() },
+    ...(isAdmin() ? [
+      { label: 'Manage — Hosts & Services', tag: 'Config', run: () => setView('manage','objects') },
+      { label: 'Manage — Service Templates', tag: 'Config', run: () => setView('manage','templates') },
+      { label: 'Manage — Email & Webhook Notifications', tag: 'Config', run: () => setView('manage','notifications') },
+      { label: 'Manage — Commands & Scripts', tag: 'Config', run: () => setView('manage','commands') },
+      { label: 'Manage — Secrets ($USERn$)', tag: 'Config', run: () => setView('manage','secrets') },
+      { label: 'Review Pending Config Diff', tag: 'Config', run: () => openDiffReviewModal() },
+      { label: 'Add New Host', tag: 'Action', run: () => { setView('manage','objects'); setTimeout(() => openHostForm(-1), 250); } },
+      { label: 'Add New Service', tag: 'Action', run: () => { setView('manage','objects'); setTimeout(() => openSvcForm(-1), 250); } }
+    ] : []),
     { label: 'User Guide — Menus & Features', tag: 'Help', run: () => setView('guide','menus') },
-    { label: 'User Guide — NCPA Quick Install', tag: 'Help', run: () => setView('guide','ncpa') },
-    { label: 'Add New Host', tag: 'Action', run: () => { setView('manage','objects'); setTimeout(() => openHostForm(-1), 250); } },
-    { label: 'Add New Service', tag: 'Action', run: () => { setView('manage','objects'); setTimeout(() => openSvcForm(-1), 250); } }
+    { label: 'User Guide — NCPA Quick Install', tag: 'Help', run: () => setView('guide','ncpa') }
   ];
   const hostItems = qjHostsCache.map(h => ({
     label: `${h.name} (${h.address})`,
     tag: 'Host',
     run: () => {
       document.getElementById('global-search').value = h.name;
+      S.invCollapsedHosts.delete(h.name);
       S.invExpandedHosts.add(h.name);
       setView('inventory', 'byhost');
     }
   }));
   const all = [...staticItems, ...hostItems].filter(it => !q || it.label.toLowerCase().includes(q) || it.tag.toLowerCase().includes(q)).slice(0, 14);
   window._qjActions = all;
+  qjSelectedIdx = 0;
   document.getElementById('qj-list').innerHTML = all.length ? all.map((it, i) => `
-    <div class="qj-item" onclick="closeQuickJump();window._qjActions[${i}].run()">
+    <button type="button" class="qj-item ${i===0?'qj-active':''}" onclick="closeQuickJump();window._qjActions[${i}].run()">
       <span>${esc(it.label)}</span><span class="flag-tag">${esc(it.tag)}</span>
-    </div>`).join('') : '<div class="empty" style="padding:18px">No matches</div>';
+    </button>`).join('') : '<div class="empty" style="padding:18px">No matches</div>';
 }

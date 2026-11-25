@@ -1,18 +1,27 @@
+/* Safe object lookup registry for drawers (prevents SSE refresh index race conditions) */
+const _drawerObjMap = new Map();
+function regDrawerObj(key, obj) { _drawerObjMap.set(key, obj); return key; }
+
 async function loadMeta() {
-  const [hRes, sRes, hgRes, sgRes] = await Promise.all([
-    fetch('/health'), fetch('/api/v1/summary'), fetch('/api/v1/hostgroups'), fetch('/api/v1/servicegroups')
+  const [health, sum, hgData, sgData] = await Promise.all([
+    apiFetchJSON('/health'),
+    apiFetchJSON('/api/v1/summary'),
+    apiFetchJSON('/api/v1/hostgroups'),
+    apiFetchJSON('/api/v1/servicegroups')
   ]);
-  const health = await hRes.json();
-  const sum = await sRes.json();
   S.summary = sum;
-  S.hostgroups = (await hgRes.json()).hostgroups || [];
-  S.servicegroups = (await sgRes.json()).servicegroups || [];
+  S.hostgroups = hgData.hostgroups || [];
+  S.servicegroups = sgData.servicegroups || [];
 
   const dot = document.getElementById('conn-dot');
   if (dot) dot.className = health.connected ? 'pulse-dot ok' : 'pulse-dot crit';
   document.getElementById('conn-label').textContent = health.connected ? (S.sseConnected ? 'Live (SSE)' : 'Live') : 'Reconnecting';
   document.getElementById('events-pill').textContent = (health.events_applied || 0).toLocaleString() + ' ev';
-  document.getElementById('sub-meta').textContent = `PID ${sum.program.pid} • ${sum.hosts.total} hosts, ${sum.services.total} services • ${new Date().toLocaleTimeString()}`;
+  document.getElementById('sub-meta').textContent = `${sum.hosts.total} hosts · ${sum.services.total} services · PID ${sum.program.pid} · Updated ${new Date().toLocaleTimeString()}`;
+
+  if (!health.connected) {
+    setConnectionBanner(true, 'Encore Engine socket is reconnecting — live state updates are temporarily paused.');
+  }
 
   const pbBanner = document.getElementById('pending-banner');
   const navPend = document.getElementById('nav-pending-badge');
@@ -27,7 +36,7 @@ async function loadMeta() {
     if (diff.modified) parts.push(`${diff.modified} modified`);
     if (diff.deleted) parts.push(`${diff.deleted} deleted`);
     const sumEl = document.getElementById('pending-summary-text');
-    if (sumEl) sumEl.innerHTML = `<b>Pending Encore Config</b>${parts.length ? ' (' + parts.join(' • ') + ')' : ''} — belum aktif sampai Apply &amp; Reload.`;
+    if (sumEl) sumEl.innerHTML = `<b>Pending Encore Config</b>${parts.length ? ' (' + parts.join(' · ') + ')' : ''} — not active until Apply &amp; Reload.`;
     if (navPend) navPend.textContent = diff.total || '•';
   } else {
     if (pbBanner) pbBanner.style.display = 'none';
@@ -70,9 +79,43 @@ function restoreMonitorFilterState(v) {
   const so = document.getElementById('sort-select');
   if (un) un.checked = !!f.unhandled;
   if (so) so.value = f.sort || 'severity';
+  updateClearFiltersBtn();
 }
 
-/* ====== OVERVIEW: KPI + FLEET HEALTH MAP (GRID & TOPOLOGY) + MINI-CHARTS ====== */
+function updateClearFiltersBtn() {
+  const btn = document.getElementById('clear-filters-btn');
+  if (!btn) return;
+  const hasAny = !!(
+    document.getElementById('global-search')?.value.trim() ||
+    document.getElementById('hg-select')?.value ||
+    document.getElementById('sg-select')?.value ||
+    document.getElementById('state-select')?.value ||
+    document.getElementById('unhandled-chk')?.checked
+  );
+  btn.style.display = hasAny ? 'inline-flex' : 'none';
+}
+
+function clearMonitorFilters() {
+  const gs = document.getElementById('global-search');
+  if (gs) gs.value = '';
+  const hg = document.getElementById('hg-select');
+  if (hg) hg.value = '';
+  const sg = document.getElementById('sg-select');
+  if (sg) sg.value = '';
+  const st = document.getElementById('state-select');
+  if (st) st.value = '';
+  const un = document.getElementById('unhandled-chk');
+  if (un) un.checked = false;
+  S.invFilter.state = '';
+  S.invFilter.unhandled = false;
+  S.probFilter.state = '';
+  S.probFilter.unhandled = false;
+  S.offset = 0;
+  updateClearFiltersBtn();
+  loadMonitorView();
+}
+
+/* ====== OVERVIEW: INCIDENT-FIRST + FLEET HEALTH MAP + 24H UPTIME ====== */
 function setOvMapMode(mode) {
   S.ovMapMode = mode;
   document.getElementById('ov-map-grid-btn')?.classList.toggle('active', mode === 'grid');
@@ -84,7 +127,7 @@ function renderOverviewFleetMap(hosts) {
   const el = document.getElementById('ov-fleet-map');
   if (!el) return;
   if (!hosts.length) {
-    el.innerHTML = `<div class="art-empty">${artSVG('servers')}<h4>No Hosts Monitored Yet</h4><p>Tambahkan host pertama Anda di menu Manage untuk mulai melihat peta kesehatan infrastruktur.</p></div>`;
+    el.innerHTML = `<div class="art-empty">${artSVG('servers')}<h4>No Hosts Monitored Yet</h4><p>Add your first host under Manage to start tracking fleet health.</p></div>`;
     return;
   }
 
@@ -97,31 +140,32 @@ function renderOverviewFleetMap(hosts) {
       const row = Math.floor(i / 2);
       const nx = col === 0 ? 255 : 420;
       const ny = 30 + row * 38;
+      const stTxt = !ho.has_been_checked ? 'PEND' : (ho.current_state === 1 ? 'DOWN' : (ho.svc_crit > 0 ? `${ho.svc_crit}C` : (ho.svc_warn > 0 ? `${ho.svc_warn}W` : 'OK')));
       const stroke = !ho.has_been_checked ? 'var(--muted)' : (ho.current_state === 1 || ho.svc_crit > 0 ? 'var(--crit)' : (ho.current_state === 2 || ho.svc_warn > 0 ? 'var(--warn)' : 'var(--ok)'));
       const lineCol = ho.current_state === 1 ? 'var(--crit)' : 'var(--border)';
       return `
         <path d="M ${cx+38} ${cy} C ${cx+95} ${cy}, ${nx-60} ${ny}, ${nx-62} ${ny}" fill="none" stroke="${lineCol}" stroke-width="1.6"/>
-        <g style="cursor:pointer" onclick="focusHostFromMap('${esc(ho.name)}')">
+        <g style="cursor:pointer" role="button" tabindex="0" aria-label="${esc(ho.name)} (${stTxt})" onclick="focusHostFromMap('${jsEsc(ho.name)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();focusHostFromMap('${jsEsc(ho.name)}');}">
           <title>${esc(ho.name)} (${esc(ho.address)}) — ${ho.svc_ok}/${ho.svc_total} OK, ${ho.svc_warn} WARN, ${ho.svc_crit} CRIT</title>
-          <rect x="${nx-62}" y="${ny-14}" width="132" height="28" rx="7" fill="var(--surface)" stroke="${stroke}" stroke-width="1.8"/>
+          <rect x="${nx-62}" y="${ny-14}" width="136" height="28" rx="7" fill="var(--surface)" stroke="${stroke}" stroke-width="1.6"/>
           <circle cx="${nx-50}" cy="${ny}" r="4" fill="${stroke}"/>
-          <text x="${nx-40}" y="${ny+4}" fill="var(--text)" font-size="11" font-weight="600">${esc(ho.name.length > 13 ? ho.name.slice(0,12)+'…' : ho.name)}</text>
-          <text x="${nx+62}" y="${ny+4}" text-anchor="end" fill="var(--muted)" font-size="10">${ho.svc_ok}/${ho.svc_total}</text>
+          <text x="${nx-40}" y="${ny+4}" fill="var(--text)" font-size="11" font-weight="600">${esc(ho.name.length > 12 ? ho.name.slice(0,11)+'…' : ho.name)}</text>
+          <text x="${nx+66}" y="${ny+4}" text-anchor="end" fill="${stroke}" font-size="10" font-weight="700">${stTxt}</text>
         </g>`;
     }).join('');
-    el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block">
-      <rect x="${cx-44}" y="${cy-26}" width="84" height="52" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+    el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block" role="img" aria-label="Fleet topology diagram">
+      <rect x="${cx-44}" y="${cy-26}" width="84" height="52" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.8"/>
       <text x="${cx-2}" y="${cy-2}" text-anchor="middle" fill="var(--accent)" font-size="12" font-weight="700">ENCORE</text>
       <text x="${cx-2}" y="${cy+12}" text-anchor="middle" fill="var(--muted)" font-size="9.5">${hosts.length} hosts</text>
       ${nodes}
-    </svg>${hosts.length > 14 ? `<div class="name-sub" style="text-align:right;margin-top:4px">Showing 14 of ${hosts.length} hosts — switch to Health Grid for full list</div>` : ''}`;
+    </svg>${hosts.length > 14 ? `<div class="name-sub" style="text-align:right;margin-top:6px">Showing 14 of ${hosts.length} hosts — switch to Health Grid or Inventory for full list</div>` : ''}`;
     return;
   }
 
   el.innerHTML = `<div class="fleet-grid">${hosts.slice(0, 24).map(ho => {
     const t = ho.svc_total || 1;
-    const stCls = !ho.has_been_checked ? 'st-pend' : (ho.current_state === 1 || ho.svc_crit > 0 ? 'st-down' : (ho.current_state === 2 || ho.svc_warn > 0 ? 'st-warn' : ''));
-    return `<div class="host-tile ${stCls}" onclick="focusHostFromMap('${esc(ho.name)}')" title="${esc(ho.name)} (${esc(ho.address)}) — Click to inspect services">
+    const stCls = !ho.has_been_checked ? '' : (ho.current_state === 1 || ho.svc_crit > 0 ? 'st-down' : (ho.current_state === 2 || ho.svc_warn > 0 ? 'st-warn' : ''));
+    return `<button type="button" class="host-tile ${stCls}" onclick="focusHostFromMap('${jsEsc(ho.name)}')" title="${esc(ho.name)} (${esc(ho.address)}) — Click to inspect services">
       <div class="host-tile-top">
         <span class="host-tile-name">${esc(ho.name)}</span>
         ${hostBadge(ho)}
@@ -132,13 +176,14 @@ function renderOverviewFleetMap(hosts) {
         <span>${ho.svc_ok}/${ho.svc_total} OK</span>
         <span>${ho.svc_crit ? `<b style="color:var(--crit-fg)">${ho.svc_crit} CRIT</b>` : (ho.svc_warn ? `<b style="color:var(--warn-fg)">${ho.svc_warn} WARN</b>` : 'Healthy')}</span>
       </div>
-    </div>`;
-  }).join('')}</div>`;
+    </button>`;
+  }).join('')}</div>${hosts.length > 24 ? `<div class="name-sub" style="text-align:right;margin-top:8px">Showing 24 of ${hosts.length} hosts — <a href="#inventory/byhost" style="color:var(--accent);font-weight:600" onclick="setView('inventory','byhost');return false">Open Inventory</a> for all hosts</div>` : ''}`;
 }
 
 function focusHostFromMap(hostName) {
   document.getElementById('global-search').value = hostName;
   S.invFilter.state = '';
+  S.invCollapsedHosts.delete(hostName);
   S.invExpandedHosts.add(hostName);
   setView('inventory', 'byhost');
 }
@@ -164,13 +209,12 @@ async function renderOverviewMiniCharts(sum) {
     return out;
   }).join('');
 
-  // Fetch 24h trend at most once every 60 seconds
   const nowMs = Date.now();
   if (!S.ovTrendCache.data || nowMs - S.ovTrendCache.ts > 60000) {
     try {
       const nowS = Math.floor(nowMs / 1000);
-      const res = await fetch(`/api/v1/reports/availability?from=${nowS-86400}&to=${nowS}&target=services`);
-      if (res.ok) S.ovTrendCache = { ts: nowMs, data: await res.json() };
+      const d = await apiFetchJSON(`/api/v1/reports/availability?from=${nowS-86400}&to=${nowS}&target=services`);
+      S.ovTrendCache = { ts: nowMs, data: d };
     } catch (e) {}
   }
   const tl = (S.ovTrendCache.data && S.ovTrendCache.data.timeline) || [];
@@ -179,13 +223,21 @@ async function renderOverviewMiniCharts(sum) {
   const inc24 = ovSum.total_incidents ?? 0;
   const prob24 = ovSum.total_problem_sec ?? 0;
 
+  // Update 4th KPI Card (24h Service SLA)
+  const slaVal = document.getElementById('ov-sla-val');
+  const slaSub = document.getElementById('ov-sla-sub');
+  const slaIcon = document.getElementById('kpi-sla-icon');
+  if (slaVal) slaVal.textContent = sla24.toFixed(2) + '%';
+  if (slaSub) slaSub.textContent = `${inc24} HARD inc` + (prob24 > 0 ? ` · ${fmtDurationSec(prob24)} down` : ' · No downtime');
+  if (slaIcon) slaIcon.src = sla24 >= 99.5 ? '/assets/status/status-ok.svg' : (sla24 >= 95 ? '/assets/status/status-warn.svg' : '/assets/status/status-critical.svg');
+
   let sparkHTML = '';
   if (tl.length) {
     sparkHTML = `
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;margin-bottom:6px">
-          <span style="font-weight:650" title="Persentase waktu seluruh service berstatus OK dalam 24 jam terakhir">24h Service Uptime</span>
-          <span class="mono"><b>${sla24.toFixed(2)}%</b> OK • ${inc24} HARD inc${prob24 > 0 ? ` • ${fmtDurationSec(prob24)} down` : ''}</span>
+          <span style="font-weight:650" title="Percentage of time services remained OK over the last 24 hours">24h Service Uptime</span>
+          <span class="mono"><b>${sla24.toFixed(2)}%</b> OK · ${inc24} HARD inc${prob24 > 0 ? ` · ${fmtDurationSec(prob24)} down` : ''}</span>
         </div>
         ${renderTrendSVG(tl, 88)}
       </div>`;
@@ -193,7 +245,7 @@ async function renderOverviewMiniCharts(sum) {
 
   el.innerHTML = `
     <div class="donut-wrap">
-      <svg width="96" height="96" viewBox="0 0 96 96" style="flex-shrink:0">
+      <svg width="96" height="96" viewBox="0 0 96 96" style="flex-shrink:0" role="img" aria-label="Service state distribution">
         <circle cx="48" cy="48" r="${r}" fill="none" stroke="var(--surface-2)" stroke-width="12"/>
         ${circles}
         <text x="48" y="47" text-anchor="middle" fill="var(--text)" font-size="14" font-weight="700">${Math.round(okP)}%</text>
@@ -226,59 +278,76 @@ async function loadOverview() {
   document.getElementById('kpi-s-icon').src = sum.services.critical > 0 ? '/assets/status/status-critical.svg' : (sum.services.warning > 0 ? '/assets/status/status-warn.svg' : '/assets/status/status-ok.svg');
 
   document.getElementById('ov-unhandled').textContent = unhand;
-  document.getElementById('ov-u-sub').textContent = unhand > 0 ? `${sum.hosts.unhandled} hosts, ${sum.services.unhandled} services` : 'All clear';
+  document.getElementById('ov-u-sub').textContent = unhand > 0 ? `${sum.hosts.unhandled} hosts · ${sum.services.unhandled} services` : 'All clear';
   document.getElementById('kpi-u-icon').src = unhand > 0 ? '/assets/status/status-critical.svg' : '/assets/status/status-ok.svg';
+  document.getElementById('kpi-unhandled-card')?.classList.toggle('is-alert', unhand > 0);
 
-  document.getElementById('ov-pid').textContent = 'PID ' + sum.program.pid;
-  document.getElementById('ov-flags').textContent = `Checks: ${sum.program.execute_service_checks ? 'ON' : 'OFF'} • Notify: ${sum.program.notifications_enabled ? 'ON' : 'OFF'}`;
-
-  const [pRes, aRes, fhRes] = await Promise.all([
-    fetch('/api/v1/services?unhandled=1&sort=severity&limit=10'),
-    isAdmin() ? fetch('/api/v1/audit?limit=5') : Promise.resolve(null),
-    fetch('/api/v1/hosts/health')
-  ]);
-  const probs = (await pRes.json()).services || [];
-  const fleetHosts = (await fhRes.json()).hosts || [];
-
-  renderOverviewFleetMap(fleetHosts);
-  renderOverviewMiniCharts(sum);
-
-  const pBody = document.getElementById('ov-prob-body');
-  if (!probs.length) {
-    pBody.innerHTML = `<tr><td colspan="5"><div class="art-empty">${artSVG('radar-ok')}<h4>All Systems Operational</h4><p>Tidak ada problem yang belum ditangani saat ini.</p></div></td></tr>`;
-  } else {
-    S.lastItems = probs;
-    pBody.innerHTML = probs.map((s, idx) => `
-      <tr class="clickable" onclick="openSvcDrawer(${idx})">
-        <td>${svcBadge(s)}</td>
-        <td><div class="name-primary">${esc(s.description)}</div><div class="name-sub">${esc(s.host_name)}</div></td>
-        <td class="mono">${durStr(s.last_state_change)}</td>
-        <td class="output-cell" title="${esc(s.plugin_output)}">${esc(s.plugin_output)}</td>
-        <td class="actions" onclick="event.stopPropagation()">
-          <button class="icon-btn" title="Force check" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${esc(s.host_name)};${esc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻</button>
-          <button class="icon-btn" title="Acknowledge" onclick="openAckModal('service','${esc(s.host_name)}','${esc(s.description)}')">✓</button>
-        </td>
-      </tr>`).join('');
+  // Incident-First Ordering: promote Unhandled Problems above Fleet Map whenever unhandled > 0
+  const probPanel = document.getElementById('ov-prob-panel');
+  const topSlot = document.getElementById('ov-incident-top');
+  const homeSlot = document.getElementById('ov-incident-home');
+  if (probPanel && topSlot && homeSlot) {
+    probPanel.classList.toggle('panel-alert', unhand > 0);
+    if (unhand > 0 && probPanel.parentElement !== topSlot) topSlot.appendChild(probPanel);
+    else if (unhand === 0 && probPanel.parentElement !== homeSlot) homeSlot.appendChild(probPanel);
   }
 
-  document.getElementById('ov-hg-list').innerHTML = S.hostgroups.length ? S.hostgroups.slice(0, 6).map(g => {
-    const t = g.services.total || 1;
-    return `<div style="margin-bottom:12px;cursor:pointer" onclick="jumpToGroup('hg','${esc(g.group_name)}')">
-      <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px">
-        <b>${esc(g.group_name)}</b><span class="mono">${g.hosts.up}/${g.hosts.total} UP • ${g.services.ok}/${g.services.total} OK</span>
-      </div>
-      <div class="bar"><div class="bar-ok" style="width:${(g.services.ok/t)*100}%"></div><div class="bar-warn" style="width:${(g.services.warning/t)*100}%"></div><div class="bar-crit" style="width:${(g.services.critical/t)*100}%"></div></div>
-    </div>`;
-  }).join('') : '<div class="empty" style="padding:14px">No hostgroups</div>';
+  try {
+    const [pData, aData, fhData] = await Promise.all([
+      apiFetchJSON('/api/v1/services?unhandled=1&sort=severity&limit=10'),
+      isAdmin() ? apiFetchJSON('/api/v1/audit?limit=5').catch(() => ({ entries: [] })) : Promise.resolve({ entries: [] }),
+      apiFetchJSON('/api/v1/hosts/health')
+    ]);
+    const probs = pData.services || [];
+    const fleetHosts = fhData.hosts || [];
 
-  const audits = (aRes && aRes.ok) ? ((await aRes.json()).entries || []) : [];
-  document.getElementById('ov-audit-list').innerHTML = !isAdmin()
-    ? '<div class="empty" style="padding:14px">Audit log requires Admin role</div>'
-    : (audits.length ? audits.map(a => `
-    <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
-      <div><b>${esc(a.action)}</b> <span class="mono">${esc(a.target)}</span></div>
-      <span class="mono">${relTime(Math.floor(Date.parse(a.time)/1000))}</span>
-    </div>`).join('') : '<div class="empty" style="padding:14px">No activity yet</div>');
+    renderOverviewFleetMap(fleetHosts);
+    renderOverviewMiniCharts(sum);
+
+    const pBody = document.getElementById('ov-prob-body');
+    if (!probs.length) {
+      pBody.innerHTML = `<tr><td colspan="5"><div class="art-empty">${artSVG('radar-ok')}<h4>All Systems Operational</h4><p>No unhandled problems at this time.</p></div></td></tr>`;
+    } else {
+      pBody.innerHTML = probs.map(s => {
+        const key = regDrawerObj('svc:' + s.host_name + ':' + s.description, s);
+        return `
+        <tr class="clickable" tabindex="0" onclick="openSvcDrawerByKey('${jsEsc(key)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSvcDrawerByKey('${jsEsc(key)}');}">
+          <td>${svcBadge(s)}</td>
+          <td><div class="name-primary">${esc(s.description)}${flagsHTML(s)}</div><div class="name-sub">${esc(s.host_name)}</div></td>
+          <td class="mono">${durStr(s.last_state_change)}</td>
+          <td class="output-cell" title="${esc(s.plugin_output)}">${esc(s.plugin_output)}</td>
+          <td class="actions" onclick="event.stopPropagation()">
+            ${canOperate() ? `
+              <button class="icon-btn" title="Force check" aria-label="Force check ${esc(s.description)}" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)};'+Math.floor(Date.now()/1000),'Force check',this)">${uiIcon('refresh')}</button>
+              <button class="icon-btn" title="Acknowledge" aria-label="Acknowledge ${esc(s.description)}" onclick="openAckModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">${uiIcon('check')}</button>
+            ` : `<span class="name-sub">Read-only</span>`}
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    document.getElementById('ov-hg-list').innerHTML = S.hostgroups.length ? S.hostgroups.slice(0, 6).map(g => {
+      const t = g.services.total || 1;
+      return `<button type="button" class="gcard" style="margin-bottom:8px;padding:10px 12px" onclick="jumpToGroup('hg','${jsEsc(g.group_name)}')">
+        <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px">
+          <b>${esc(g.group_name)}</b><span class="mono">${g.hosts.up}/${g.hosts.total} UP · ${g.services.ok}/${g.services.total} OK</span>
+        </div>
+        <div class="bar"><div class="bar-ok" style="width:${(g.services.ok/t)*100}%"></div><div class="bar-warn" style="width:${(g.services.warning/t)*100}%"></div><div class="bar-crit" style="width:${(g.services.critical/t)*100}%"></div></div>
+      </button>`;
+    }).join('') : '<div class="empty" style="padding:14px">No hostgroups defined</div>';
+
+    if (isAdmin()) {
+      const audits = aData.entries || [];
+      document.getElementById('ov-audit-list').innerHTML = audits.length ? audits.map(a => `
+        <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+          <div><b>${esc(a.action)}</b> <span class="mono">${esc(a.target)}</span></div>
+          <span class="mono">${relTime(Math.floor(Date.parse(a.time)/1000))}</span>
+        </div>`).join('') : '<div class="empty" style="padding:14px">No recent activity</div>';
+    }
+  } catch (err) {
+    const fm = document.getElementById('ov-fleet-map');
+    if (fm) fm.innerHTML = `<div class="error-card"><span>Failed to load overview data: ${esc(err.message)}</span><button class="btn btn-sm" onclick="loadOverview()">Retry</button></div>`;
+  }
 }
 
 function renderMonitorSubtabs() {
@@ -296,8 +365,8 @@ function renderMonitorSubtabs() {
   }
 }
 
-function setInvTab(t) { S.invTab = t; S.invFilter.state = ''; S.offset = 0; S.selectedMon.clear(); populateStateSelect(t, ''); renderMonitorSubtabs(); loadMonitorView(); }
-function setProbTab(t) { S.probTab = t; S.offset = 0; S.selectedMon.clear(); renderMonitorSubtabs(); loadMonitorView(); }
+function setInvTab(t) { S.invTab = t; S.invFilter.state = ''; S.offset = 0; S.selectedMon.clear(); populateStateSelect(t, ''); renderMonitorSubtabs(); syncHashFromState(); loadMonitorView(); }
+function setProbTab(t) { S.probTab = t; S.offset = 0; S.selectedMon.clear(); renderMonitorSubtabs(); syncHashFromState(); loadMonitorView(); }
 function quickUnhandled() { S.probFilter.unhandled = true; S.probFilter.state = ''; setView('problems', 'active'); }
 function jumpToGroup(type, name) {
   document.getElementById('hg-select').value = type === 'hg' ? name : '';
@@ -306,6 +375,7 @@ function jumpToGroup(type, name) {
   setView('inventory', 'byhost');
 }
 function onGlobalSearch() {
+  updateClearFiltersBtn();
   if (S.view !== 'inventory' && S.view !== 'problems') setView('inventory', 'byhost');
   else { S.offset = 0; loadMonitorView(); }
 }
@@ -314,7 +384,7 @@ function toggleGroupByHost() {
   document.getElementById('group-view-btn').classList.toggle('active', S.groupByHost);
   loadMonitorView();
 }
-function onFilterChange() { saveMonitorFilterState(S.view); S.offset = 0; S.selectedMon.clear(); loadMonitorView(); }
+function onFilterChange() { saveMonitorFilterState(S.view); updateClearFiltersBtn(); S.offset = 0; S.selectedMon.clear(); loadMonitorView(); }
 function changePage(dir) {
   const limit = Number(document.getElementById('limit-select').value);
   const next = S.offset + dir * limit;
@@ -340,7 +410,7 @@ function populateStateSelect(mode, desiredVal) {
   sel.value = [...sel.options].some(o => o.value === cur) ? cur : '';
 }
 
-/* Bulk Selection for Monitor (Modern Modals, zero native prompt()) */
+/* Bulk Selection for Monitor */
 function monItemKey(mode, item) { return mode === 'hosts' ? ('host::' + item.name) : ('svc::' + item.host_name + '::' + item.description); }
 function toggleMonSelect(key, checked) { if (checked) S.selectedMon.add(key); else S.selectedMon.delete(key); renderBulkBar(); }
 function toggleMonSelectAll(checked) {
@@ -353,14 +423,14 @@ function toggleMonSelectAll(checked) {
 function renderBulkBar() {
   const bar = document.getElementById('mon-bulk-bar');
   if (!bar) return;
-  if (S.selectedMon.size === 0) { bar.style.display = 'none'; return; }
+  if (S.selectedMon.size === 0 || !canOperate()) { bar.style.display = 'none'; return; }
   bar.style.display = 'flex';
   bar.innerHTML = `
     <div><b>${S.selectedMon.size}</b> selected</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <button class="btn btn-sm primary" onclick="bulkMonitorForceCheck()">↻ Force Check All</button>
-      <button class="btn btn-sm" onclick="openBulkAckModal()">✓ Acknowledge All</button>
-      <button class="btn btn-sm" onclick="openBulkDowntimeModal()">⏱ Schedule Downtime</button>
+      <button class="btn btn-sm primary" onclick="bulkMonitorForceCheck()">${uiIcon('refresh')} Force Check All</button>
+      <button class="btn btn-sm" onclick="openBulkAckModal()">${uiIcon('check')} Acknowledge All</button>
+      <button class="btn btn-sm" onclick="openBulkDowntimeModal()">${uiIcon('clock')} Schedule Downtime</button>
       <button class="btn btn-sm" onclick="S.selectedMon.clear();renderBulkBar();loadMonitorView()">Clear</button>
     </div>`;
 }
@@ -376,7 +446,7 @@ function bulkMonitorForceCheck() {
 }
 function openBulkAckModal() {
   openModal(`<h2>Bulk Acknowledge (${S.selectedMon.size} items)</h2>
-    <div class="form-row"><label>Comment</label><input id="ba-cmt" type="text" value="Bulk acknowledged via Encore"></div>
+    <div class="form-row"><label for="ba-cmt">Comment</label><input id="ba-cmt" type="text" value="Bulk acknowledged via Encore"></div>
     <div style="display:flex;gap:10px;margin:8px 0">
       <label class="chk-pill"><input type="checkbox" id="ba-sticky" checked> Sticky</label>
       <label class="chk-pill"><input type="checkbox" id="ba-notify"> Notify</label>
@@ -398,7 +468,7 @@ function submitBulkAck() {
 }
 function openBulkDowntimeModal() {
   openModal(`<h2>Bulk Schedule Downtime (${S.selectedMon.size} items)</h2>
-    <div class="form-row"><label>Duration (min)</label>
+    <div class="form-row"><label for="bdt-min">Duration (minutes)</label>
       <div class="presets">
         <button class="btn btn-sm" onclick="document.getElementById('bdt-min').value=30">30m</button>
         <button class="btn btn-sm" onclick="document.getElementById('bdt-min').value=60">1h</button>
@@ -407,7 +477,7 @@ function openBulkDowntimeModal() {
       </div>
       <input id="bdt-min" type="number" value="60" min="1">
     </div>
-    <div class="form-row"><label>Comment</label><input id="bdt-cmt" type="text" value="Scheduled maintenance"></div>
+    <div class="form-row"><label for="bdt-cmt">Comment</label><input id="bdt-cmt" type="text" value="Scheduled maintenance"></div>
     <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitBulkDowntime()">Schedule All</button></div>`);
 }
 function submitBulkDowntime() {
@@ -424,16 +494,31 @@ function submitBulkDowntime() {
   sendBatchCmds(cmds, 'Bulk downtime');
 }
 
+/* ====== INVENTORY BY HOST ACCORDION ====== */
+function isInvHostOpen(hostName, q, groupCount) {
+  if (S.invCollapsedHosts.has(hostName)) return false;
+  if (S.invExpandedHosts.has(hostName)) return true;
+  return !!q || groupCount <= 2;
+}
 function toggleInvHost(hostName) {
-  if (S.invExpandedHosts.has(hostName)) S.invExpandedHosts.delete(hostName);
-  else S.invExpandedHosts.add(hostName);
+  const q = (document.getElementById('global-search')?.value || '').trim();
+  const currentlyOpen = isInvHostOpen(hostName, q, (S.invLastGroups || []).length);
+  if (currentlyOpen) {
+    S.invExpandedHosts.delete(hostName);
+    S.invCollapsedHosts.add(hostName);
+  } else {
+    S.invCollapsedHosts.delete(hostName);
+    S.invExpandedHosts.add(hostName);
+  }
   S.invExpandInit = true;
   renderInvByHostDOM();
 }
 function expandAllInvHosts(open) {
   S.invExpandInit = true;
   S.invExpandedHosts.clear();
+  S.invCollapsedHosts.clear();
   if (open) S.invLastGroups.forEach(g => S.invExpandedHosts.add(g.host.name));
+  else S.invLastGroups.forEach(g => S.invCollapsedHosts.add(g.host.name));
   renderInvByHostDOM();
 }
 function toggleInvHostSelectAll(gIdx, checked) {
@@ -447,18 +532,6 @@ function toggleInvHostSelectAll(gIdx, checked) {
   renderBulkBar();
   renderInvByHostDOM();
 }
-function openHostDrawerDirect(gIdx) {
-  const g = S.invLastGroups[gIdx];
-  if (!g) return;
-  S.lastItems = [g.host];
-  openHostDrawer(0);
-}
-function openSvcDrawerDirect(gIdx, sIdx) {
-  const g = S.invLastGroups[gIdx];
-  if (!g || !g.services || !g.services[sIdx]) return;
-  S.lastItems = g.services;
-  openSvcDrawer(sIdx);
-}
 
 function renderInvByHostDOM() {
   const groups = S.invLastGroups || [];
@@ -470,7 +543,7 @@ function renderInvByHostDOM() {
   renderBulkBar();
   if (!groups.length) {
     document.getElementById('mon-body').innerHTML = `
-      <div class="panel"><div class="art-empty">${artSVG('servers')}<h4>No Matching Hosts</h4><p>Coba ubah filter atau kata kunci pencarian.</p></div></div>`;
+      <div class="panel"><div class="art-empty">${artSVG('servers')}<h4>No Matching Hosts</h4><p>Adjust your search query or clear active filters to see monitored hosts.</p></div></div>`;
     return;
   }
 
@@ -478,35 +551,39 @@ function renderInvByHostDOM() {
     const h = g.host;
     const svcs = g.services || [];
     const t = Math.max(1, g.svc_total || svcs.length);
-    const open = !!q || groups.length <= 2 || S.invExpandedHosts.has(h.name);
+    const open = isInvHostOpen(h.name, q, groups.length);
     const allSelected = svcs.length > 0 && svcs.every(s => S.selectedMon.has(monItemKey('services', s)));
-    const hgsHTML = (g.hostgroups || []).slice(0, 3).map(hg => `<span class="flag-tag">${esc(hg)}</span>`).join('');
+    const hKey = regDrawerObj('host:' + h.name, h);
+    const hgsHTML = (g.hostgroups || []).slice(0, 2).map(hg => `<span class="flag-tag">${esc(hg)}</span>`).join('');
     const probPill = g.svc_crit > 0
       ? `<span class="badge c-crit">${g.svc_crit} CRIT</span>`
       : (g.svc_warn > 0 ? `<span class="badge c-warn">${g.svc_warn} WARN</span>` : (g.svc_unk > 0 ? `<span class="badge c-unk">${g.svc_unk} UNK</span>` : `<span class="badge c-ok">${g.svc_ok}/${g.svc_total} OK</span>`));
 
-    const svcRows = svcs.length ? svcs.map((s, sIdx) => {
+    const svcRows = svcs.length ? svcs.map(s => {
       const k = monItemKey('services', s);
-      return `<tr class="clickable" onclick="openSvcDrawerDirect(${gIdx},${sIdx})">
-        <td style="width:32px" onclick="event.stopPropagation()"><input type="checkbox" class="mon-row-chk" ${S.selectedMon.has(k)?'checked':''} onchange="toggleMonSelect('${jsEsc(k)}',this.checked)"></td>
+      const sKey = regDrawerObj('svc:' + s.host_name + ':' + s.description, s);
+      return `<tr class="clickable" tabindex="0" onclick="openSvcDrawerByKey('${jsEsc(sKey)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSvcDrawerByKey('${jsEsc(sKey)}');}">
+        ${canOperate() ? `<td style="width:32px" onclick="event.stopPropagation()"><input type="checkbox" class="mon-row-chk" aria-label="Select ${esc(s.description)}" ${S.selectedMon.has(k)?'checked':''} onchange="toggleMonSelect('${jsEsc(k)}',this.checked)"></td>` : ''}
         <td>${svcBadge(s)}</td>
         <td><div class="name-primary">${esc(s.description)}${flagsHTML(s)}</div></td>
         <td class="mono">${durStr(s.last_state_change)}</td>
         <td class="mono">${relTime(s.last_check)}</td>
         <td class="output-cell" title="${esc(s.plugin_output)}">${esc(s.plugin_output || '-')}</td>
         <td class="actions" onclick="event.stopPropagation()">
-          <button class="icon-btn" title="Force check" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻</button>
-          ${s.current_state > 0 && !s.acknowledged ? `<button class="icon-btn" title="Acknowledge" onclick="openAckModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">✓</button>` : ''}
-          <button class="icon-btn" title="Downtime" onclick="openDowntimeModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">⏱</button>
+          ${canOperate() ? `
+            <button class="icon-btn" title="Force check" aria-label="Force check ${esc(s.description)}" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)};'+Math.floor(Date.now()/1000),'Force check',this)">${uiIcon('refresh')}</button>
+            ${s.current_state > 0 && !s.acknowledged ? `<button class="icon-btn" title="Acknowledge" aria-label="Acknowledge ${esc(s.description)}" onclick="openAckModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">${uiIcon('check')}</button>` : ''}
+            <button class="icon-btn" title="Schedule downtime" aria-label="Schedule downtime for ${esc(s.description)}" onclick="openDowntimeModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">${uiIcon('clock')}</button>
+          ` : `<button class="icon-btn" title="Inspect details" aria-label="Inspect ${esc(s.description)}" onclick="openSvcDrawerByKey('${jsEsc(sKey)}')">${uiIcon('info')}</button>`}
         </td>
       </tr>`;
-    }).join('') : `<tr><td colspan="7" class="empty" style="padding:14px">No matching services on this host</td></tr>`;
+    }).join('') : `<tr><td colspan="${canOperate()?7:6}" class="empty" style="padding:14px">No matching services on this host</td></tr>`;
 
     return `<div class="host-acc ${open?'open':''}">
-      <div class="host-acc-head" onclick="toggleInvHost('${jsEsc(h.name)}')">
+      <div class="host-acc-head" role="button" tabindex="0" aria-expanded="${open?'true':'false'}" onclick="toggleInvHost('${jsEsc(h.name)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleInvHost('${jsEsc(h.name)}');}">
         <div class="host-acc-left">
-          <span class="host-acc-chev">▶</span>
-          <input type="checkbox" ${allSelected?'checked':''} title="Select all services on ${esc(h.name)}" onclick="event.stopPropagation()" onchange="toggleInvHostSelectAll(${gIdx},this.checked)">
+          <span class="host-acc-chev">${uiIcon('chevron')}</span>
+          ${canOperate() ? `<input type="checkbox" ${allSelected?'checked':''} aria-label="Select all services on ${esc(h.name)}" title="Select all services on ${esc(h.name)}" onclick="event.stopPropagation()" onchange="toggleInvHostSelectAll(${gIdx},this.checked)">` : ''}
           ${hostBadge(h)}
           <div>
             <span class="name-primary">${esc(h.name)}${flagsHTML(h)}</span>
@@ -515,7 +592,7 @@ function renderInvByHostDOM() {
           ${hgsHTML}
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
-          <div style="width:96px" title="${g.svc_ok} OK, ${g.svc_warn} WARN, ${g.svc_crit} CRIT, ${g.svc_unk} UNK">
+          <div style="width:92px" title="${g.svc_ok} OK, ${g.svc_warn} WARN, ${g.svc_crit} CRIT, ${g.svc_unk} UNK">
             <div class="bar">
               <div class="bar-ok" style="width:${(g.svc_ok/t)*100}%"></div>
               <div class="bar-warn" style="width:${(g.svc_warn/t)*100}%"></div>
@@ -523,17 +600,18 @@ function renderInvByHostDOM() {
               <div class="bar-unk" style="width:${(g.svc_unk/t)*100}%"></div>
             </div>
           </div>
-          <span class="name-sub">${svcs.length} svc</span>
           ${probPill}
           <div class="actions">
-            <button class="icon-btn" title="Force check host" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${jsEsc(h.name)};'+Math.floor(Date.now()/1000),'Force check host')">↻</button>
-            <button class="icon-btn" title="Host downtime" onclick="openDowntimeModal('host','${jsEsc(h.name)}','')">⏱</button>
-            <button class="icon-btn" title="Host details" onclick="openHostDrawerDirect(${gIdx})">ⓘ</button>
+            ${canOperate() ? `
+              <button class="icon-btn" title="Force check host" aria-label="Force check ${esc(h.name)}" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${jsEsc(h.name)};'+Math.floor(Date.now()/1000),'Force check host',this)">${uiIcon('refresh')}</button>
+              <button class="icon-btn" title="Host downtime" aria-label="Schedule downtime for ${esc(h.name)}" onclick="openDowntimeModal('host','${jsEsc(h.name)}','')">${uiIcon('clock')}</button>
+            ` : ''}
+            <button class="icon-btn" title="Host details" aria-label="Details for ${esc(h.name)}" onclick="openHostDrawerByKey('${jsEsc(hKey)}')">${uiIcon('info')}</button>
           </div>
         </div>
       </div>
       <div class="host-acc-body">
-        <div class="table-wrap"><table><thead><tr><th style="width:32px"></th><th>Status</th><th>Service</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr></thead><tbody>${svcRows}</tbody></table></div>
+        <div class="table-wrap"><table><thead><tr>${canOperate()?'<th style="width:32px"></th>':''}<th>Status</th><th>Service</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr></thead><tbody>${svcRows}</tbody></table></div>
       </div>
     </div>`;
   }).join('');
@@ -541,7 +619,7 @@ function renderInvByHostDOM() {
   document.getElementById('mon-body').innerHTML = `
     <div class="panel">
       <div class="toolbar-row">
-        <div class="name-sub">Menampilkan <b>${start}–${end}</b> dari <b>${S.total.toLocaleString()}</b> host • Klik nama host untuk melihat seluruh service</div>
+        <div class="name-sub">Showing <b>${start}–${end}</b> of <b>${S.total.toLocaleString()}</b> hosts · Select a host to inspect its services</div>
         <div style="display:flex;gap:6px">
           <button class="btn btn-sm" onclick="expandAllInvHosts(true)">Expand All</button>
           <button class="btn btn-sm" onclick="expandAllInvHosts(false)">Collapse All</button>
@@ -572,6 +650,7 @@ async function loadMonitorView() {
   document.getElementById('group-view-btn').style.display = (mode === 'hosts' || mode === 'byhost') ? 'none' : '';
   const f = S.view === 'problems' ? S.probFilter : S.invFilter;
   populateStateSelect(mode, f.state);
+  updateClearFiltersBtn();
 
   const q = document.getElementById('global-search').value.trim();
   const st = document.getElementById('state-select').value;
@@ -589,171 +668,199 @@ async function loadMonitorView() {
   if (sg && mode !== 'hosts') params.set('servicegroup', sg);
   if (unhandled) params.set('unhandled', '1');
 
-  if (mode === 'byhost') {
-    const data = await (await fetch('/api/v1/inventory/by-host?' + params)).json();
-    S.total = data.total || 0;
-    S.invLastGroups = data.hosts || [];
-    if (!S.invExpandInit && S.invLastGroups.length) {
-      let autoCnt = 0;
-      for (const g of S.invLastGroups) {
-        if (g.has_problem && autoCnt < 5) {
-          S.invExpandedHosts.add(g.host.name);
-          autoCnt++;
-        }
-      }
-      S.invExpandInit = true;
-    }
-    renderInvByHostDOM();
-    return;
+  const bodyEl = document.getElementById('mon-body');
+  if (bodyEl && !bodyEl.innerHTML.trim()) {
+    bodyEl.innerHTML = `<div class="panel"><div class="skel-stack"><div class="skel" style="width:45%"></div><div class="skel"></div><div class="skel"></div><div class="skel" style="width:70%"></div></div></div>`;
   }
 
-  let rowsHTML = '', headHTML = '';
-  if (mode === 'hosts') {
-    headHTML = '<tr><th style="width:32px"><input type="checkbox" onclick="toggleMonSelectAll(this.checked)"></th><th>Status</th><th>Host</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
-    const data = await (await fetch('/api/v1/hosts?' + params)).json();
-    S.total = data.total; S.lastItems = data.hosts;
-    rowsHTML = data.hosts.length ? data.hosts.map((h, idx) => {
-      const k = monItemKey('hosts', h);
-      return `<tr class="clickable" onclick="openHostDrawer(${idx})">
-        <td onclick="event.stopPropagation()"><input type="checkbox" class="mon-row-chk" ${S.selectedMon.has(k)?'checked':''} onchange="toggleMonSelect('${esc(k)}',this.checked)"></td>
-        <td>${hostBadge(h)}</td>
-        <td><div class="name-primary">${esc(h.name)}${flagsHTML(h)}</div><div class="name-sub">${esc(h.address)}</div></td>
-        <td class="mono">${durStr(h.last_state_change)}</td>
-        <td class="mono">${relTime(h.last_check)}</td>
-        <td class="output-cell" title="${esc(h.plugin_output)}">${esc(h.plugin_output || '-')}</td>
-        <td class="actions" onclick="event.stopPropagation()">
-          <button class="icon-btn" title="Force check" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${esc(h.name)};'+Math.floor(Date.now()/1000),'Force check')">↻</button>
-          <button class="icon-btn" title="Downtime" onclick="openDowntimeModal('host','${esc(h.name)}','')">⏱</button>
-        </td>
-      </tr>`;
-    }).join('') : '<tr><td colspan="7" class="empty">No matching hosts</td></tr>';
-  } else {
-    headHTML = '<tr><th style="width:32px"><input type="checkbox" onclick="toggleMonSelectAll(this.checked)"></th><th>Status</th><th>Host / Service</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>';
-    const data = await (await fetch('/api/v1/services?' + params)).json();
-    S.total = data.total; S.lastItems = data.services;
-    if (!data.services.length) {
-      rowsHTML = `<tr><td colspan="7"><div class="art-empty">${artSVG(mode==='problems'?'radar-ok':'servers')}<h4>${mode==='problems'?'No Active Problems':'No Matching Services'}</h4><p>${mode==='problems'?'Semua service dalam kondisi sehat.':'Coba ubah filter atau kata kunci pencarian.'}</p></div></td></tr>`;
-    } else {
-      let lastHost = null;
-      data.services.forEach((s, idx) => {
-        const k = monItemKey('services', s);
-        if (S.groupByHost && s.host_name !== lastHost) {
-          lastHost = s.host_name;
-          rowsHTML += `<tr class="group-row"><td colspan="7">${esc(s.host_name)}</td></tr>`;
+  try {
+    if (mode === 'byhost') {
+      const data = await apiFetchJSON('/api/v1/inventory/by-host?' + params);
+      S.total = data.total || 0;
+      S.invLastGroups = data.hosts || [];
+      if (!S.invExpandInit && S.invLastGroups.length) {
+        let autoCnt = 0;
+        for (const g of S.invLastGroups) {
+          if (g.has_problem && autoCnt < 5) {
+            S.invExpandedHosts.add(g.host.name);
+            autoCnt++;
+          }
         }
-        rowsHTML += `<tr class="clickable" onclick="openSvcDrawer(${idx})">
-          <td onclick="event.stopPropagation()"><input type="checkbox" class="mon-row-chk" ${S.selectedMon.has(k)?'checked':''} onchange="toggleMonSelect('${esc(k)}',this.checked)"></td>
-          <td>${svcBadge(s)}</td>
-          <td><div class="name-primary">${esc(s.description)}${flagsHTML(s)}</div>${S.groupByHost ? '' : `<div class="name-sub">${esc(s.host_name)}</div>`}</td>
-          <td class="mono">${durStr(s.last_state_change)}</td>
-          <td class="mono">${relTime(s.last_check)}</td>
-          <td class="output-cell" title="${esc(s.plugin_output)}">${esc(s.plugin_output || '-')}</td>
+        S.invExpandInit = true;
+      }
+      renderInvByHostDOM();
+      return;
+    }
+
+    let rowsHTML = '', headHTML = '';
+    if (mode === 'hosts') {
+      headHTML = `<tr>${canOperate()?'<th style="width:32px"><input type="checkbox" aria-label="Select all hosts" onclick="toggleMonSelectAll(this.checked)"></th>':''}<th>Status</th><th>Host</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>`;
+      const data = await apiFetchJSON('/api/v1/hosts?' + params);
+      S.total = data.total; S.lastItems = data.hosts;
+      rowsHTML = data.hosts.length ? data.hosts.map(h => {
+        const k = monItemKey('hosts', h);
+        const hKey = regDrawerObj('host:' + h.name, h);
+        return `<tr class="clickable" tabindex="0" onclick="openHostDrawerByKey('${jsEsc(hKey)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openHostDrawerByKey('${jsEsc(hKey)}');}">
+          ${canOperate() ? `<td onclick="event.stopPropagation()"><input type="checkbox" class="mon-row-chk" aria-label="Select ${esc(h.name)}" ${S.selectedMon.has(k)?'checked':''} onchange="toggleMonSelect('${jsEsc(k)}',this.checked)"></td>` : ''}
+          <td>${hostBadge(h)}</td>
+          <td><div class="name-primary">${esc(h.name)}${flagsHTML(h)}</div><div class="name-sub">${esc(h.address)}</div></td>
+          <td class="mono">${durStr(h.last_state_change)}</td>
+          <td class="mono">${relTime(h.last_check)}</td>
+          <td class="output-cell" title="${esc(h.plugin_output)}">${esc(h.plugin_output || '-')}</td>
           <td class="actions" onclick="event.stopPropagation()">
-            <button class="icon-btn" title="Force check" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${esc(s.host_name)};${esc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻</button>
-            ${s.current_state > 0 && !s.acknowledged ? `<button class="icon-btn" title="Acknowledge" onclick="openAckModal('service','${esc(s.host_name)}','${esc(s.description)}')">✓</button>` : ''}
-            <button class="icon-btn" title="Downtime" onclick="openDowntimeModal('service','${esc(s.host_name)}','${esc(s.description)}')">⏱</button>
+            ${canOperate() ? `
+              <button class="icon-btn" title="Force check" aria-label="Force check ${esc(h.name)}" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${jsEsc(h.name)};'+Math.floor(Date.now()/1000),'Force check',this)">${uiIcon('refresh')}</button>
+              <button class="icon-btn" title="Downtime" aria-label="Schedule downtime for ${esc(h.name)}" onclick="openDowntimeModal('host','${jsEsc(h.name)}','')">${uiIcon('clock')}</button>
+            ` : `<button class="icon-btn" title="Details" aria-label="Details for ${esc(h.name)}" onclick="openHostDrawerByKey('${jsEsc(hKey)}')">${uiIcon('info')}</button>`}
           </td>
         </tr>`;
-      });
+      }).join('') : `<tr><td colspan="${canOperate()?7:6}" class="empty">No matching hosts</td></tr>`;
+    } else {
+      headHTML = `<tr>${canOperate()?'<th style="width:32px"><input type="checkbox" aria-label="Select all services" onclick="toggleMonSelectAll(this.checked)"></th>':''}<th>Status</th><th>Host / Service</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr>`;
+      const data = await apiFetchJSON('/api/v1/services?' + params);
+      S.total = data.total; S.lastItems = data.services;
+      if (!data.services.length) {
+        rowsHTML = `<tr><td colspan="${canOperate()?7:6}"><div class="art-empty">${artSVG(mode==='problems'?'radar-ok':'servers')}<h4>${mode==='problems'?'No Active Problems':'No Matching Services'}</h4><p>${mode==='problems'?'All monitored services are healthy.':'Adjust your search or clear active filters.'}</p></div></td></tr>`;
+      } else {
+        let lastHost = null;
+        data.services.forEach(s => {
+          const k = monItemKey('services', s);
+          const sKey = regDrawerObj('svc:' + s.host_name + ':' + s.description, s);
+          if (S.groupByHost && s.host_name !== lastHost) {
+            lastHost = s.host_name;
+            rowsHTML += `<tr class="group-row"><td colspan="${canOperate()?7:6}">${esc(s.host_name)}</td></tr>`;
+          }
+          rowsHTML += `<tr class="clickable" tabindex="0" onclick="openSvcDrawerByKey('${jsEsc(sKey)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSvcDrawerByKey('${jsEsc(sKey)}');}">
+            ${canOperate() ? `<td onclick="event.stopPropagation()"><input type="checkbox" class="mon-row-chk" aria-label="Select ${esc(s.description)}" ${S.selectedMon.has(k)?'checked':''} onchange="toggleMonSelect('${jsEsc(k)}',this.checked)"></td>` : ''}
+            <td>${svcBadge(s)}</td>
+            <td><div class="name-primary">${esc(s.description)}${flagsHTML(s)}</div>${S.groupByHost ? '' : `<div class="name-sub">${esc(s.host_name)}</div>`}</td>
+            <td class="mono">${durStr(s.last_state_change)}</td>
+            <td class="mono">${relTime(s.last_check)}</td>
+            <td class="output-cell" title="${esc(s.plugin_output)}">${esc(s.plugin_output || '-')}</td>
+            <td class="actions" onclick="event.stopPropagation()">
+              ${canOperate() ? `
+                <button class="icon-btn" title="Force check" aria-label="Force check ${esc(s.description)}" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)};'+Math.floor(Date.now()/1000),'Force check',this)">${uiIcon('refresh')}</button>
+                ${s.current_state > 0 && !s.acknowledged ? `<button class="icon-btn" title="Acknowledge" aria-label="Acknowledge ${esc(s.description)}" onclick="openAckModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">${uiIcon('check')}</button>` : ''}
+                <button class="icon-btn" title="Downtime" aria-label="Schedule downtime for ${esc(s.description)}" onclick="openDowntimeModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">${uiIcon('clock')}</button>
+              ` : `<button class="icon-btn" title="Details" aria-label="Details for ${esc(s.description)}" onclick="openSvcDrawerByKey('${jsEsc(sKey)}')">${uiIcon('info')}</button>`}
+            </td>
+          </tr>`;
+        });
+      }
     }
-  }
 
-  renderBulkBar();
-  const start = S.total ? S.offset + 1 : 0;
-  const end = Math.min(S.offset + limit, S.total);
-  document.getElementById('mon-body').innerHTML = `
-    <div class="panel">
-      <div class="table-wrap"><table><thead>${headHTML}</thead><tbody>${rowsHTML}</tbody></table></div>
-      <div class="pager">
-        <span>Showing ${start}–${end} of ${S.total.toLocaleString()}</span>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-sm" ${S.offset===0?'disabled':''} onclick="changePage(-1)">Prev</button>
-          <button class="btn btn-sm" ${end>=S.total?'disabled':''} onclick="changePage(1)">Next</button>
+    renderBulkBar();
+    const start = S.total ? S.offset + 1 : 0;
+    const end = Math.min(S.offset + limit, S.total);
+    bodyEl.innerHTML = `
+      <div class="panel">
+        <div class="table-wrap"><table><thead>${headHTML}</thead><tbody>${rowsHTML}</tbody></table></div>
+        <div class="pager">
+          <span>Showing ${start}–${end} of ${S.total.toLocaleString()}</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm" ${S.offset===0?'disabled':''} onclick="changePage(-1)">Prev</button>
+            <button class="btn btn-sm" ${end>=S.total?'disabled':''} onclick="changePage(1)">Next</button>
+          </div>
         </div>
-      </div>
-    </div>`;
+      </div>`;
+  } catch (err) {
+    bodyEl.innerHTML = `<div class="error-card"><span>Failed to load inventory data: ${esc(err.message)}</span><button class="btn btn-sm" onclick="loadMonitorView()">Retry</button></div>`;
+  }
 }
 
 function renderGroupsView() {
   const hgCards = S.hostgroups.length ? S.hostgroups.map(g => {
     const t = g.services.total || 1;
-    return `<div class="gcard" onclick="jumpToGroup('hg','${esc(g.group_name)}')">
-      <h3>${esc(g.group_name)}</h3><p>${esc(g.alias || '')} • ${g.hosts.total} hosts, ${g.services.total} services</p>
+    return `<button type="button" class="gcard" onclick="jumpToGroup('hg','${jsEsc(g.group_name)}')">
+      <h3>${esc(g.group_name)}</h3><p>${esc(g.alias || '')} · ${g.hosts.total} hosts, ${g.services.total} services</p>
       <div class="bar" style="margin-bottom:8px"><div class="bar-ok" style="width:${(g.services.ok/t)*100}%"></div><div class="bar-warn" style="width:${(g.services.warning/t)*100}%"></div><div class="bar-crit" style="width:${(g.services.critical/t)*100}%"></div></div>
       <div class="mono">UP:${g.hosts.up} DOWN:${g.hosts.down} | OK:${g.services.ok} WARN:${g.services.warning} CRIT:${g.services.critical}</div>
-    </div>`;
+    </button>`;
   }).join('') : '<div class="empty">No hostgroups defined</div>';
 
   const sgCards = S.servicegroups.length ? S.servicegroups.map(g => {
     const t = g.services.total || 1;
-    return `<div class="gcard" onclick="jumpToGroup('sg','${esc(g.group_name)}')">
-      <h3>${esc(g.group_name)}</h3><p>${esc(g.alias || '')} • ${g.services.total} services</p>
+    return `<button type="button" class="gcard" onclick="jumpToGroup('sg','${jsEsc(g.group_name)}')">
+      <h3>${esc(g.group_name)}</h3><p>${esc(g.alias || '')} · ${g.services.total} services</p>
       <div class="bar" style="margin-bottom:8px"><div class="bar-ok" style="width:${(g.services.ok/t)*100}%"></div><div class="bar-warn" style="width:${(g.services.warning/t)*100}%"></div><div class="bar-crit" style="width:${(g.services.critical/t)*100}%"></div></div>
       <div class="mono">OK:${g.services.ok} WARN:${g.services.warning} CRIT:${g.services.critical} UNK:${g.services.unknown}</div>
-    </div>`;
+    </button>`;
   }).join('') : '<div class="empty">No servicegroups defined</div>';
 
   document.getElementById('mon-body').innerHTML = `
-    <div class="panel"><div class="panel-head"><div class="panel-title"><img src="/assets/icons/network.svg">Hostgroups</div></div><div class="group-grid">${hgCards}</div></div>
-    <div class="panel"><div class="panel-head"><div class="panel-title"><img src="/assets/icons/cpu.svg">Servicegroups</div></div><div class="group-grid">${sgCards}</div></div>`;
+    <div class="panel"><div class="panel-head"><div class="panel-title"><img src="/assets/icons/network.svg" alt="">Hostgroups</div></div><div class="group-grid">${hgCards}</div></div>
+    <div class="panel"><div class="panel-head"><div class="panel-title"><img src="/assets/icons/cpu.svg" alt="">Servicegroups</div></div><div class="group-grid">${sgCards}</div></div>`;
 }
 
 async function renderDowntimesView() {
-  const [dtRes, recRes] = await Promise.all([fetch('/api/v1/downtimes'), fetch('/api/v1/downtimes/recurring')]);
-  const dts = (await dtRes.json()).downtimes || [];
-  const recs = (await recRes.json()).schedules || [];
-  const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const bodyEl = document.getElementById('mon-body');
+  try {
+    const [dtData, recData] = await Promise.all([
+      apiFetchJSON('/api/v1/downtimes'),
+      apiFetchJSON('/api/v1/downtimes/recurring')
+    ]);
+    const dts = dtData.downtimes || [];
+    const recs = recData.schedules || [];
+    const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-  const rows = dts.length ? dts.map(d => {
-    const delCmd = d.type === 1 ? `DEL_SVC_DOWNTIME;${d.downtime_id}` : `DEL_HOST_DOWNTIME;${d.downtime_id}`;
-    return `<tr>
-      <td class="mono">#${d.downtime_id}</td>
-      <td><div class="name-primary">${esc(d.host_name)}</div>${d.service_description ? `<div class="name-sub">${esc(d.service_description)}</div>` : ''}</td>
-      <td class="mono">${new Date(d.start_time*1000).toLocaleString()} → ${new Date(d.end_time*1000).toLocaleString()}</td>
-      <td>${d.is_in_effect ? '<span class="badge c-warn">ACTIVE</span>' : '<span class="badge c-pend">SCHEDULED</span>'}</td>
-      <td><b>${esc(d.author)}</b>: ${esc(d.comment)}</td>
-      <td class="actions">${canOperate() ? `<button class="btn btn-sm danger" onclick="sendCmd('${jsEsc(delCmd)}','Cancel downtime #${d.downtime_id}')">Cancel</button>` : '-'}</td>
-    </tr>`;
-  }).join('') : '<tr><td colspan="6" class="empty">No active or scheduled downtimes</td></tr>';
+    const rows = dts.length ? dts.map(d => {
+      const delCmd = d.type === 1 ? `DEL_SVC_DOWNTIME;${d.downtime_id}` : `DEL_HOST_DOWNTIME;${d.downtime_id}`;
+      return `<tr>
+        <td class="mono">#${d.downtime_id}</td>
+        <td><div class="name-primary">${esc(d.host_name)}</div>${d.service_description ? `<div class="name-sub">${esc(d.service_description)}</div>` : ''}</td>
+        <td class="mono">${new Date(d.start_time*1000).toLocaleString()} → ${new Date(d.end_time*1000).toLocaleString()}</td>
+        <td>${d.is_in_effect ? '<span class="badge c-warn">ACTIVE</span>' : '<span class="badge c-pend">SCHEDULED</span>'}</td>
+        <td><b>${esc(d.author)}</b>: ${esc(d.comment)}</td>
+        <td class="actions">${canOperate() ? `<button class="btn btn-sm danger" onclick="confirmCancelDowntime('${jsEsc(delCmd)}',${d.downtime_id})">Cancel</button>` : '-'}</td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="6" class="empty">No active or scheduled downtimes</td></tr>';
 
-  const recRows = recs.length ? recs.map(r => `<tr>
-    <td><b>${esc(r.name)}</b><div class="name-sub">${esc(r.comment)}</div></td>
-    <td><span class="flag-tag">${esc(r.target_type)}</span> <span class="mono">${esc(r.target_type==='hostgroup'?r.hostgroup:(r.host + (r.service?' / '+r.service:'')))}</span></td>
-    <td class="mono">${(r.days||[]).map(d => dayNames[d]).join(', ')} @ ${esc(r.start_time)} (${r.duration_min}m)</td>
-    <td>${r.enabled ? '<span class="badge c-ok">ON</span>' : '<span class="badge c-pend">OFF</span>'}</td>
-    <td class="actions">${canOperate() ? `<button class="btn btn-sm danger" onclick="deleteRecurringDT('${jsEsc(r.id)}','${jsEsc(r.name)}')">Delete</button>` : '-'}</td>
-  </tr>`).join('') : '<tr><td colspan="5" class="empty">No recurring maintenance schedules</td></tr>';
+    const recRows = recs.length ? recs.map(r => `<tr>
+      <td><b>${esc(r.name)}</b><div class="name-sub">${esc(r.comment)}</div></td>
+      <td><span class="flag-tag">${esc(r.target_type)}</span> <span class="mono">${esc(r.target_type==='hostgroup'?r.hostgroup:(r.host + (r.service?' / '+r.service:'')))}</span></td>
+      <td class="mono">${(r.days||[]).map(d => dayNames[d]).join(', ')} @ ${esc(r.start_time)} (${r.duration_min}m)</td>
+      <td>${r.enabled ? '<span class="badge c-ok">ON</span>' : '<span class="badge c-pend">OFF</span>'}</td>
+      <td class="actions">${canOperate() ? `<button class="btn btn-sm danger" onclick="deleteRecurringDT('${jsEsc(r.id)}','${jsEsc(r.name)}')">Delete</button>` : '-'}</td>
+    </tr>`).join('') : '<tr><td colspan="5" class="empty">No recurring maintenance schedules</td></tr>';
 
-  document.getElementById('mon-body').innerHTML = `
-    <div class="panel"><div class="panel-head"><div class="panel-title">Active &amp; Scheduled Downtimes (${dts.length})</div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>Target</th><th>Window</th><th>Status</th><th>Comment</th><th style="text-align:right">Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>
-    <div class="panel">
-      <div class="panel-head">
-        <div class="panel-title">Recurring Maintenance Schedules (${recs.length}) <span class="save-scope-pill instant">Auto Scheduler</span></div>
-        ${canOperate() ? '<button class="btn btn-sm primary" onclick="openRecurringDTModal()">+ Add Schedule</button>' : ''}
-      </div>
-      <div class="table-wrap"><table><thead><tr><th>Schedule</th><th>Target</th><th>Recurrence</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>${recRows}</tbody></table></div>
-    </div>`;
+    bodyEl.innerHTML = `
+      <div class="panel"><div class="panel-head"><div class="panel-title">Active &amp; Scheduled Downtimes (${dts.length})</div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>Target</th><th>Window</th><th>Status</th><th>Comment</th><th style="text-align:right">Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Recurring Maintenance Schedules (${recs.length}) <span class="save-scope-pill instant">Auto Scheduler</span></div>
+          ${canOperate() ? '<button class="btn btn-sm primary" onclick="openRecurringDTModal()">+ Add Schedule</button>' : ''}
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>Schedule</th><th>Target</th><th>Recurrence</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>${recRows}</tbody></table></div>
+      </div>`;
+  } catch (err) {
+    bodyEl.innerHTML = `<div class="error-card"><span>Failed to load downtimes: ${esc(err.message)}</span><button class="btn btn-sm" onclick="renderDowntimesView()">Retry</button></div>`;
+  }
+}
+
+async function confirmCancelDowntime(cmd, id) {
+  const ok = await encoreConfirm({ title: `Cancel Downtime #${id}?`, message: 'Alerts for this target will resume immediately.', confirmText: 'Cancel Downtime', danger: true });
+  if (ok) sendCmd(cmd, `Cancel downtime #${id}`);
 }
 
 function openRecurringDTModal() {
   const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   openModal(`<h2>Add Recurring Maintenance Schedule</h2>
     <div class="form-grid">
-      <div class="form-row"><label>Schedule Name *</label><input id="rdt-name" type="text" placeholder="Weekly DB Backup"></div>
-      <div class="form-row"><label>Target Type</label>
+      <div class="form-row"><label for="rdt-name">Schedule Name *</label><input id="rdt-name" type="text" placeholder="Weekly DB Backup"></div>
+      <div class="form-row"><label for="rdt-type">Target Type</label>
         <select id="rdt-type" onchange="document.getElementById('rdt-hg-row').style.display=this.value==='hostgroup'?'':'none';document.getElementById('rdt-h-row').style.display=this.value!=='hostgroup'?'':'none';document.getElementById('rdt-s-row').style.display=this.value==='service'?'':'none'">
           <option value="host">Host</option><option value="service">Service</option><option value="hostgroup">Hostgroup</option>
         </select>
       </div>
-      <div class="form-row" id="rdt-h-row"><label>Host *</label><input id="rdt-host" type="text" placeholder="localhost"></div>
-      <div class="form-row" id="rdt-s-row" style="display:none"><label>Service *</label><input id="rdt-svc" type="text" placeholder="HTTP"></div>
-      <div class="form-row" id="rdt-hg-row" style="display:none"><label>Hostgroup *</label><input id="rdt-hg" type="text" placeholder="linux-servers"></div>
-      <div class="form-row"><label>Start Time (24h HH:MM) *</label><input id="rdt-time" type="text" value="02:00"></div>
-      <div class="form-row"><label>Duration (minutes) *</label><input id="rdt-dur" type="number" value="120" min="1"></div>
+      <div class="form-row" id="rdt-h-row"><label for="rdt-host">Host *</label><input id="rdt-host" type="text" placeholder="localhost"></div>
+      <div class="form-row" id="rdt-s-row" style="display:none"><label for="rdt-svc">Service *</label><input id="rdt-svc" type="text" placeholder="HTTP"></div>
+      <div class="form-row" id="rdt-hg-row" style="display:none"><label for="rdt-hg">Hostgroup *</label><input id="rdt-hg" type="text" placeholder="linux-servers"></div>
+      <div class="form-row"><label for="rdt-time">Start Time (24h HH:MM) *</label><input id="rdt-time" type="text" value="02:00"></div>
+      <div class="form-row"><label for="rdt-dur">Duration (minutes) *</label><input id="rdt-dur" type="number" value="120" min="1"></div>
       <div class="form-row full"><label>Days of Week *</label>
         <div style="display:flex;gap:6px;flex-wrap:wrap">${days.map((d,i)=>`<label class="chk-pill"><input type="checkbox" class="rdt-day" value="${i}" ${i===0?'checked':''}> ${d}</label>`).join('')}</div>
       </div>
-      <div class="form-row full"><label>Comment</label><input id="rdt-cmt" type="text" value="Recurring scheduled maintenance"></div>
+      <div class="form-row full"><label for="rdt-cmt">Comment</label><input id="rdt-cmt" type="text" value="Recurring scheduled maintenance"></div>
     </div>
     <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveRecurringDT()">Save Schedule</button></div>`);
 }
@@ -769,27 +876,105 @@ async function saveRecurringDT() {
     duration_min: Number(document.getElementById('rdt-dur').value) || 60,
     days, comment: document.getElementById('rdt-cmt').value.trim(), enabled: true
   };
-  const res = await fetch('/api/v1/downtimes/recurring', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
-  const d = await res.json();
-  if (!res.ok) { toast('Error: ' + d.error); return; }
-  closeModal(); toast('Recurring schedule saved'); renderDowntimesView();
+  try {
+    await apiFetchJSON('/api/v1/downtimes/recurring', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    closeModal(); toast('Recurring schedule saved'); renderDowntimesView();
+  } catch (e) { toast('Error: ' + e.message); }
 }
 async function deleteRecurringDT(id, name) {
-  const ok = await encoreConfirm({ title: `Delete Schedule "${name}"?`, message: 'Jadwal maintenance rutin ini tidak akan berjalan lagi.', confirmText: 'Delete', danger: true });
+  const ok = await encoreConfirm({ title: `Delete Schedule "${name}"?`, message: 'This recurring maintenance schedule will no longer trigger.', confirmText: 'Delete', danger: true });
   if (!ok) return;
-  const res = await fetch('/api/v1/downtimes/recurring?id=' + encodeURIComponent(id), { method:'DELETE' });
-  if (res.ok) { toast('Deleted'); renderDowntimesView(); }
+  try {
+    await apiFetchJSON('/api/v1/downtimes/recurring?id=' + encodeURIComponent(id), { method:'DELETE' });
+    toast('Deleted'); renderDowntimesView();
+  } catch (e) { toast('Error: ' + e.message); }
 }
 
+/* ====== DRAWERS (INLINE ACK/DOWNTIME + RBAC + CONFIRM ON DISABLE) ====== */
 function parsePerfData(pd) {
   return pd ? pd.trim().split(/\s+/).filter(Boolean).map(tok => `<span class="perf-chip">${esc(tok)}</span>`).join('') : '';
 }
-function openHostDrawer(idx) {
-  const h = S.lastItems[idx]; if (!h) return;
+
+function showDrawerInlineAck(kind, host, desc) {
+  const slot = document.getElementById('drawer-inline-action');
+  if (!slot) return;
+  slot.innerHTML = `<div class="inline-action-box">
+    <h3>Acknowledge ${esc(kind==='host'?host:desc)}</h3>
+    <div class="form-row"><label for="dr-ack-cmt">Comment</label><input id="dr-ack-cmt" type="text" value="Acknowledged via Encore"></div>
+    <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <label class="chk-pill" title="Keep acknowledgement until recovery"><input type="checkbox" id="dr-ack-sticky" checked> Sticky</label>
+      <label class="chk-pill"><input type="checkbox" id="dr-ack-notify"> Send Notification</label>
+    </div>
+    <div style="display:flex;gap:6px;justify-content:flex-end">
+      <button class="btn btn-sm" onclick="document.getElementById('drawer-inline-action').innerHTML=''">Cancel</button>
+      <button class="btn btn-sm primary" onclick="submitDrawerInlineAck('${jsEsc(kind)}','${jsEsc(host)}','${jsEsc(desc)}',this)">Submit ACK</button>
+    </div>
+  </div>`;
+  document.getElementById('dr-ack-cmt')?.focus();
+}
+function submitDrawerInlineAck(kind, host, desc, btn) {
+  const cmt = document.getElementById('dr-ack-cmt').value.trim() || 'Acknowledged';
+  const sticky = document.getElementById('dr-ack-sticky').checked ? 2 : 1;
+  const notify = document.getElementById('dr-ack-notify').checked ? 1 : 0;
+  const cmd = kind==='host' ? `ACKNOWLEDGE_HOST_PROBLEM;${host};${sticky};${notify};1;encore-ui;${cmt}` : `ACKNOWLEDGE_SVC_PROBLEM;${host};${desc};${sticky};${notify};1;encore-ui;${cmt}`;
+  document.getElementById('drawer-inline-action').innerHTML = '';
+  sendCmd(cmd, 'Acknowledge', btn);
+}
+
+function showDrawerInlineDowntime(kind, host, desc) {
+  const slot = document.getElementById('drawer-inline-action');
+  if (!slot) return;
+  slot.innerHTML = `<div class="inline-action-box">
+    <h3>Schedule Downtime — ${esc(kind==='host'?host:desc)}</h3>
+    <div class="form-row"><label for="dr-dt-min">Duration (minutes)</label>
+      <div class="presets">
+        <button class="btn btn-sm" onclick="document.getElementById('dr-dt-min').value=30">30m</button>
+        <button class="btn btn-sm" onclick="document.getElementById('dr-dt-min').value=60">1h</button>
+        <button class="btn btn-sm" onclick="document.getElementById('dr-dt-min').value=240">4h</button>
+        <button class="btn btn-sm" onclick="document.getElementById('dr-dt-min').value=1440">24h</button>
+      </div>
+      <input id="dr-dt-min" type="number" value="60" min="1">
+    </div>
+    <div class="form-row"><label for="dr-dt-cmt">Comment</label><input id="dr-dt-cmt" type="text" value="Scheduled maintenance"></div>
+    <div style="display:flex;gap:6px;justify-content:flex-end">
+      <button class="btn btn-sm" onclick="document.getElementById('drawer-inline-action').innerHTML=''">Cancel</button>
+      <button class="btn btn-sm primary" onclick="submitDrawerInlineDT('${jsEsc(kind)}','${jsEsc(host)}','${jsEsc(desc)}',this)">Schedule</button>
+    </div>
+  </div>`;
+  document.getElementById('dr-dt-min')?.focus();
+}
+function submitDrawerInlineDT(kind, host, desc, btn) {
+  const mins = Math.max(1, Number(document.getElementById('dr-dt-min').value) || 60);
+  const cmt = document.getElementById('dr-dt-cmt').value.trim() || 'Maintenance';
+  const now = Math.floor(Date.now()/1000);
+  const cmd = kind==='host' ? `SCHEDULE_HOST_DOWNTIME;${host};${now};${now+mins*60};1;0;0;encore-ui;${cmt}` : `SCHEDULE_SVC_DOWNTIME;${host};${desc};${now};${now+mins*60};1;0;0;encore-ui;${cmt}`;
+  document.getElementById('drawer-inline-action').innerHTML = '';
+  sendCmd(cmd, 'Schedule downtime', btn);
+}
+
+async function confirmDisableCheck(kind, host, desc) {
+  const target = kind === 'host' ? host : `${host} / ${desc}`;
+  const ok = await encoreConfirm({
+    title: `Disable Active Checks for "${target}"?`,
+    message: 'Encore Engine will stop monitoring this target until checks are re-enabled.',
+    confirmText: 'Disable Checks',
+    danger: true
+  });
+  if (!ok) return;
+  const cmd = kind === 'host' ? `DISABLE_HOST_CHECK;${host}` : `DISABLE_SVC_CHECK;${host};${desc}`;
+  sendCmd(cmd, 'Disable check');
+}
+
+function openHostDrawerByKey(key) { const h = _drawerObjMap.get(key); if (h) openHostDrawerObj(h); }
+function openSvcDrawerByKey(key) { const s = _drawerObjMap.get(key); if (s) openSvcDrawerObj(s); }
+function openHostDrawer(idx) { const h = S.lastItems[idx]; if (h) openHostDrawerObj(h); }
+function openSvcDrawer(idx) { const s = S.lastItems[idx]; if (s) openSvcDrawerObj(s); }
+
+function openHostDrawerObj(h) {
   document.getElementById('drawer-body').innerHTML = `
     <div class="drawer-head">
       <div>${hostBadge(h)} ${flagsHTML(h)}<h2 style="margin-top:6px">${esc(h.name)}</h2><div class="name-sub">${esc(h.address)}</div></div>
-      <button class="btn btn-sm" onclick="closeDrawer()">✕</button>
+      <button class="icon-btn" onclick="closeDrawer()" title="Close drawer" aria-label="Close drawer">${uiIcon('x')}</button>
     </div>
     <div class="kv-grid">
       <div class="kv-box"><div class="k">State Type</div><div class="v">${h.state_type===1?'HARD':'SOFT'} (${h.current_attempt}/${h.max_attempts})</div></div>
@@ -799,27 +984,28 @@ function openHostDrawer(idx) {
     </div>
     <div class="kv-box" style="margin-bottom:10px"><div class="k">Output</div><div class="mono" style="margin-top:4px;white-space:pre-wrap;color:var(--text)">${esc(h.plugin_output||'-')}</div></div>
     ${h.perf_data ? `<div class="kv-box" style="margin-bottom:12px"><div class="k">Performance Data</div><div class="perf-chips">${parsePerfData(h.perf_data)}</div></div>` : ''}
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:14px">
-      <button class="btn btn-sm primary" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${esc(h.name)};'+Math.floor(Date.now()/1000),'Force check')">↻ Force Check</button>
-      ${h.current_state>0 && !h.acknowledged ? `<button class="btn btn-sm" onclick="closeDrawer();openAckModal('host','${esc(h.name)}','')">✓ Acknowledge</button>` : ''}
-      ${h.acknowledged ? `<button class="btn btn-sm" onclick="sendCmd('REMOVE_HOST_ACKNOWLEDGEMENT;${esc(h.name)}','Remove ACK')">Remove ACK</button>` : ''}
-      <button class="btn btn-sm" onclick="closeDrawer();openDowntimeModal('host','${esc(h.name)}','')">⏱ Downtime</button>
-      <button class="btn btn-sm" onclick="sendCmd('DISABLE_HOST_CHECK;${esc(h.name)}','Disable check')">Disable</button>
-      <button class="btn btn-sm" onclick="sendCmd('ENABLE_HOST_CHECK;${esc(h.name)}','Enable check')">Enable</button>
-    </div>
+    ${canOperate() ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:12px 0">
+      <button class="btn btn-sm primary" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${jsEsc(h.name)};'+Math.floor(Date.now()/1000),'Force check',this)">${uiIcon('refresh')} Force Check</button>
+      ${h.current_state>0 && !h.acknowledged ? `<button class="btn btn-sm" onclick="showDrawerInlineAck('host','${jsEsc(h.name)}','')">${uiIcon('check')} Acknowledge</button>` : ''}
+      ${h.acknowledged ? `<button class="btn btn-sm" onclick="sendCmd('REMOVE_HOST_ACKNOWLEDGEMENT;${jsEsc(h.name)}','Remove ACK',this)">Remove ACK</button>` : ''}
+      <button class="btn btn-sm" onclick="showDrawerInlineDowntime('host','${jsEsc(h.name)}','')">${uiIcon('clock')} Downtime</button>
+      ${isAdmin() ? `<button class="btn btn-sm danger" onclick="confirmDisableCheck('host','${jsEsc(h.name)}','')">Disable Checks</button>
+      <button class="btn btn-sm" onclick="sendCmd('ENABLE_HOST_CHECK;${jsEsc(h.name)}','Enable check',this)">Enable Checks</button>` : ''}
+    </div>` : ''}
+    <div id="drawer-inline-action"></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-      <button class="btn btn-sm" onclick="closeDrawer();openReportFor('${esc(h.name)}','')">View SLA Report ›</button>
-      <button class="btn btn-sm" onclick="closeDrawer();jumpToManageHost('${esc(h.name)}')">Edit Config ›</button>
-      <button class="btn btn-sm" onclick="closeDrawer();jumpAddServiceForHost('${esc(h.name)}')">+ Add Service</button>
+      <button class="btn btn-sm" onclick="closeDrawer();openReportFor('${jsEsc(h.name)}','')">View SLA Report</button>
+      ${isAdmin() ? `<button class="btn btn-sm" onclick="closeDrawer();jumpToManageHost('${jsEsc(h.name)}')">Edit Config</button>
+      <button class="btn btn-sm" onclick="closeDrawer();jumpAddServiceForHost('${jsEsc(h.name)}')">+ Add Service</button>` : ''}
     </div>`;
   document.getElementById('drawer-wrap').classList.add('open');
 }
-function openSvcDrawer(idx) {
-  const s = S.lastItems[idx]; if (!s) return;
+
+function openSvcDrawerObj(s) {
   document.getElementById('drawer-body').innerHTML = `
     <div class="drawer-head">
       <div>${svcBadge(s)} ${flagsHTML(s)}<h2 style="margin-top:6px">${esc(s.description)}</h2><div class="name-sub">${esc(s.host_name)}</div></div>
-      <button class="btn btn-sm" onclick="closeDrawer()">✕</button>
+      <button class="icon-btn" onclick="closeDrawer()" title="Close drawer" aria-label="Close drawer">${uiIcon('x')}</button>
     </div>
     <div class="kv-grid">
       <div class="kv-box"><div class="k">State Type</div><div class="v">${s.state_type===1?'HARD':'SOFT'} (${s.current_attempt}/${s.max_attempts})</div></div>
@@ -829,34 +1015,43 @@ function openSvcDrawer(idx) {
     </div>
     <div class="kv-box" style="margin-bottom:10px"><div class="k">Output</div><div class="mono" style="margin-top:4px;white-space:pre-wrap;color:var(--text)">${esc(s.plugin_output||'-')}</div></div>
     ${s.perf_data ? `<div class="kv-box" style="margin-bottom:12px"><div class="k">Performance Data</div><div class="perf-chips">${parsePerfData(s.perf_data)}</div></div>` : ''}
-    <div id="drawer-metrics-box" style="margin-bottom:12px"></div>
-    ${canOperate() ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:14px">
-      <button class="btn btn-sm primary" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻ Force Check</button>
-      ${s.current_state>0 && !s.acknowledged ? `<button class="btn btn-sm" onclick="closeDrawer();openAckModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">✓ Acknowledge</button>` : ''}
-      ${s.acknowledged ? `<button class="btn btn-sm" onclick="sendCmd('REMOVE_SVC_ACKNOWLEDGEMENT;${jsEsc(s.host_name)};${jsEsc(s.description)}','Remove ACK')">Remove ACK</button>` : ''}
-      <button class="btn btn-sm" onclick="closeDrawer();openDowntimeModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">⏱ Downtime</button>
-      ${isAdmin() ? `<button class="btn btn-sm" onclick="sendCmd('DISABLE_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)}','Disable check')">Disable</button>
-      <button class="btn btn-sm" onclick="sendCmd('ENABLE_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)}','Enable check')">Enable</button>` : ''}
+    ${canOperate() ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:12px 0">
+      <button class="btn btn-sm primary" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)};'+Math.floor(Date.now()/1000),'Force check',this)">${uiIcon('refresh')} Force Check</button>
+      ${s.current_state>0 && !s.acknowledged ? `<button class="btn btn-sm" onclick="showDrawerInlineAck('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">${uiIcon('check')} Acknowledge</button>` : ''}
+      ${s.acknowledged ? `<button class="btn btn-sm" onclick="sendCmd('REMOVE_SVC_ACKNOWLEDGEMENT;${jsEsc(s.host_name)};${jsEsc(s.description)}','Remove ACK',this)">Remove ACK</button>` : ''}
+      <button class="btn btn-sm" onclick="showDrawerInlineDowntime('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">${uiIcon('clock')} Downtime</button>
+      ${isAdmin() ? `<button class="btn btn-sm danger" onclick="confirmDisableCheck('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">Disable Checks</button>
+      <button class="btn btn-sm" onclick="sendCmd('ENABLE_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)}','Enable check',this)">Enable Checks</button>` : ''}
     </div>` : ''}
+    <div id="drawer-inline-action"></div>
+    <div id="drawer-metrics-box" style="margin:12px 0;min-height:190px"><div class="kv-box"><div class="k" style="margin-bottom:8px">6h Metric Trend</div><div class="skel" style="height:150px"></div></div></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-      <button class="btn btn-sm" onclick="closeDrawer();openReportFor('${jsEsc(s.host_name)}','${jsEsc(s.description)}')">View SLA Report ›</button>
-      <button class="btn btn-sm" onclick="closeDrawer();openMetricsFor('${jsEsc(s.host_name)}','${jsEsc(s.description)}')">Metrics Charts ›</button>
-      ${isAdmin() ? `<button class="btn btn-sm" onclick="closeDrawer();jumpToManageHost('${jsEsc(s.host_name)}')">Edit Config ›</button>` : ''}
+      <button class="btn btn-sm" onclick="closeDrawer();openReportFor('${jsEsc(s.host_name)}','${jsEsc(s.description)}')">View SLA Report</button>
+      <button class="btn btn-sm" onclick="closeDrawer();openMetricsFor('${jsEsc(s.host_name)}','${jsEsc(s.description)}')">Metrics Charts</button>
+      ${isAdmin() ? `<button class="btn btn-sm" onclick="closeDrawer();jumpToManageHost('${jsEsc(s.host_name)}')">Edit Config</button>` : ''}
     </div>`;
   document.getElementById('drawer-wrap').classList.add('open');
-  // Load mini metric trend chart inside drawer
-  fetch(`/api/v1/metrics?host=${encodeURIComponent(s.host_name)}&service=${encodeURIComponent(s.description)}&range=6h`)
-    .then(r => r.json()).then(d => {
+
+  apiFetchJSON(`/api/v1/metrics?host=${encodeURIComponent(s.host_name)}&service=${encodeURIComponent(s.description)}&range=6h`)
+    .then(d => {
       const box = document.getElementById('drawer-metrics-box');
-      if (!box || !d.series || !d.series.length) return;
+      if (!box) return;
+      if (!d.series || !d.series.length) {
+        box.style.minHeight = '0';
+        box.innerHTML = '';
+        return;
+      }
       const ser = d.series[0];
       box.innerHTML = `<div class="kv-box"><div class="k" style="display:flex;justify-content:space-between;margin-bottom:6px"><span>Trend (6h): ${esc(ser.label)} — hover for values</span><span>Last: <b>${ser.last}${esc(ser.unit||'')}</b></span></div>${renderMetricChartSVG(ser, { width: 460, height: 175 })}</div>`;
-    }).catch(() => {});
+    }).catch(() => {
+      const box = document.getElementById('drawer-metrics-box');
+      if (box) { box.style.minHeight = '0'; box.innerHTML = ''; }
+    });
 }
 
 function openAckModal(kind, host, desc) {
   openModal(`<h2>Acknowledge ${esc(kind==='host'?host:host+' / '+desc)}</h2>
-    <div class="form-row"><label>Comment</label><input id="m-ack-cmt" type="text" value="Acknowledged via Encore"></div>
+    <div class="form-row"><label for="m-ack-cmt">Comment</label><input id="m-ack-cmt" type="text" value="Acknowledged via Encore"></div>
     <div style="display:flex;gap:12px;margin:8px 0">
       <label class="chk-pill"><input type="checkbox" id="m-ack-sticky" checked> Sticky</label>
       <label class="chk-pill"><input type="checkbox" id="m-ack-notify"> Notify</label>
@@ -872,7 +1067,7 @@ function submitAck(kind, host, desc) {
 }
 function openDowntimeModal(kind, host, desc) {
   openModal(`<h2>Schedule Downtime — ${esc(kind==='host'?host:host+' / '+desc)}</h2>
-    <div class="form-row"><label>Duration (min)</label>
+    <div class="form-row"><label for="m-dt-min">Duration (minutes)</label>
       <div class="presets">
         <button class="btn btn-sm" onclick="document.getElementById('m-dt-min').value=30">30m</button>
         <button class="btn btn-sm" onclick="document.getElementById('m-dt-min').value=60">1h</button>
@@ -881,7 +1076,7 @@ function openDowntimeModal(kind, host, desc) {
       </div>
       <input id="m-dt-min" type="number" value="60" min="1">
     </div>
-    <div class="form-row"><label>Comment</label><input id="m-dt-cmt" type="text" value="Scheduled maintenance"></div>
+    <div class="form-row"><label for="m-dt-cmt">Comment</label><input id="m-dt-cmt" type="text" value="Scheduled maintenance"></div>
     <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitDowntime('${jsEsc(kind)}','${jsEsc(host)}','${jsEsc(desc)}')">Schedule</button></div>`);
 }
 function submitDowntime(kind, host, desc) {

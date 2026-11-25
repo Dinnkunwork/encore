@@ -53,9 +53,10 @@ function onMetricChartMove(ev, id) {
   tt.innerHTML = `<div class="tt-time">${esc(dtStr)}</div><div class="tt-val">${best.v}${esc(meta.unit)}${statusTag}</div>`;
   const leftPx = (best.x / meta.w) * rect.width;
   const topPx = (best.y / meta.h) * rect.height;
-  const clampedLeft = Math.max(66, Math.min(rect.width - 66, leftPx));
+  const clampedLeft = Math.max(70, Math.min(rect.width - 70, leftPx));
+  tt.classList.toggle('flip-down', topPx < 64);
   tt.style.left = clampedLeft + 'px';
-  tt.style.top = Math.max(44, topPx) + 'px';
+  tt.style.top = topPx + 'px';
   tt.style.display = 'block';
 }
 
@@ -280,8 +281,9 @@ function onTrendBarEnter(ev, id, idx) {
   const col = b.ok_pct >= 99.5 ? '#34d399' : (b.ok_pct >= 95 ? '#fbbf24' : '#f87171');
   const probDetails = (b.crit_pct || b.warn_pct) ? `<div style="font-size:11px;color:#cbd5e1">Warn: ${(b.warn_pct||0).toFixed(1)}% • Crit/Down: ${(b.crit_pct||0).toFixed(1)}%</div>` : '';
   tt.innerHTML = `<div class="tt-time">Window: ${esc(b.label)}</div><div class="tt-val" style="color:${col}">Uptime ${b.ok_pct.toFixed(2)}%</div>${probDetails}<div style="font-size:11px;color:${b.incidents>0?'#f87171':'#94a3b8'}">${b.incidents} HARD incident(s)</div>`;
+  tt.classList.toggle('flip-down', rect.height < 110);
   tt.style.left = clampedLeft + 'px';
-  tt.style.top = '42px';
+  tt.style.top = rect.height < 110 ? '20px' : '42px';
   tt.style.display = 'block';
 }
 function onTrendLeave(id) {
