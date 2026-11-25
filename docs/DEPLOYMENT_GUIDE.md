@@ -182,10 +182,21 @@ grep "encore-fast-worker" /usr/local/nagios/var/nagios.log
 
 ---
 
-## 7. Catatan Operasional & Rollback Cepat
+## 7. Catatan Operasional, HTTPS & Rollback Cepat
 
-- **Reverse Proxy:** `encore-state-gateway` di-bind ke `127.0.0.1:8080`. Jika ingin diakses dari luar server, letakkan di belakang Nginx/Caddy dengan HTTPS + autentikasi (Basic Auth / SSO / IP allowlist).
-- **Rollback Worker (Fase 2):** `sudo systemctl stop encore-go-worker` — Nagios otomatis *fallback* ke core worker bawaan tanpa restart.
+- **Native HTTPS (Built-in TLS di Encore Gateway):** Tambahkan `-tls-cert /etc/ssl/encore.crt -tls-key /etc/ssl/encore.key` pada `ExecStart` di `encore-state-gateway.service` (cookie session otomatis bertanda `Secure` + security headers aktif).
+- **Reverse Proxy Nginx (Alternatif HTTPS dengan SSE Support):**
+  ```nginx
+  location / {
+      proxy_pass http://127.0.0.1:8080;
+      proxy_set_header Host $host;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_buffering off;          # penting untuk real-time SSE /api/v1/stream
+      proxy_read_timeout 3600s;
+  }
+  ```
+- **Rollback Worker (Fase 2):** `sudo systemctl stop encore-go-worker` — Encore Engine otomatis *fallback* ke core worker bawaan tanpa restart.
 - **Rollback Async Save (Fase 3):** Ubah `async_retention_save=0` (dan `async_status_save=0`) di `nagios.cfg`, lalu `sudo systemctl reload nagios`.
 - **Rollback API/CGI (Fase 1):** Kembalikan `status_file=/usr/local/nagios/var/status.dat` di `nagios.cfg` dan `sudo systemctl reload nagios`.
 
