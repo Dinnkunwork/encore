@@ -293,6 +293,42 @@ async function loadOverview() {
   if (uLed) uLed.className = 'kpi-led ' + (unhand > 0 ? 'crit' : '');
   document.getElementById('kpi-unhandled-card')?.classList.toggle('is-alert', unhand > 0);
 
+  // Operational Readiness / Incident Command Strip
+  const rb = document.getElementById('ov-readiness-banner');
+  if (rb) {
+    rb.classList.toggle('is-incident', unhand > 0);
+    if (unhand > 0) {
+      rb.innerHTML = `<div class="rb-body">
+        <div class="rb-lead">
+          <img class="rb-signal" src="/assets/animated/signal-pulse.svg" alt="">
+          <div>
+            <div class="rb-title" style="color:var(--crit-fg)">Active Incident — ${unhand} Unhandled Problem${unhand===1?'':'s'} Requiring Attention</div>
+            <div class="rb-sub">${sum.hosts.down} host(s) down · ${sum.services.critical} critical · ${sum.services.warning} warning · Review the priority queue below.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm danger" onclick="quickUnhandled()">Open Problems Queue</button>
+          <button class="btn btn-sm" onclick="setView('inventory','byhost')">Inspect By Host</button>
+        </div>
+      </div>`;
+    } else {
+      rb.innerHTML = `<div class="rb-body">
+        <div class="rb-lead">
+          <img class="rb-signal" src="/assets/animated/signal-pulse.svg" alt="">
+          <div>
+            <div class="rb-title">Fleet Nominal — All Monitored Systems Clear</div>
+            <div class="rb-sub">${sum.hosts.up}/${sum.hosts.total} hosts UP · ${sum.services.ok}/${sum.services.total} services OK · Real-time SSE telemetry active.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="setView('inventory','byhost')">Browse Inventory</button>
+          <button class="btn btn-sm primary" onclick="setView('reports','sla')">SLA Reports</button>
+        </div>
+      </div>
+      <div class="rb-art"><img src="/assets/scenes/fleet-calm.jpg" alt=""></div>`;
+    }
+  }
+
   // Incident-First Ordering: promote Unhandled Problems above Fleet Map whenever unhandled > 0
   const probPanel = document.getElementById('ov-prob-panel');
   const topSlot = document.getElementById('ov-incident-top');

@@ -56,7 +56,7 @@ async function openDiffReviewModal() {
   const entries = diff.entries || [];
   openModal(`
     <h2>Pending Configuration Changes (${diff.total || 0})</h2>
-    <p class="name-sub" style="margin-bottom:12px">Perubahan di bawah masih berstatus <b>Draft</b> dan belum aktif di Encore Engine sampai Anda klik <b>Apply &amp; Reload</b>.</p>
+    <p class="name-sub" style="margin-bottom:12px">Staged changes remain in <b>Draft</b> and will not affect Encore Engine until you run <b>Apply &amp; Reload</b>.</p>
     ${entries.length ? `<div class="table-wrap" style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table>
       <thead><tr><th>Status</th><th>Type</th><th>Object</th><th>Changed Fields</th></tr></thead><tbody>
       ${entries.map(e => {
@@ -81,7 +81,7 @@ async function discardPendingChanges() {
   const items = (diff.entries || []).map(e => `${e.status.toUpperCase()}: ${e.kind} ${e.label}`);
   const ok = await encoreConfirm({
     title: 'Discard Pending Config Changes?',
-    message: 'Seluruh perubahan draft (Hosts, Services, Commands, Groups, Contacts) yang belum di-Apply akan dibatalkan dan dikembalikan ke konfigurasi live terakhir. Templates & Notifications tidak terpengaruh.',
+    message: 'All unapplied draft changes (Hosts, Services, Commands, Groups, Contacts) will revert to the last live snapshot. Templates and Notifications are unaffected.',
     items,
     confirmText: `Discard ${diff.total || ''} Change(s)`,
     danger: true
@@ -150,7 +150,7 @@ function renderManageObjects(el, c) {
 
   el.innerHTML = `
     ${showAdoptBanner ? `<div class="callout-banner">
-      <div><b>Standalone <code class="code-chip">localhost.cfg</code> terdeteksi</b> (${(lh.parsed_hosts||[]).length} host, ${(lh.parsed_services||[]).length} services). Adopt agar bisa dikelola penuh di sini.</div>
+      <div><b>Standalone <code class="code-chip">localhost.cfg</code> detected</b> (${(lh.parsed_hosts||[]).length} host, ${(lh.parsed_services||[]).length} services). Adopt it to manage all checks from this console.</div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-sm primary" onclick="adoptLocalhost()">1-Click Adopt</button>
         <button class="btn btn-sm" onclick="openLocalhostRawModal()">View Raw</button>
@@ -1406,8 +1406,8 @@ async function runLegacyImport(dryRun) {
 
 function openImportJSONModal() {
   openModal(`<h2>Import Encore Config Backup (.json)</h2>
-    <p class="name-sub" style="margin-bottom:10px">Upload file backup <code class="code-chip">.json</code> dari server Encore lain. Config akan dimuat ke <b>Draft</b> sehingga Anda bisa Review Diff &amp; Validate sebelum Apply.</p>
-    <div class="form-row"><label>Select Backup JSON File</label><input id="imp-json-file" type="file" accept=".json"></div>
+    <p class="name-sub" style="margin-bottom:10px">Upload a <code class="code-chip">.json</code> backup exported from an Encore instance. Objects load into <b>Draft</b> so you can review diffs and validate before applying.</p>
+    <div class="form-row"><label for="imp-json-file">Select Backup JSON File</label><input id="imp-json-file" type="file" accept=".json"></div>
     <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitImportJSON()">Import to Draft</button></div>`);
 }
 async function submitImportJSON() {
@@ -1427,12 +1427,12 @@ let _discoveredHosts = [];
 function openDiscoveryModal() {
   _discoveredHosts = [];
   openModal(`<h2>Network Host Discovery (Guardrailed)</h2>
-    <p class="name-sub" style="margin-bottom:10px">Scan IP atau subnet (maks. <code class="code-chip">/24</code> = 254 host) untuk mendeteksi port aktif (SSH 22, HTTP 80, HTTPS 443, NCPA 5693, DB) dan tambah cepat ke Draft.</p>
+    <p class="name-sub" style="margin-bottom:10px">Probe an IP list or subnet (max <code class="code-chip">/24</code> = 254 hosts) for active ports (SSH 22, HTTP 80, HTTPS 443, NCPA 5693, DB) and stage discovered hosts into Draft.</p>
     <div style="display:flex;gap:8px;margin-bottom:10px">
-      <input id="disc-target" type="text" style="flex:1" placeholder="e.g. 10.10.2.0/24 or 10.10.2.10,10.10.2.11">
+      <input id="disc-target" type="text" style="flex:1" placeholder="e.g. 10.10.2.0/24 or 10.10.2.10,10.10.2.11" aria-label="Target IP or CIDR">
       <button class="btn primary" id="disc-btn" onclick="runDiscoveryScan()">Scan</button>
     </div>
-    <div id="disc-results" style="max-height:280px;overflow:auto"><div class="empty" style="padding:18px">Enter an IP or /24 CIDR and click Scan.</div></div>
+    <div id="disc-results" style="max-height:280px;overflow:auto"><div class="empty" style="padding:18px">Enter an IP address or /24 CIDR and click Scan.</div></div>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal()">Close</button>
       <button class="btn primary" id="disc-add-btn" style="display:none" onclick="addDiscoveredHosts()">Add Selected to Draft</button>
@@ -1443,7 +1443,11 @@ async function runDiscoveryScan() {
   const resEl = document.getElementById('disc-results');
   const btn = document.getElementById('disc-btn');
   btn.disabled = true; btn.textContent = 'Scanning...';
-  resEl.innerHTML = '<div class="empty"><encore-icon name="loader" size="2" live></encore-icon> Probing network targets...</div>';
+  resEl.innerHTML = `<div class="art-empty" style="padding:20px 12px">
+    <img src="/assets/animated/discovery-scan.gif" alt="Scanning network" style="width:180px;height:44px;border-radius:3px;border:1px solid var(--border-strong);margin:0 auto 10px;display:block">
+    <h4>Probing Target Range</h4>
+    <p class="mono">${esc(target || 'subnet')} · bounded 32-worker TCP probe</p>
+  </div>`;
   try {
     const res = await fetch('/api/v1/discovery/scan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ target }) });
     const d = await res.json();

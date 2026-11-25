@@ -50,13 +50,24 @@ async function renderGuide() {
 
   if (S.guideTab === 'quick') {
     el.innerHTML = `
+      <div class="guide-hero">
+        <div class="guide-hero-copy">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+            <img src="/assets/logo/encore-emblem.png" alt="Encore" style="width:28px;height:28px;border-radius:3px;border:1px solid rgba(250,249,245,0.2)">
+            <span class="badge c-ok">ENCORE v8 CONTROL ROOM</span>
+          </div>
+          <h2>Architecture &amp; Operator Workflow</h2>
+          <p>Encore pairs a C monitoring engine, in-process Go check workers, and a real-time SSE Control Room into one low-latency operational instrument.</p>
+        </div>
+        <div class="guide-hero-img"><img src="/assets/scenes/swiss-control-hero.jpg" alt="Encore Hardware Telemetry"></div>
+      </div>
+
       <div class="guide-card">
-        <div class="guide-card-head"><h3>Arsitektur &amp; Cara Kerja Encore</h3><span class="badge c-ok">v8 Real-Time Console</span></div>
-        <p style="font-size:13px;color:var(--muted)">Encore menggabungkan <b>3 komponen ringan</b> dalam satu ekosistem terpusat:</p>
+        <div class="guide-card-head"><h3>Core Components</h3></div>
         <ol class="guide-steps">
-          <li><b>Encore Core Engine (C):</b> Menjadwalkan check, menyimpan state memori, dan menulis log historis dengan opsi <i>Async CoW Save</i> agar bebas lag.</li>
-          <li><b>Encore Go Worker (<code>encore-go-worker</code>):</b> Menjalankan check populer (<code>check_tcp</code>, <code>check_http</code> Strict TLS &amp; SSL Expiry <code>-C</code>, <code>check_dummy</code>, <code>check_ncpa</code>) secara <i>in-process</i> tanpa fork/exec berulang sehingga hemat CPU &amp; RAM.</li>
-          <li><b>Encore State Gateway &amp; Dashboard (<code>encore-state-gateway</code>):</b> Menerima event real-time (SSE push ke browser), menyediakan Web UI (5 tema + NOC TV Mode), RBAC Login, Time-Series Metrics, Scheduled SLA Digest, Network Discovery, dan engine notifikasi SMTP/Webhook bawaan.</li>
+          <li><b>Encore Core Engine (C):</b> Schedules checks, maintains live memory state, and persists historical logs with non-blocking <i>Async CoW Save</i>.</li>
+          <li><b>Encore Go Worker (<code>encore-go-worker</code>):</b> Executes <code>check_tcp</code>, <code>check_http</code> (Strict TLS &amp; SSL expiry <code>-C</code>), <code>check_dummy</code>, and <code>check_ncpa</code> in-process with zero fork overhead.</li>
+          <li><b>Encore State Gateway &amp; Control Room (<code>encore-state-gateway</code>):</b> Streams live state over SSE (with the 60fps Oscilloscope Ribbon), serves the 5-theme Swiss Control Room UI, RBAC sessions, 7-day Time-Series Metrics, Scheduled SLA Digests, Network Discovery, and SMTP/Webhook alerts.</li>
         </ol>
       </div>
 

@@ -18,7 +18,7 @@
   <aside class="sidebar" id="sidebar" aria-label="Primary Navigation">
     <div class="sb-head">
       <a class="sb-brand" href="#overview" onclick="setView('overview');return false">
-        <span class="brand-mark" aria-hidden="true">EN</span>
+        <img class="brand-emblem" src="/assets/logo/encore-emblem.png" alt="Encore">
         <div class="brand-text"><strong>Encore</strong><span>Control Room</span></div>
       </a>
       <button class="sb-toggle desktop-only" id="sb-toggle-btn" onclick="toggleSidebar()" title="Collapse sidebar" aria-label="Collapse sidebar" aria-expanded="true">«</button>
@@ -60,6 +60,7 @@
 
     <div class="sb-foot">
       <div class="sb-status" role="status" aria-live="polite">
+        <img class="beacon-gif" src="/assets/animated/telemetry-beacon.gif" alt="">
         <span class="pulse-dot ok" id="conn-dot"></span>
         <span class="sb-foot-text"><b id="conn-label">Live</b> · <span id="events-pill">0 ev</span></span>
       </div>
@@ -144,6 +145,9 @@
     <main class="content">
       <!-- OVERVIEW -->
       <section id="sec-overview" class="view-section">
+        <!-- Editorial Operational Readiness / Incident Command Strip -->
+        <div id="ov-readiness-banner" class="readiness-banner"></div>
+
         <div class="kpi-grid">
           <button type="button" class="kpi-card" onclick="setView('inventory','byhost')">
             <div class="kpi-top"><span class="kpi-label">01 / Host Health</span><span class="kpi-led" id="kpi-h-led"></span></div>

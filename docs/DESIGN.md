@@ -12,7 +12,14 @@ Panduan sistem desain permanen untuk **Encore Control Room** (`api/state-gateway
 - **Aviation Annunciator Badges (`2px` radius):** Pill status bertepi tajam dengan indikator LED kotak 6px (`UP`, `DOWN`, `OK`, `WARN`, `CRIT`, `PEND`).
 - **Native View Transitions API:** Transisi halaman halus (`document.startViewTransition`) dengan fallback instan & hormat pada `prefers-reduced-motion`.
 - **Interactive Radial Orbital Topology:** Diagram hub-and-spoke dengan cincin jarak konsentris, sumbu crosshair, dan node host radial yang dapat diklik.
-- **Swiss Split Login (`web/login.html`):** Layout 2-kolom arsitektural (masthead karbon dengan jam live + panel sign-in alabaster).
+- **Swiss Split Login (`web/login.html`):** Layout 2-kolom arsitektural (masthead karbon dengan foto perangkat keras `swiss-control-hero.jpg`, emblem `encore-emblem.png`, beacon `telemetry-beacon.gif` + jam live di kiri; panel sign-in alabaster presisi di kanan).
+- **Bespoke Visual Assets (`web/assets/`):**
+  - `scenes/swiss-control-hero.jpg` — Foto studio perangkat telemetri anodized aluminium (Login & Guide hero).
+  - `scenes/fleet-calm.jpg` — Relief alabaster minimalis (Overview *Fleet Nominal* banner).
+  - `logo/encore-emblem.png` + favicons — Emblem presisi Swiss Bauhaus (Sidebar, Login, Browser Tab).
+  - `animated/telemetry-beacon.gif` & `animated/discovery-scan.gif` — GIF animasi telemetri & scanner jaringan 64-warna tajam.
+  - `animated/signal-pulse.svg` — Ikon pulse SVG animasi 658 byte.
+  - `icons/*.svg` — 12 ikon navigasi/panel seragam `1.8px` stroke.
 
 ---
 
