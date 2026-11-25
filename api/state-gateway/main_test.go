@@ -407,6 +407,39 @@ func TestTemplatesBulkAndNotifications(t *testing.T) {
 		t.Fatalf("bulk disable failed: %d %s", rec.Code, rec.Body.String())
 	}
 
+	// 4b. Bulk services delete
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/config/services/bulk", bytes.NewBufferString(`{"action":"delete","services":[{"host_name":"app-01","service_description":"NCPA CPU"},{"host_name":"app-01","service_description":"NCPA RAM"}]}`))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"affected":2`)) {
+		t.Fatalf("bulk services delete failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 4c. Config diff reports pending changes & discard reverts them while keeping templates
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/config/diff", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	var diffResp ConfigDiff
+	_ = json.Unmarshal(rec.Body.Bytes(), &diffResp)
+	if !diffResp.Pending || diffResp.Total == 0 {
+		t.Fatalf("expected non-empty pending diff, got %+v", diffResp)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/config/discard", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("discard failed: %d %s", rec.Code, rec.Body.String())
+	}
+	if cs.Diff().Total != 0 {
+		t.Fatalf("expected 0 diff after discard, got %+v", cs.Diff())
+	}
+	// Verify templates were preserved across discard
+	snapCfg, _, _ := cs.Snapshot()
+	if len(snapCfg.Templates) < 4 {
+		t.Fatalf("expected templates preserved after discard, got %d", len(snapCfg.Templates))
+	}
+
 	// 5. Notification config masking + Webhook test delivery
 	webhookHit := make(chan string, 2)
 	whSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

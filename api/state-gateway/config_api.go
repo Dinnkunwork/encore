@@ -59,6 +59,7 @@ func registerConfigRoutes(mux *http.ServeMux, cs *ConfigStore, localhostCfgPath 
 			"enabled":         enabled,
 			"pending_changes": pending,
 			"config":          cfg,
+			"diff":            cs.Diff(),
 		})
 	})
 
@@ -301,6 +302,44 @@ func registerConfigRoutes(mux *http.ServeMux, cs *ConfigStore, localhostCfgPath 
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "affected": n})
+	})
+
+	mux.HandleFunc("/api/v1/config/services/bulk", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		var req struct {
+			Action   string       `json:"action"` // enable, disable, delete
+			Services []ServiceRef `json:"services"`
+		}
+		if err := decodeJSONBody(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		n, err := cs.BulkServicesAction(req.Action, req.Services)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "affected": n})
+	})
+
+	mux.HandleFunc("/api/v1/config/diff", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, cs.Diff())
+	})
+
+	mux.HandleFunc("/api/v1/config/discard", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		n, err := cs.DiscardPending()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "discarded", "reverted": n})
 	})
 
 	mux.HandleFunc("/api/v1/config/templates", func(w http.ResponseWriter, r *http.Request) {

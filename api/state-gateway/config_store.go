@@ -110,7 +110,30 @@ type ConfigStore struct {
 	nagiosCfg      string
 	cmdPipePath    string
 	cfg            ManagedConfig
+	committedCfg   ManagedConfig
 	pendingChanges bool
+}
+
+type ServiceRef struct {
+	HostName           string `json:"host_name"`
+	ServiceDescription string `json:"service_description"`
+}
+
+type DiffEntry struct {
+	Kind    string   `json:"kind"`              // host, service, command, contact, hostgroup, servicegroup
+	ID      string   `json:"id"`                // e.g. "web-01" or "web-01::HTTP"
+	Label   string   `json:"label"`             // human-friendly label
+	Status  string   `json:"status"`            // added, modified, deleted
+	Changes []string `json:"changes,omitempty"` // changed field names for modified
+}
+
+type ConfigDiff struct {
+	Pending  bool        `json:"pending"`
+	Added    int         `json:"added"`
+	Modified int         `json:"modified"`
+	Deleted  int         `json:"deleted"`
+	Total    int         `json:"total"`
+	Entries  []DiffEntry `json:"entries"`
 }
 
 var managedCfgFilenames = []string{
@@ -150,7 +173,39 @@ func NewConfigStore(managedDir, nagiosBin, nagiosCfg, cmdPipePath string) (*Conf
 		_ = json.Unmarshal(raw, &cs.cfg)
 	}
 	cs.ensureSlices()
+	committedPath := filepath.Join(managedDir, "encore-committed.json")
+	if raw, err := os.ReadFile(committedPath); err == nil && len(raw) > 0 {
+		_ = json.Unmarshal(raw, &cs.committedCfg)
+	} else {
+		cs.committedCfg = cloneManagedConfig(cs.cfg)
+	}
+	if cs.diffLocked().Total > 0 {
+		cs.pendingChanges = true
+	}
 	return cs, nil
+}
+
+func cloneManagedConfig(src ManagedConfig) ManagedConfig {
+	raw, _ := json.Marshal(src)
+	var dst ManagedConfig
+	_ = json.Unmarshal(raw, &dst)
+	return dst
+}
+
+func (cs *ConfigStore) saveCommittedLocked() error {
+	if cs.managedDir == "" {
+		return nil
+	}
+	raw, err := json.MarshalIndent(cs.committedCfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(cs.managedDir, ".encore-committed.json.tmp")
+	dst := filepath.Join(cs.managedDir, "encore-committed.json")
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dst)
 }
 
 func (cs *ConfigStore) ensureSlices() {
@@ -448,6 +503,274 @@ func (cs *ConfigStore) BulkHostsAction(action string, names []string) (int, erro
 		cs.RecordAudit("bulk_hosts_"+action, fmt.Sprintf("%d hosts", affected), strings.Join(names, ","))
 	}
 	return affected, nil
+}
+
+func (cs *ConfigStore) BulkServicesAction(action string, items []ServiceRef) (int, error) {
+	if len(items) == 0 {
+		return 0, errors.New("no services selected")
+	}
+	set := make(map[string]bool, len(items))
+	for _, it := range items {
+		set[it.HostName+"\x00"+it.ServiceDescription] = true
+	}
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	affected := 0
+	switch action {
+	case "enable", "disable":
+		en := action == "enable"
+		for i := range cs.cfg.Services {
+			k := cs.cfg.Services[i].HostName + "\x00" + cs.cfg.Services[i].ServiceDescription
+			if set[k] {
+				cs.cfg.Services[i].Enabled = en
+				affected++
+			}
+		}
+	case "delete":
+		next := cs.cfg.Services[:0]
+		for _, s := range cs.cfg.Services {
+			if set[s.HostName+"\x00"+s.ServiceDescription] {
+				affected++
+				continue
+			}
+			next = append(next, s)
+		}
+		cs.cfg.Services = next
+	default:
+		return 0, fmt.Errorf("unknown bulk action %q", action)
+	}
+	if affected > 0 {
+		cs.pendingChanges = true
+		if err := cs.saveJSONLocked(); err != nil {
+			return affected, err
+		}
+		cs.RecordAudit("bulk_services_"+action, fmt.Sprintf("%d services", affected), "")
+	}
+	return affected, nil
+}
+
+func sliceEq(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (cs *ConfigStore) diffLocked() ConfigDiff {
+	out := ConfigDiff{Entries: []DiffEntry{}}
+	addEntry := func(e DiffEntry) {
+		out.Entries = append(out.Entries, e)
+		switch e.Status {
+		case "added":
+			out.Added++
+		case "modified":
+			out.Modified++
+		case "deleted":
+			out.Deleted++
+		}
+		out.Total++
+	}
+
+	// Hosts
+	oldH := make(map[string]ManagedHost, len(cs.committedCfg.Hosts))
+	for _, h := range cs.committedCfg.Hosts {
+		oldH[h.Name] = h
+	}
+	newH := make(map[string]ManagedHost, len(cs.cfg.Hosts))
+	for _, h := range cs.cfg.Hosts {
+		newH[h.Name] = h
+		if prev, ok := oldH[h.Name]; !ok {
+			addEntry(DiffEntry{Kind: "host", ID: h.Name, Label: h.Name + " (" + h.Address + ")", Status: "added"})
+		} else {
+			var ch []string
+			if prev.Address != h.Address {
+				ch = append(ch, "address")
+			}
+			if prev.Alias != h.Alias {
+				ch = append(ch, "alias")
+			}
+			if prev.CheckCommand != h.CheckCommand {
+				ch = append(ch, "check_command")
+			}
+			if prev.CheckInterval != h.CheckInterval {
+				ch = append(ch, "check_interval")
+			}
+			if prev.MaxCheckAttempts != h.MaxCheckAttempts {
+				ch = append(ch, "max_check_attempts")
+			}
+			if prev.Contacts != h.Contacts {
+				ch = append(ch, "contacts")
+			}
+			if !sliceEq(prev.Hostgroups, h.Hostgroups) {
+				ch = append(ch, "hostgroups")
+			}
+			if prev.Enabled != h.Enabled {
+				ch = append(ch, "enabled")
+			}
+			if len(ch) > 0 {
+				addEntry(DiffEntry{Kind: "host", ID: h.Name, Label: h.Name, Status: "modified", Changes: ch})
+			}
+		}
+	}
+	for _, h := range cs.committedCfg.Hosts {
+		if _, ok := newH[h.Name]; !ok {
+			addEntry(DiffEntry{Kind: "host", ID: h.Name, Label: h.Name + " (" + h.Address + ")", Status: "deleted"})
+		}
+	}
+
+	// Services
+	oldS := make(map[string]ManagedService, len(cs.committedCfg.Services))
+	for _, s := range cs.committedCfg.Services {
+		oldS[s.HostName+"::"+s.ServiceDescription] = s
+	}
+	newS := make(map[string]ManagedService, len(cs.cfg.Services))
+	for _, s := range cs.cfg.Services {
+		id := s.HostName + "::" + s.ServiceDescription
+		newS[id] = s
+		if prev, ok := oldS[id]; !ok {
+			addEntry(DiffEntry{Kind: "service", ID: id, Label: s.HostName + " / " + s.ServiceDescription, Status: "added"})
+		} else {
+			var ch []string
+			if prev.CheckCommand != s.CheckCommand {
+				ch = append(ch, "check_command")
+			}
+			if prev.CheckInterval != s.CheckInterval {
+				ch = append(ch, "check_interval")
+			}
+			if prev.MaxCheckAttempts != s.MaxCheckAttempts {
+				ch = append(ch, "max_check_attempts")
+			}
+			if prev.Contacts != s.Contacts {
+				ch = append(ch, "contacts")
+			}
+			if !sliceEq(prev.Servicegroups, s.Servicegroups) {
+				ch = append(ch, "servicegroups")
+			}
+			if prev.Enabled != s.Enabled {
+				ch = append(ch, "enabled")
+			}
+			if len(ch) > 0 {
+				addEntry(DiffEntry{Kind: "service", ID: id, Label: s.HostName + " / " + s.ServiceDescription, Status: "modified", Changes: ch})
+			}
+		}
+	}
+	for _, s := range cs.committedCfg.Services {
+		id := s.HostName + "::" + s.ServiceDescription
+		if _, ok := newS[id]; !ok {
+			addEntry(DiffEntry{Kind: "service", ID: id, Label: s.HostName + " / " + s.ServiceDescription, Status: "deleted"})
+		}
+	}
+
+	// Commands
+	oldC := make(map[string]ManagedCommand, len(cs.committedCfg.Commands))
+	for _, c := range cs.committedCfg.Commands {
+		oldC[c.CommandName] = c
+	}
+	newC := make(map[string]ManagedCommand, len(cs.cfg.Commands))
+	for _, c := range cs.cfg.Commands {
+		newC[c.CommandName] = c
+		if prev, ok := oldC[c.CommandName]; !ok {
+			addEntry(DiffEntry{Kind: "command", ID: c.CommandName, Label: c.CommandName, Status: "added"})
+		} else if prev.CommandLine != c.CommandLine {
+			addEntry(DiffEntry{Kind: "command", ID: c.CommandName, Label: c.CommandName, Status: "modified", Changes: []string{"command_line"}})
+		}
+	}
+	for _, c := range cs.committedCfg.Commands {
+		if _, ok := newC[c.CommandName]; !ok {
+			addEntry(DiffEntry{Kind: "command", ID: c.CommandName, Label: c.CommandName, Status: "deleted"})
+		}
+	}
+
+	// Contacts
+	oldCt := make(map[string]ManagedContact, len(cs.committedCfg.Contacts))
+	for _, c := range cs.committedCfg.Contacts {
+		oldCt[c.ContactName] = c
+	}
+	newCt := make(map[string]ManagedContact, len(cs.cfg.Contacts))
+	for _, c := range cs.cfg.Contacts {
+		newCt[c.ContactName] = c
+		if prev, ok := oldCt[c.ContactName]; !ok {
+			addEntry(DiffEntry{Kind: "contact", ID: c.ContactName, Label: c.ContactName, Status: "added"})
+		} else if prev.Alias != c.Alias || prev.Email != c.Email {
+			addEntry(DiffEntry{Kind: "contact", ID: c.ContactName, Label: c.ContactName, Status: "modified", Changes: []string{"alias/email"}})
+		}
+	}
+	for _, c := range cs.committedCfg.Contacts {
+		if _, ok := newCt[c.ContactName]; !ok {
+			addEntry(DiffEntry{Kind: "contact", ID: c.ContactName, Label: c.ContactName, Status: "deleted"})
+		}
+	}
+
+	// Hostgroups
+	oldHG := make(map[string]ManagedHostgroup, len(cs.committedCfg.Hostgroups))
+	for _, g := range cs.committedCfg.Hostgroups {
+		oldHG[g.GroupName] = g
+	}
+	newHG := make(map[string]ManagedHostgroup, len(cs.cfg.Hostgroups))
+	for _, g := range cs.cfg.Hostgroups {
+		newHG[g.GroupName] = g
+		if prev, ok := oldHG[g.GroupName]; !ok {
+			addEntry(DiffEntry{Kind: "hostgroup", ID: g.GroupName, Label: g.GroupName, Status: "added"})
+		} else if prev.Alias != g.Alias || !sliceEq(prev.Members, g.Members) {
+			addEntry(DiffEntry{Kind: "hostgroup", ID: g.GroupName, Label: g.GroupName, Status: "modified", Changes: []string{"alias/members"}})
+		}
+	}
+	for _, g := range cs.committedCfg.Hostgroups {
+		if _, ok := newHG[g.GroupName]; !ok {
+			addEntry(DiffEntry{Kind: "hostgroup", ID: g.GroupName, Label: g.GroupName, Status: "deleted"})
+		}
+	}
+
+	// Servicegroups
+	oldSG := make(map[string]ManagedServicegroup, len(cs.committedCfg.Servicegroups))
+	for _, g := range cs.committedCfg.Servicegroups {
+		oldSG[g.GroupName] = g
+	}
+	newSG := make(map[string]ManagedServicegroup, len(cs.cfg.Servicegroups))
+	for _, g := range cs.cfg.Servicegroups {
+		newSG[g.GroupName] = g
+		if prev, ok := oldSG[g.GroupName]; !ok {
+			addEntry(DiffEntry{Kind: "servicegroup", ID: g.GroupName, Label: g.GroupName, Status: "added"})
+		} else if prev.Alias != g.Alias {
+			addEntry(DiffEntry{Kind: "servicegroup", ID: g.GroupName, Label: g.GroupName, Status: "modified", Changes: []string{"alias"}})
+		}
+	}
+	for _, g := range cs.committedCfg.Servicegroups {
+		if _, ok := newSG[g.GroupName]; !ok {
+			addEntry(DiffEntry{Kind: "servicegroup", ID: g.GroupName, Label: g.GroupName, Status: "deleted"})
+		}
+	}
+
+	out.Pending = cs.pendingChanges || out.Total > 0
+	return out
+}
+
+func (cs *ConfigStore) Diff() ConfigDiff {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.diffLocked()
+}
+
+func (cs *ConfigStore) DiscardPending() (int, error) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	d := cs.diffLocked()
+	// Keep Templates intact since templates are Instant Save (not staged Nagios .cfg)
+	keepTpls := cs.cfg.Templates
+	cs.cfg = cloneManagedConfig(cs.committedCfg)
+	cs.cfg.Templates = keepTpls
+	cs.ensureSlices()
+	cs.pendingChanges = false
+	if err := cs.saveJSONLocked(); err != nil {
+		return 0, err
+	}
+	cs.RecordAudit("discard_pending", fmt.Sprintf("%d changes reverted", d.Total), "")
+	return d.Total, nil
 }
 
 func sanitizeVal(s string) error {
@@ -1245,6 +1568,8 @@ func (cs *ConfigStore) ValidateAndApply(apply bool) (string, error) {
 
 	_ = cs.writeBackupLocked()
 	_ = cs.saveJSONLocked()
+	cs.committedCfg = cloneManagedConfig(cs.cfg)
+	_ = cs.saveCommittedLocked()
 	cs.pendingChanges = false
 
 	// Trigger Nagios reload via external command pipe (no sudo required)

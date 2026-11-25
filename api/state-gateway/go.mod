@@ -1,3 +1,3 @@
 module encore/api/state-gateway
 
-go 1.23
+go 1.22
