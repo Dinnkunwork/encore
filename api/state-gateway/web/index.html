@@ -11,14 +11,18 @@
 </head>
 <body>
 <div class="shell">
-  <!-- Compact Left Sidebar -->
+  <!-- Mobile Sidebar Backdrop -->
+  <div class="sb-backdrop" id="sb-backdrop" onclick="closeMobileSidebar()"></div>
+
+  <!-- Refined Left Sidebar -->
   <aside class="sidebar" id="sidebar">
     <div class="sb-head">
       <a class="sb-brand" href="#" onclick="setView('overview');return false">
         <img src="/assets/logo/logo.svg" alt="Encore">
         <div class="brand-text"><strong>Encore</strong><span>Monitoring Console</span></div>
       </a>
-      <button class="sb-toggle" onclick="toggleSidebar()" title="Collapse sidebar">«</button>
+      <button class="sb-toggle desktop-only" id="sb-toggle-btn" onclick="toggleSidebar()" title="Collapse sidebar">«</button>
+      <button class="sb-toggle mobile-only" onclick="closeMobileSidebar()" title="Close menu">✕</button>
     </div>
 
     <nav class="sb-nav">
@@ -37,24 +41,26 @@
         <img src="/assets/icons/database.svg" alt=""><span class="nav-text">Reports</span>
       </button>
 
+      <div class="nav-divider"></div>
       <div class="nav-section">Configuration</div>
       <button class="nav-item" id="nav-manage" onclick="setView('manage')">
         <img src="/assets/icons/settings.svg" alt=""><span class="nav-text">Manage</span>
+        <span class="nav-badge warn" id="nav-pending-badge" style="display:none" title="Pending changes">•</span>
       </button>
       <button class="nav-item" id="nav-system" onclick="setView('system')">
         <img src="/assets/icons/log.svg" alt=""><span class="nav-text">System</span>
       </button>
 
+      <div class="nav-divider"></div>
       <div class="nav-section">Help</div>
       <button class="nav-item" id="nav-guide" onclick="setView('guide')">
-        <img src="/assets/icons/cloud.svg" alt=""><span class="nav-text">Guide</span>
+        <img src="/assets/icons/cloud.svg" alt=""><span class="nav-text">User Guide</span>
       </button>
     </nav>
 
     <div class="sb-foot">
-      <button class="sb-apply" id="sb-apply-btn" onclick="runValidate(true)">Apply Pending Changes</button>
       <div class="sb-status">
-        <img id="conn-icon" src="/assets/status/status-ok.svg" alt="">
+        <span class="pulse-dot ok" id="conn-dot"></span>
         <span class="sb-foot-text"><b id="conn-label">Live</b> • <span id="events-pill">0 ev</span></span>
       </div>
     </div>
@@ -64,7 +70,7 @@
   <div class="main">
     <header class="topbar">
       <div class="topbar-left">
-        <button class="btn btn-sm mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('mobile-open')">☰</button>
+        <button class="btn btn-sm mobile-menu-btn" onclick="openMobileSidebar()" aria-label="Menu">☰</button>
         <div>
           <div class="page-title" id="page-title">Overview</div>
           <div class="page-sub" id="sub-meta">Connecting...</div>
@@ -75,22 +81,27 @@
           <img src="/assets/icons/search.svg" alt="">
           <input type="search" id="global-search" placeholder="Search (/) ..." oninput="onGlobalSearch()">
         </div>
-        <button class="btn btn-sm" onclick="openQuickJump()" title="Quick Jump (Ctrl+K)">⌘K</button>
-        <select id="auto-select" onchange="setAutoInterval()">
+        <button class="btn btn-sm desktop-only" onclick="openQuickJump()" title="Quick Jump (Ctrl+K)">⌘K</button>
+        <select id="auto-select" onchange="setAutoInterval()" aria-label="Auto refresh">
           <option value="3000" selected>Auto 3s</option>
           <option value="10000">Auto 10s</option>
           <option value="30000">Auto 30s</option>
           <option value="0">Paused</option>
         </select>
-        <button class="btn btn-sm" onclick="refreshAll()">Refresh</button>
+        <button class="btn btn-sm" onclick="refreshAll()" title="Refresh now">↻</button>
         <button class="btn btn-sm" id="theme-btn" onclick="toggleTheme()">Dark</button>
       </div>
     </header>
 
-    <!-- Sticky Pending Changes Banner -->
+    <!-- Sticky Pending Changes Banner (with Diff Review & Discard) -->
     <div class="pending-banner" id="pending-banner" style="display:none">
-      <div><b>Pending Configuration Changes</b> — Validate &amp; Apply agar perubahan aktif di Nagios Core.</div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="badge c-warn">DRAFT</span>
+        <span id="pending-summary-text"><b>Pending Nagios Config Changes</b> — belum aktif sampai Apply &amp; Reload.</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-sm" onclick="openDiffReviewModal()">Review Changes</button>
+        <button class="btn btn-sm danger" onclick="discardPendingChanges()">Discard</button>
         <button class="btn btn-sm" onclick="setView('manage');runValidate(false)">Validate</button>
         <button class="btn btn-sm primary" onclick="runValidate(true)">Apply &amp; Reload</button>
       </div>
@@ -98,7 +109,7 @@
 
     <main class="content">
       <!-- OVERVIEW -->
-      <section id="sec-overview">
+      <section id="sec-overview" class="view-section">
         <div class="kpi-grid">
           <div class="kpi-card" onclick="setView('inventory','hosts')">
             <div class="kpi-top"><span class="kpi-label">Host Health</span><img class="kpi-icon" id="kpi-h-icon" src="/assets/status/status-ok.svg" alt=""></div>
@@ -121,7 +132,29 @@
             <div class="kpi-sub"><span id="ov-flags">Checks: - • Notify: -</span></div>
           </div>
         </div>
-        <div class="split-2">
+
+        <!-- Overview Visual Charts Row -->
+        <div class="ov-visuals">
+          <div class="panel" style="margin-bottom:0">
+            <div class="panel-head">
+              <div class="panel-title"><img src="/assets/icons/network.svg" alt="">Fleet Health Map</div>
+              <div style="display:flex;gap:6px">
+                <button class="btn btn-sm active" id="ov-map-grid-btn" onclick="setOvMapMode('grid')">Health Grid</button>
+                <button class="btn btn-sm" id="ov-map-topo-btn" onclick="setOvMapMode('topo')">Topology</button>
+              </div>
+            </div>
+            <div id="ov-fleet-map" style="padding:14px 16px"><div class="empty">Loading fleet map...</div></div>
+          </div>
+          <div class="panel" style="margin-bottom:0">
+            <div class="panel-head">
+              <div class="panel-title"><img src="/assets/icons/database.svg" alt="">Distribution &amp; 24h Trend</div>
+              <button class="btn btn-sm" onclick="setView('reports','sla')">Full SLA ›</button>
+            </div>
+            <div id="ov-mini-charts" style="padding:14px 16px"><div class="empty">Loading charts...</div></div>
+          </div>
+        </div>
+
+        <div class="split-2" style="margin-top:16px">
           <div class="panel">
             <div class="panel-head">
               <div class="panel-title"><img src="/assets/icons/alert.svg" alt="">Unhandled Problems</div>
@@ -154,7 +187,7 @@
       </section>
 
       <!-- INVENTORY & PROBLEMS -->
-      <section id="sec-monitor" style="display:none">
+      <section id="sec-monitor" class="view-section" style="display:none">
         <div class="subtabs">
           <div class="subtab-list" id="mon-subtabs"></div>
           <div class="subtab-actions" id="mon-filters">
@@ -176,8 +209,8 @@
         <div id="mon-body"></div>
       </section>
 
-      <!-- MANAGE (Hosts & Services | Templates | Commands | Groups | Notifications | Secrets) -->
-      <section id="sec-manage" style="display:none">
+      <!-- MANAGE -->
+      <section id="sec-manage" class="view-section" style="display:none">
         <div class="subtabs">
           <div class="subtab-list">
             <button class="subtab active" id="mtab-objects" onclick="setManageTab('objects')">Hosts &amp; Services</button>
@@ -188,6 +221,7 @@
             <button class="subtab" id="mtab-secrets" onclick="setManageTab('secrets')">Secrets</button>
           </div>
           <div class="subtab-actions">
+            <button class="btn btn-sm" id="mg-review-btn" style="display:none" onclick="openDiffReviewModal()">Review Diff</button>
             <button class="btn btn-sm" onclick="runValidate(false)">Validate</button>
             <button class="btn btn-sm primary" onclick="runValidate(true)">Apply &amp; Reload</button>
           </div>
@@ -196,8 +230,8 @@
         <div id="manage-content"></div>
       </section>
 
-      <!-- SYSTEM (Controls | Backups | Audit) -->
-      <section id="sec-system" style="display:none">
+      <!-- SYSTEM -->
+      <section id="sec-system" class="view-section" style="display:none">
         <div class="subtabs">
           <div class="subtab-list">
             <button class="subtab active" id="stab-controls" onclick="setSysTab('controls')">Controls</button>
@@ -208,21 +242,26 @@
         <div id="system-content"></div>
       </section>
 
-      <!-- GUIDE (Quick Start | NCPA | Catalog | Paths) -->
-      <section id="sec-guide" style="display:none">
+      <!-- GUIDE (6 Comprehensive Tabs + Internal Search) -->
+      <section id="sec-guide" class="view-section" style="display:none">
         <div class="subtabs">
           <div class="subtab-list">
-            <button class="subtab active" id="gtab-quick" onclick="setGuideTab('quick')">Quick Start</button>
-            <button class="subtab" id="gtab-ncpa" onclick="setGuideTab('ncpa')">NCPA</button>
+            <button class="subtab active" id="gtab-quick" onclick="setGuideTab('quick')">Workflow</button>
+            <button class="subtab" id="gtab-menus" onclick="setGuideTab('menus')">Menus &amp; Features</button>
+            <button class="subtab" id="gtab-ncpa" onclick="setGuideTab('ncpa')">NCPA Setup</button>
+            <button class="subtab" id="gtab-notify" onclick="setGuideTab('notify')">Notifications</button>
             <button class="subtab" id="gtab-catalog" onclick="setGuideTab('catalog')">Catalog</button>
-            <button class="subtab" id="gtab-paths" onclick="setGuideTab('paths')">Paths</button>
+            <button class="subtab" id="gtab-paths" onclick="setGuideTab('paths')">Paths &amp; FAQ</button>
+          </div>
+          <div class="subtab-actions">
+            <input type="search" id="guide-search" placeholder="Filter guide..." style="width:180px" oninput="renderGuide()">
           </div>
         </div>
         <div id="guide-content"></div>
       </section>
 
-      <!-- REPORTS (SLA | Alerts | Event Log) -->
-      <section id="sec-reports" style="display:none">
+      <!-- REPORTS -->
+      <section id="sec-reports" class="view-section" style="display:none">
         <div class="subtabs">
           <div class="subtab-list">
             <button class="subtab active" id="rtab-sla" onclick="setReportTab('sla')">SLA &amp; Charts</button>
@@ -258,8 +297,12 @@
   </div>
 </div>
 
+<!-- Drawers, Modals, Confirm Dialog & Quick Jump -->
 <div class="drawer-wrap" id="drawer-wrap" onclick="if(event.target===this)closeDrawer()"><div class="drawer" id="drawer-body"></div></div>
 <div class="backdrop" id="modal-backdrop" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal-content"></div></div>
+<div class="backdrop" id="confirm-backdrop" onclick="if(event.target===this)resolveConfirm(false)">
+  <div class="modal confirm-modal" id="confirm-content"></div>
+</div>
 <div class="backdrop" id="qj-backdrop" onclick="if(event.target===this)closeQuickJump()">
   <div class="qj-box">
     <input type="text" id="qj-input" placeholder="Jump to host, service, or menu (Ctrl+K)..." oninput="renderQuickJump()">

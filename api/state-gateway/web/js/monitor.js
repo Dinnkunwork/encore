@@ -8,13 +8,37 @@ async function loadMeta() {
   S.hostgroups = (await hgRes.json()).hostgroups || [];
   S.servicegroups = (await sgRes.json()).servicegroups || [];
 
-  document.getElementById('conn-icon').src = health.connected ? '/assets/status/status-ok.svg' : '/assets/status/status-critical.svg';
+  const dot = document.getElementById('conn-dot');
+  if (dot) dot.className = health.connected ? 'pulse-dot ok' : 'pulse-dot crit';
   document.getElementById('conn-label').textContent = health.connected ? 'Live' : 'Reconnecting';
   document.getElementById('events-pill').textContent = (health.events_applied || 0).toLocaleString() + ' ev';
-  document.getElementById('sb-apply-btn').style.display = health.pending_changes ? 'block' : 'none';
-  const pbBanner = document.getElementById('pending-banner');
-  if (pbBanner) pbBanner.style.display = health.pending_changes ? 'flex' : 'none';
   document.getElementById('sub-meta').textContent = `PID ${sum.program.pid} • ${sum.hosts.total} hosts, ${sum.services.total} services • ${new Date().toLocaleTimeString()}`;
+
+  const pbBanner = document.getElementById('pending-banner');
+  const navPend = document.getElementById('nav-pending-badge');
+  const revBtn = document.getElementById('mg-review-btn');
+  if (health.pending_changes) {
+    if (pbBanner) pbBanner.style.display = 'flex';
+    if (navPend) navPend.style.display = 'inline-block';
+    if (revBtn) revBtn.style.display = 'inline-flex';
+    // Fetch compact diff counts for banner
+    try {
+      const diff = await (await fetch('/api/v1/config/diff')).json();
+      S.managed.diff = diff;
+      const parts = [];
+      if (diff.added) parts.push(`+${diff.added} new`);
+      if (diff.modified) parts.push(`${diff.modified} modified`);
+      if (diff.deleted) parts.push(`${diff.deleted} deleted`);
+      const sumEl = document.getElementById('pending-summary-text');
+      if (sumEl) sumEl.innerHTML = `<b>Pending Nagios Config</b>${parts.length ? ' (' + parts.join(' • ') + ')' : ''} — belum aktif sampai Apply &amp; Reload.`;
+      if (navPend) navPend.textContent = diff.total || '•';
+    } catch (e) {}
+  } else {
+    if (pbBanner) pbBanner.style.display = 'none';
+    if (navPend) navPend.style.display = 'none';
+    if (revBtn) revBtn.style.display = 'none';
+    S.managed.diff = { pending: false, total: 0, entries: [] };
+  }
 
   const totalProb = sum.hosts.down + sum.hosts.unreachable + sum.services.warning + sum.services.critical + sum.services.unknown;
   const pb = document.getElementById('nav-prob-badge');
@@ -33,7 +57,6 @@ function syncSelect(id, allLabel, names) {
   if (names.includes(cur)) sel.value = cur;
 }
 
-/* Isolated filter state per view (fixes Problems -> Inventory state=2 leak) */
 function saveMonitorFilterState(v) {
   const f = v === 'problems' ? S.probFilter : S.invFilter;
   const st = document.getElementById('state-select');
@@ -51,6 +74,159 @@ function restoreMonitorFilterState(v) {
   const so = document.getElementById('sort-select');
   if (un) un.checked = !!f.unhandled;
   if (so) so.value = f.sort || 'severity';
+}
+
+/* ====== OVERVIEW: KPI + FLEET HEALTH MAP (GRID & TOPOLOGY) + MINI-CHARTS ====== */
+function setOvMapMode(mode) {
+  S.ovMapMode = mode;
+  document.getElementById('ov-map-grid-btn')?.classList.toggle('active', mode === 'grid');
+  document.getElementById('ov-map-topo-btn')?.classList.toggle('active', mode === 'topo');
+  loadOverview();
+}
+
+function renderOverviewFleetMap(hosts, services) {
+  const el = document.getElementById('ov-fleet-map');
+  if (!el) return;
+  if (!hosts.length) {
+    el.innerHTML = `<div class="art-empty">${artSVG('servers')}<h4>No Hosts Monitored Yet</h4><p>Tambahkan host pertama Anda di menu Manage untuk mulai melihat peta kesehatan infrastruktur.</p></div>`;
+    return;
+  }
+  const svcMap = new Map();
+  services.forEach(s => {
+    if (!svcMap.has(s.host_name)) svcMap.set(s.host_name, { ok: 0, warn: 0, crit: 0, unk: 0, tot: 0 });
+    const c = svcMap.get(s.host_name);
+    c.tot++;
+    if (!s.has_been_checked) return;
+    if (s.current_state === 0) c.ok++;
+    else if (s.current_state === 1) c.warn++;
+    else if (s.current_state === 2) c.crit++;
+    else c.unk++;
+  });
+
+  if (S.ovMapMode === 'topo') {
+    // Pure SVG Hub-and-Spoke Topology Map
+    const list = hosts.slice(0, 14);
+    const w = 560, h = Math.max(210, 44 + Math.ceil(list.length / 2) * 38);
+    const cx = 86, cy = h / 2;
+    const nodes = list.map((ho, i) => {
+      const col = i % 2 === 0 ? 0 : 1;
+      const row = Math.floor(i / 2);
+      const nx = col === 0 ? 255 : 420;
+      const ny = 30 + row * 38;
+      const sc = svcMap.get(ho.name) || { ok: 0, warn: 0, crit: 0, tot: 0 };
+      const stroke = !ho.has_been_checked ? 'var(--muted)' : (ho.current_state === 1 || sc.crit > 0 ? 'var(--crit)' : (ho.current_state === 2 || sc.warn > 0 ? 'var(--warn)' : 'var(--ok)'));
+      const lineCol = ho.current_state === 1 ? 'var(--crit)' : 'var(--border)';
+      return `
+        <path d="M ${cx+38} ${cy} C ${cx+95} ${cy}, ${nx-60} ${ny}, ${nx-62} ${ny}" fill="none" stroke="${lineCol}" stroke-width="1.6"/>
+        <g style="cursor:pointer" onclick="focusHostFromMap('${esc(ho.name)}')">
+          <title>${esc(ho.name)} (${esc(ho.address)}) — ${sc.ok}/${sc.tot} OK, ${sc.warn} WARN, ${sc.crit} CRIT</title>
+          <rect x="${nx-62}" y="${ny-14}" width="132" height="28" rx="7" fill="var(--surface)" stroke="${stroke}" stroke-width="1.8"/>
+          <circle cx="${nx-50}" cy="${ny}" r="4" fill="${stroke}"/>
+          <text x="${nx-40}" y="${ny+4}" fill="var(--text)" font-size="11" font-weight="600">${esc(ho.name.length > 13 ? ho.name.slice(0,12)+'…' : ho.name)}</text>
+          <text x="${nx+62}" y="${ny+4}" text-anchor="end" fill="var(--muted)" font-size="10">${sc.ok}/${sc.tot}</text>
+        </g>`;
+    }).join('');
+    el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block">
+      <rect x="${cx-44}" y="${cy-26}" width="84" height="52" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+      <text x="${cx-2}" y="${cy-2}" text-anchor="middle" fill="var(--accent)" font-size="12" font-weight="700">ENCORE</text>
+      <text x="${cx-2}" y="${cy+12}" text-anchor="middle" fill="var(--muted)" font-size="9.5">${hosts.length} hosts</text>
+      ${nodes}
+    </svg>${hosts.length > 14 ? `<div class="name-sub" style="text-align:right;margin-top:4px">Showing 14 of ${hosts.length} hosts — switch to Health Grid for full list</div>` : ''}`;
+    return;
+  }
+
+  // Health Grid Mode
+  el.innerHTML = `<div class="fleet-grid">${hosts.slice(0, 24).map(ho => {
+    const sc = svcMap.get(ho.name) || { ok: 0, warn: 0, crit: 0, tot: 0 };
+    const t = sc.tot || 1;
+    const stCls = !ho.has_been_checked ? 'st-pend' : (ho.current_state === 1 || sc.crit > 0 ? 'st-down' : (ho.current_state === 2 || sc.warn > 0 ? 'st-warn' : ''));
+    return `<div class="host-tile ${stCls}" onclick="focusHostFromMap('${esc(ho.name)}')" title="${esc(ho.name)} (${esc(ho.address)}) — Click to inspect services">
+      <div class="host-tile-top">
+        <span class="host-tile-name">${esc(ho.name)}</span>
+        ${hostBadge(ho)}
+      </div>
+      <div class="mono" style="font-size:11px;margin-bottom:6px">${esc(ho.address)}</div>
+      <div class="bar"><div class="bar-ok" style="width:${(sc.ok/t)*100}%"></div><div class="bar-warn" style="width:${(sc.warn/t)*100}%"></div><div class="bar-crit" style="width:${(sc.crit/t)*100}%"></div></div>
+      <div class="host-tile-meta">
+        <span>${sc.ok}/${sc.tot} OK</span>
+        <span>${sc.crit ? `<b style="color:var(--crit-fg)">${sc.crit} CRIT</b>` : (sc.warn ? `<b style="color:var(--warn-fg)">${sc.warn} WARN</b>` : 'Healthy')}</span>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function focusHostFromMap(hostName) {
+  document.getElementById('global-search').value = hostName;
+  S.invFilter.state = '';
+  setView('inventory', 'services');
+}
+
+async function renderOverviewMiniCharts(sum) {
+  const el = document.getElementById('ov-mini-charts');
+  if (!el || !sum) return;
+  const sc = sum.services;
+  const tot = Math.max(1, sc.total);
+  const okP = (sc.ok / tot) * 100, wP = (sc.warning / tot) * 100, cP = (sc.critical / tot) * 100, uP = ((sc.unknown + sc.pending) / tot) * 100;
+  const r = 36, circ = 2 * Math.PI * r;
+  const segs = [
+    { p: okP, col: 'var(--ok)', lbl: 'OK', n: sc.ok },
+    { p: wP, col: 'var(--warn)', lbl: 'WARN', n: sc.warning },
+    { p: cP, col: 'var(--crit)', lbl: 'CRIT', n: sc.critical },
+    { p: uP, col: 'var(--muted)', lbl: 'UNK/PEND', n: sc.unknown + sc.pending }
+  ];
+  let off = 0;
+  const circles = segs.filter(s => s.p > 0).map(s => {
+    const len = (s.p / 100) * circ;
+    const out = `<circle cx="48" cy="48" r="${r}" fill="none" stroke="${s.col}" stroke-width="12" stroke-dasharray="${len.toFixed(2)} ${(circ - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 48 48)"/>`;
+    off += len;
+    return out;
+  }).join('');
+
+  // Fetch 24h trend at most once every 60 seconds
+  const nowMs = Date.now();
+  if (!S.ovTrendCache.data || nowMs - S.ovTrendCache.ts > 60000) {
+    try {
+      const nowS = Math.floor(nowMs / 1000);
+      const res = await fetch(`/api/v1/reports/availability?from=${nowS-86400}&to=${nowS}&target=services`);
+      if (res.ok) S.ovTrendCache = { ts: nowMs, data: await res.json() };
+    } catch (e) {}
+  }
+  const tl = (S.ovTrendCache.data && S.ovTrendCache.data.timeline) || [];
+  const sla24 = (S.ovTrendCache.data && S.ovTrendCache.data.summary && S.ovTrendCache.data.summary.overall_sla_pct) ?? 100;
+  const inc24 = (S.ovTrendCache.data && S.ovTrendCache.data.summary && S.ovTrendCache.data.summary.total_incidents) ?? 0;
+
+  let sparkHTML = '';
+  if (tl.length) {
+    const bw = Math.max(4, Math.floor(280 / tl.length) - 2);
+    const bars = tl.map((b, i) => {
+      const x = i * (280 / tl.length);
+      const bh = Math.max(3, (b.ok_pct / 100) * 44);
+      const col = b.ok_pct >= 99.5 ? 'var(--ok)' : (b.ok_pct >= 95 ? 'var(--warn)' : 'var(--crit)');
+      return `<rect x="${x.toFixed(1)}" y="${(46 - bh).toFixed(1)}" width="${bw}" height="${bh.toFixed(1)}" rx="2" fill="${col}"><title>${esc(b.label)} — ${b.ok_pct.toFixed(2)}% SLA (${b.incidents} inc)</title></rect>`;
+    }).join('');
+    sparkHTML = `
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
+          <span style="font-weight:650">24h Uptime Trend</span>
+          <span class="mono">SLA <b>${sla24.toFixed(2)}%</b> • ${inc24} HARD inc</span>
+        </div>
+        <svg viewBox="0 0 280 48" style="width:100%;height:48px;display:block">${bars}</svg>
+      </div>`;
+  }
+
+  el.innerHTML = `
+    <div class="donut-wrap">
+      <svg width="96" height="96" viewBox="0 0 96 96" style="flex-shrink:0">
+        <circle cx="48" cy="48" r="${r}" fill="none" stroke="var(--surface-2)" stroke-width="12"/>
+        ${circles}
+        <text x="48" y="47" text-anchor="middle" fill="var(--text)" font-size="14" font-weight="700">${Math.round(okP)}%</text>
+        <text x="48" y="60" text-anchor="middle" fill="var(--muted)" font-size="9">OK</text>
+      </svg>
+      <div class="donut-legend">
+        ${segs.map(s => `<div class="legend-row"><span><span class="legend-dot" style="background:${s.col}"></span>${s.lbl}</span><b class="mono">${s.n}</b></div>`).join('')}
+      </div>
+    </div>
+    ${sparkHTML}`;
 }
 
 async function loadOverview() {
@@ -79,14 +255,22 @@ async function loadOverview() {
   document.getElementById('ov-pid').textContent = 'PID ' + sum.program.pid;
   document.getElementById('ov-flags').textContent = `Checks: ${sum.program.execute_service_checks ? 'ON' : 'OFF'} • Notify: ${sum.program.notifications_enabled ? 'ON' : 'OFF'}`;
 
-  const [pRes, aRes] = await Promise.all([
+  const [pRes, aRes, hRes, svRes] = await Promise.all([
     fetch('/api/v1/services?unhandled=1&sort=severity&limit=10'),
-    fetch('/api/v1/audit?limit=5')
+    fetch('/api/v1/audit?limit=5'),
+    fetch('/api/v1/hosts?limit=100'),
+    fetch('/api/v1/services?limit=500')
   ]);
   const probs = (await pRes.json()).services || [];
+  const fleetHosts = (await hRes.json()).hosts || [];
+  const fleetSvcs = (await svRes.json()).services || [];
+
+  renderOverviewFleetMap(fleetHosts, fleetSvcs);
+  renderOverviewMiniCharts(sum);
+
   const pBody = document.getElementById('ov-prob-body');
   if (!probs.length) {
-    pBody.innerHTML = '<tr><td colspan="5" class="empty"><img src="/assets/status/status-ok.svg" style="width:16px;vertical-align:middle;margin-right:6px">No unhandled problems.</td></tr>';
+    pBody.innerHTML = `<tr><td colspan="5"><div class="art-empty">${artSVG('radar-ok')}<h4>All Systems Operational</h4><p>Tidak ada problem yang belum ditangani saat ini.</p></div></td></tr>`;
   } else {
     S.lastItems = probs;
     pBody.innerHTML = probs.map((s, idx) => `
@@ -134,27 +318,9 @@ function renderMonitorSubtabs() {
   }
 }
 
-function setInvTab(t) {
-  S.invTab = t;
-  S.invFilter.state = '';
-  S.offset = 0;
-  S.selectedMon.clear();
-  populateStateSelect(t, '');
-  renderMonitorSubtabs();
-  loadMonitorView();
-}
-function setProbTab(t) {
-  S.probTab = t;
-  S.offset = 0;
-  S.selectedMon.clear();
-  renderMonitorSubtabs();
-  loadMonitorView();
-}
-function quickUnhandled() {
-  S.probFilter.unhandled = true;
-  S.probFilter.state = '';
-  setView('problems', 'active');
-}
+function setInvTab(t) { S.invTab = t; S.invFilter.state = ''; S.offset = 0; S.selectedMon.clear(); populateStateSelect(t, ''); renderMonitorSubtabs(); loadMonitorView(); }
+function setProbTab(t) { S.probTab = t; S.offset = 0; S.selectedMon.clear(); renderMonitorSubtabs(); loadMonitorView(); }
+function quickUnhandled() { S.probFilter.unhandled = true; S.probFilter.state = ''; setView('problems', 'active'); }
 function jumpToGroup(type, name) {
   document.getElementById('hg-select').value = type === 'hg' ? name : '';
   document.getElementById('sg-select').value = type === 'sg' ? name : '';
@@ -170,12 +336,7 @@ function toggleGroupByHost() {
   document.getElementById('group-view-btn').classList.toggle('active', S.groupByHost);
   loadMonitorView();
 }
-function onFilterChange() {
-  saveMonitorFilterState(S.view);
-  S.offset = 0;
-  S.selectedMon.clear();
-  loadMonitorView();
-}
+function onFilterChange() { saveMonitorFilterState(S.view); S.offset = 0; S.selectedMon.clear(); loadMonitorView(); }
 function changePage(dir) {
   const limit = Number(document.getElementById('limit-select').value);
   const next = S.offset + dir * limit;
@@ -199,20 +360,13 @@ function populateStateSelect(mode, desiredVal) {
   sel.value = [...sel.options].some(o => o.value === cur) ? cur : '';
 }
 
-/* Bulk Selection for Monitor */
-function monItemKey(mode, item) {
-  return mode === 'hosts' ? ('host::' + item.name) : ('svc::' + item.host_name + '::' + item.description);
-}
-function toggleMonSelect(key, checked) {
-  if (checked) S.selectedMon.add(key); else S.selectedMon.delete(key);
-  renderBulkBar();
-}
+/* Bulk Selection for Monitor (Modern Modals, zero native prompt()) */
+function monItemKey(mode, item) { return mode === 'hosts' ? ('host::' + item.name) : ('svc::' + item.host_name + '::' + item.description); }
+function toggleMonSelect(key, checked) { if (checked) S.selectedMon.add(key); else S.selectedMon.delete(key); renderBulkBar(); }
 function toggleMonSelectAll(checked) {
   const mode = S.view === 'problems' ? 'problems' : S.invTab;
   S.selectedMon.clear();
-  if (checked) {
-    S.lastItems.forEach(it => S.selectedMon.add(monItemKey(mode, it)));
-  }
+  if (checked) S.lastItems.forEach(it => S.selectedMon.add(monItemKey(mode, it)));
   document.querySelectorAll('.mon-row-chk').forEach(cb => cb.checked = checked);
   renderBulkBar();
 }
@@ -225,8 +379,8 @@ function renderBulkBar() {
     <div><b>${S.selectedMon.size}</b> selected</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn btn-sm primary" onclick="bulkMonitorForceCheck()">↻ Force Check All</button>
-      <button class="btn btn-sm" onclick="bulkMonitorAck()">✓ Acknowledge All</button>
-      <button class="btn btn-sm" onclick="bulkMonitorDowntime()">⏱ Schedule Downtime</button>
+      <button class="btn btn-sm" onclick="openBulkAckModal()">✓ Acknowledge All</button>
+      <button class="btn btn-sm" onclick="openBulkDowntimeModal()">⏱ Schedule Downtime</button>
       <button class="btn btn-sm" onclick="S.selectedMon.clear();renderBulkBar();loadMonitorView()">Clear</button>
     </div>`;
 }
@@ -240,28 +394,53 @@ function bulkMonitorForceCheck() {
   });
   sendBatchCmds(cmds, 'Bulk force check');
 }
-function bulkMonitorAck() {
-  const cmt = prompt('Acknowledge comment for ' + S.selectedMon.size + ' item(s):', 'Bulk acknowledged via Encore');
-  if (!cmt) return;
+function openBulkAckModal() {
+  openModal(`<h2>Bulk Acknowledge (${S.selectedMon.size} items)</h2>
+    <div class="form-row"><label>Comment</label><input id="ba-cmt" type="text" value="Bulk acknowledged via Encore"></div>
+    <div style="display:flex;gap:10px;margin:8px 0">
+      <label class="chk-pill"><input type="checkbox" id="ba-sticky" checked> Sticky</label>
+      <label class="chk-pill"><input type="checkbox" id="ba-notify"> Notify</label>
+    </div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitBulkAck()">Acknowledge All</button></div>`);
+}
+function submitBulkAck() {
+  const cmt = document.getElementById('ba-cmt').value.trim() || 'Bulk acknowledged';
+  const sticky = document.getElementById('ba-sticky').checked ? 2 : 1;
+  const notify = document.getElementById('ba-notify').checked ? 1 : 0;
   const cmds = [];
   S.selectedMon.forEach(k => {
     const p = k.split('::');
-    if (p[0] === 'host') cmds.push(`ACKNOWLEDGE_HOST_PROBLEM;${p[1]};2;0;1;encore-ui;${cmt}`);
-    else cmds.push(`ACKNOWLEDGE_SVC_PROBLEM;${p[1]};${p[2]};2;0;1;encore-ui;${cmt}`);
+    if (p[0] === 'host') cmds.push(`ACKNOWLEDGE_HOST_PROBLEM;${p[1]};${sticky};${notify};1;encore-ui;${cmt}`);
+    else cmds.push(`ACKNOWLEDGE_SVC_PROBLEM;${p[1]};${p[2]};${sticky};${notify};1;encore-ui;${cmt}`);
   });
+  closeModal();
   sendBatchCmds(cmds, 'Bulk acknowledge');
 }
-function bulkMonitorDowntime() {
-  const minsStr = prompt('Downtime duration (minutes) for ' + S.selectedMon.size + ' item(s):', '60');
-  const mins = Math.max(1, Number(minsStr) || 0);
-  if (!minsStr || !mins) return;
+function openBulkDowntimeModal() {
+  openModal(`<h2>Bulk Schedule Downtime (${S.selectedMon.size} items)</h2>
+    <div class="form-row"><label>Duration (min)</label>
+      <div class="presets">
+        <button class="btn btn-sm" onclick="document.getElementById('bdt-min').value=30">30m</button>
+        <button class="btn btn-sm" onclick="document.getElementById('bdt-min').value=60">1h</button>
+        <button class="btn btn-sm" onclick="document.getElementById('bdt-min').value=240">4h</button>
+        <button class="btn btn-sm" onclick="document.getElementById('bdt-min').value=1440">24h</button>
+      </div>
+      <input id="bdt-min" type="number" value="60" min="1">
+    </div>
+    <div class="form-row"><label>Comment</label><input id="bdt-cmt" type="text" value="Scheduled maintenance"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitBulkDowntime()">Schedule All</button></div>`);
+}
+function submitBulkDowntime() {
+  const mins = Math.max(1, Number(document.getElementById('bdt-min').value) || 60);
+  const cmt = document.getElementById('bdt-cmt').value.trim() || 'Maintenance';
   const now = Math.floor(Date.now()/1000);
   const cmds = [];
   S.selectedMon.forEach(k => {
     const p = k.split('::');
-    if (p[0] === 'host') cmds.push(`SCHEDULE_HOST_DOWNTIME;${p[1]};${now};${now+mins*60};1;0;0;encore-ui;Bulk maintenance`);
-    else cmds.push(`SCHEDULE_SVC_DOWNTIME;${p[1]};${p[2]};${now};${now+mins*60};1;0;0;encore-ui;Bulk maintenance`);
+    if (p[0] === 'host') cmds.push(`SCHEDULE_HOST_DOWNTIME;${p[1]};${now};${now+mins*60};1;0;0;encore-ui;${cmt}`);
+    else cmds.push(`SCHEDULE_SVC_DOWNTIME;${p[1]};${p[2]};${now};${now+mins*60};1;0;0;encore-ui;${cmt}`);
   });
+  closeModal();
   sendBatchCmds(cmds, 'Bulk downtime');
 }
 
@@ -321,7 +500,7 @@ async function loadMonitorView() {
     const data = await (await fetch('/api/v1/services?' + params)).json();
     S.total = data.total; S.lastItems = data.services;
     if (!data.services.length) {
-      rowsHTML = '<tr><td colspan="7" class="empty">No matching services</td></tr>';
+      rowsHTML = `<tr><td colspan="7"><div class="art-empty">${artSVG(mode==='problems'?'radar-ok':'servers')}<h4>${mode==='problems'?'No Active Problems':'No Matching Services'}</h4><p>${mode==='problems'?'Semua service dalam kondisi sehat.':'Coba ubah filter atau kata kunci pencarian.'}</p></div></td></tr>`;
     } else {
       let lastHost = null;
       data.services.forEach((s, idx) => {

@@ -6,6 +6,7 @@ const S = {
   sysTab: 'controls',
   guideTab: 'quick',
   ncpaOS: 'ubuntu',
+  ovMapMode: 'grid',
   offset: 0,
   total: 0,
   autoMs: 3000,
@@ -14,27 +15,25 @@ const S = {
   summary: null,
   hostgroups: [],
   servicegroups: [],
-  managed: { enabled: false, pending_changes: false, config: { hosts:[], services:[], commands:[], contacts:[], hostgroups:[], servicegroups:[], templates:[] } },
+  managed: { enabled: false, pending_changes: false, config: { hosts:[], services:[], commands:[], contacts:[], hostgroups:[], servicegroups:[], templates:[] }, diff: { pending:false, total:0, entries:[] } },
   lastItems: [],
   catalogCmds: [],
-  // Separate filter states so Inventory and Problems never leak filters into each other
   invFilter: { state: '', unhandled: false, sort: 'severity' },
   probFilter: { state: '', unhandled: false, sort: 'severity' },
-  // Bulk selection state
   selectedMon: new Set(),
   selectedManagedHosts: new Set(),
-  // Manage Objects UI state
+  selectedManagedSvcs: new Set(),
   manageSearch: '',
   manageGroup: '',
   manageStatus: '',
   manageFlat: false,
   expandedHosts: new Set(),
   localhostStatus: null,
-  // Reports UI state
   repTab: 'sla',
   repRange: '24h',
   repGroupByHost: true,
-  repExpandedHosts: new Set()
+  repExpandedHosts: new Set(),
+  ovTrendCache: { ts: 0, data: null }
 };
 
 function applyTheme(t) {
@@ -44,7 +43,20 @@ function applyTheme(t) {
 }
 applyTheme(localStorage.getItem('encore-theme') || 'light');
 function toggleTheme() { applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); }
-function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+function toggleSidebar() {
+  const sb = document.getElementById('sidebar');
+  sb.classList.toggle('collapsed');
+  const btn = document.getElementById('sb-toggle-btn');
+  if (btn) btn.textContent = sb.classList.contains('collapsed') ? '»' : '«';
+}
+function openMobileSidebar() {
+  document.getElementById('sidebar').classList.add('mobile-open');
+  document.getElementById('sb-backdrop').classList.add('open');
+}
+function closeMobileSidebar() {
+  document.getElementById('sidebar').classList.remove('mobile-open');
+  document.getElementById('sb-backdrop').classList.remove('open');
+}
 
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -56,7 +68,8 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     document.getElementById('global-search').focus();
   } else if (e.key === 'Escape') {
-    closeDrawer(); closeModal(); closeQuickJump();
+    if (document.getElementById('confirm-backdrop')?.classList.contains('open')) resolveConfirm(false);
+    else { closeDrawer(); closeModal(); closeQuickJump(); closeMobileSidebar(); }
   }
 });
 
@@ -65,7 +78,7 @@ function toast(msg) {
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove('show'), 3000);
+  el._t = setTimeout(() => el.classList.remove('show'), 3200);
 }
 function copyText(txt) {
   navigator.clipboard?.writeText(txt).then(() => toast('Copied to clipboard')).catch(() => toast(txt));
@@ -112,8 +125,70 @@ function openModal(html) { document.getElementById('modal-content').innerHTML = 
 function closeModal() { document.getElementById('modal-backdrop').classList.remove('open'); }
 function closeDrawer() { document.getElementById('drawer-wrap').classList.remove('open'); }
 
+/* Modern Smooth Confirmation Dialog (replaces native browser confirm()) */
+let _confirmResolver = null;
+function encoreConfirm({ title, message, items = [], confirmText = 'Confirm', cancelText = 'Cancel', danger = false }) {
+  return new Promise(resolve => {
+    _confirmResolver = resolve;
+    const iconSVG = danger
+      ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>`
+      : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>`;
+    const itemsHTML = items.length ? `<div class="confirm-items">${items.slice(0, 18).map(it => `<span class="flag-tag">${esc(it)}</span>`).join('')}${items.length > 18 ? `<span class="flag-tag">+${items.length - 18} more</span>` : ''}</div>` : '';
+    document.getElementById('confirm-content').innerHTML = `
+      <div class="confirm-head">
+        <div class="confirm-icon ${danger?'danger':''}">${iconSVG}</div>
+        <div>
+          <h2 style="margin-bottom:4px">${esc(title)}</h2>
+          <p style="font-size:13px;color:var(--muted)">${esc(message)}</p>
+        </div>
+      </div>
+      ${itemsHTML}
+      <div class="modal-foot">
+        <button class="btn" onclick="resolveConfirm(false)">${esc(cancelText)}</button>
+        <button class="btn ${danger?'danger':'primary'}" id="confirm-ok-btn" onclick="resolveConfirm(true)">${esc(confirmText)}</button>
+      </div>`;
+    document.getElementById('confirm-backdrop').classList.add('open');
+    setTimeout(() => document.getElementById('confirm-ok-btn')?.focus(), 40);
+  });
+}
+function resolveConfirm(ok) {
+  document.getElementById('confirm-backdrop').classList.remove('open');
+  if (_confirmResolver) {
+    const fn = _confirmResolver;
+    _confirmResolver = null;
+    fn(ok);
+  }
+}
+
+/* Lightweight Inline SVG Art Helpers (themed via CSS variables) */
+function artSVG(kind) {
+  if (kind === 'radar-ok') {
+    return `<svg width="74" height="74" viewBox="0 0 80 80" fill="none">
+      <circle cx="40" cy="40" r="34" stroke="var(--ok)" stroke-opacity="0.18" stroke-width="2"/>
+      <circle cx="40" cy="40" r="23" stroke="var(--ok)" stroke-opacity="0.32" stroke-width="2" stroke-dasharray="4 4"/>
+      <circle cx="40" cy="40" r="13" fill="var(--ok-bg)" stroke="var(--ok)" stroke-width="2"/>
+      <path d="M34 40.5l4 4 8.5-9" stroke="var(--ok)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+  }
+  if (kind === 'servers') {
+    return `<svg width="74" height="64" viewBox="0 0 80 68" fill="none">
+      <rect x="12" y="10" width="56" height="18" rx="5" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="1.8"/>
+      <circle cx="22" cy="19" r="3" fill="var(--ok)"/>
+      <rect x="30" y="17" width="28" height="4" rx="2" fill="var(--border)"/>
+      <rect x="12" y="34" width="56" height="18" rx="5" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1.8"/>
+      <circle cx="22" cy="43" r="3" fill="var(--accent)"/>
+      <rect x="30" y="41" width="22" height="4" rx="2" fill="var(--border)"/>
+    </svg>`;
+  }
+  return `<svg width="68" height="62" viewBox="0 0 72 64" fill="none">
+    <rect x="10" y="12" width="52" height="40" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="1.8"/>
+    <path d="M22 36l10-10 8 7 12-13" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
+
 function isUserInteracting() {
   if (document.getElementById('modal-backdrop')?.classList.contains('open')) return true;
+  if (document.getElementById('confirm-backdrop')?.classList.contains('open')) return true;
   if (document.getElementById('drawer-wrap')?.classList.contains('open')) return true;
   if (document.getElementById('qj-backdrop')?.classList.contains('open')) return true;
   if (S.selectedMon.size > 0) return true;
@@ -152,12 +227,11 @@ const VIEW_TITLES = {
 };
 
 function setView(v, sub) {
-  // Save current monitor view filter before switching away
   if (S.view === 'inventory' || S.view === 'problems') saveMonitorFilterState(S.view);
   S.view = v;
   S.offset = 0;
   S.selectedMon.clear();
-  document.getElementById('sidebar').classList.remove('mobile-open');
+  closeMobileSidebar();
   document.getElementById('page-title').textContent = VIEW_TITLES[v] || v;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   const activeNav = document.getElementById('nav-' + v);
@@ -217,7 +291,8 @@ async function refreshAll() {
     if (S.view === 'overview') await loadOverview();
     else if (S.view === 'inventory' || S.view === 'problems') await loadMonitorView();
   } catch (e) {
-    document.getElementById('conn-icon').src = '/assets/status/status-critical.svg';
+    const dot = document.getElementById('conn-dot');
+    if (dot) dot.className = 'pulse-dot crit';
     document.getElementById('conn-label').textContent = 'Offline';
   }
 }
@@ -239,7 +314,7 @@ function closeQuickJump() { document.getElementById('qj-backdrop').classList.rem
 function renderQuickJump() {
   const q = (document.getElementById('qj-input')?.value || '').trim().toLowerCase();
   const staticItems = [
-    { label: 'Overview Dashboard', tag: 'Page', run: () => setView('overview') },
+    { label: 'Overview — Fleet Map & Charts', tag: 'Page', run: () => setView('overview') },
     { label: 'Inventory — Services', tag: 'Page', run: () => setView('inventory','services') },
     { label: 'Inventory — Hosts', tag: 'Page', run: () => setView('inventory','hosts') },
     { label: 'Active Problems', tag: 'Page', run: () => setView('problems','active') },
@@ -249,7 +324,9 @@ function renderQuickJump() {
     { label: 'Manage — Email & Webhook Notifications', tag: 'Config', run: () => setView('manage','notifications') },
     { label: 'Manage — Commands & Scripts', tag: 'Config', run: () => setView('manage','commands') },
     { label: 'Manage — Secrets ($USERn$)', tag: 'Config', run: () => setView('manage','secrets') },
-    { label: 'Guide — NCPA Quick Install', tag: 'Help', run: () => setView('guide','ncpa') },
+    { label: 'Review Pending Config Diff', tag: 'Config', run: () => openDiffReviewModal() },
+    { label: 'User Guide — Menus & Features', tag: 'Help', run: () => setView('guide','menus') },
+    { label: 'User Guide — NCPA Quick Install', tag: 'Help', run: () => setView('guide','ncpa') },
     { label: 'Add New Host', tag: 'Action', run: () => { setView('manage','objects'); setTimeout(() => openHostForm(-1), 250); } },
     { label: 'Add New Service', tag: 'Action', run: () => { setView('manage','objects'); setTimeout(() => openSvcForm(-1), 250); } }
   ];

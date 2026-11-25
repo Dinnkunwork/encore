@@ -27,6 +27,76 @@ async function ensureCatalogCommands() {
   }
 }
 
+/* Build O(1) lookup maps for diff highlighting */
+function getDiffMaps() {
+  const diff = (S.managed && S.managed.diff) || { entries: [] };
+  const m = { host: new Map(), service: new Map(), command: new Map(), contact: new Map(), hostgroup: new Map(), servicegroup: new Map() };
+  (diff.entries || []).forEach(e => {
+    if (m[e.kind]) m[e.kind].set(e.id, e);
+  });
+  return m;
+}
+function diffBadge(entry) {
+  if (!entry) return '';
+  if (entry.status === 'added') return ' <span class="badge c-ok" title="New draft — not applied yet">NEW</span>';
+  if (entry.status === 'modified') {
+    const tip = entry.changes && entry.changes.length ? 'Changed: ' + entry.changes.join(', ') : 'Modified draft';
+    return ` <span class="badge c-warn" title="${esc(tip)}">MODIFIED</span>`;
+  }
+  return '';
+}
+function diffRowClass(entry) {
+  if (!entry) return '';
+  return entry.status === 'added' ? 'diff-added' : (entry.status === 'modified' ? 'diff-modified' : '');
+}
+
+async function openDiffReviewModal() {
+  const diff = await (await fetch('/api/v1/config/diff')).json();
+  S.managed.diff = diff;
+  const entries = diff.entries || [];
+  openModal(`
+    <h2>Pending Configuration Changes (${diff.total || 0})</h2>
+    <p class="name-sub" style="margin-bottom:12px">Perubahan di bawah masih berstatus <b>Draft</b> dan belum aktif di Nagios Core sampai Anda klik <b>Apply &amp; Reload</b>.</p>
+    ${entries.length ? `<div class="table-wrap" style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table>
+      <thead><tr><th>Status</th><th>Type</th><th>Object</th><th>Changed Fields</th></tr></thead><tbody>
+      ${entries.map(e => {
+        const cls = e.status === 'added' ? 'c-ok' : (e.status === 'modified' ? 'c-warn' : 'c-crit');
+        return `<tr>
+          <td><span class="badge ${cls}">${esc(e.status.toUpperCase())}</span></td>
+          <td><span class="flag-tag">${esc(e.kind)}</span></td>
+          <td><b>${esc(e.label)}</b></td>
+          <td class="mono">${esc((e.changes||[]).join(', ') || '-')}</td>
+        </tr>`;
+      }).join('')}
+      </tbody></table></div>` : '<div class="empty" style="padding:18px">No pending changes — live config is in sync.</div>'}
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">Close</button>
+      ${entries.length ? `<button class="btn danger" onclick="closeModal();discardPendingChanges()">Discard All</button>
+      <button class="btn primary" onclick="closeModal();runValidate(true)">Apply &amp; Reload</button>` : ''}
+    </div>`);
+}
+
+async function discardPendingChanges() {
+  const diff = await (await fetch('/api/v1/config/diff')).json();
+  const items = (diff.entries || []).map(e => `${e.status.toUpperCase()}: ${e.kind} ${e.label}`);
+  const ok = await encoreConfirm({
+    title: 'Discard Pending Config Changes?',
+    message: 'Seluruh perubahan draft (Hosts, Services, Commands, Groups, Contacts) yang belum di-Apply akan dibatalkan dan dikembalikan ke konfigurasi live terakhir. Templates & Notifications tidak terpengaruh.',
+    items,
+    confirmText: `Discard ${diff.total || ''} Change(s)`,
+    danger: true
+  });
+  if (!ok) return;
+  const res = await fetch('/api/v1/config/discard', { method: 'POST' });
+  const d = await res.json();
+  if (!res.ok) { toast('Error: ' + d.error); return; }
+  S.selectedManagedHosts.clear();
+  S.selectedManagedSvcs.clear();
+  toast(`Discarded ${d.reverted} pending change(s)`);
+  if (S.view === 'manage') await loadManage();
+  await loadMeta();
+}
+
 async function loadManage() {
   const [cfgRes, lhRes] = await Promise.all([
     fetch('/api/v1/config'),
@@ -44,18 +114,13 @@ async function loadManage() {
     return;
   }
 
-  if (S.manageTab === 'objects') {
-    renderManageObjects(el, c);
-  } else if (S.manageTab === 'templates') {
-    renderTemplatesTab(el, c);
-  } else if (S.manageTab === 'commands') {
-    await renderCommandsTab(el, c);
-  } else if (S.manageTab === 'groups') {
-    renderGroupsManageTab(el, c);
-  }
+  if (S.manageTab === 'objects') renderManageObjects(el, c);
+  else if (S.manageTab === 'templates') renderTemplatesTab(el, c);
+  else if (S.manageTab === 'commands') await renderCommandsTab(el, c);
+  else if (S.manageTab === 'groups') renderGroupsManageTab(el, c);
 }
 
-/* ====== OBJECTS TAB: Search + Host Accordion + Bulk Actions + Smart Localhost Callout ====== */
+/* ====== OBJECTS TAB: Search + Accordion + Diff Highlight + Bulk Host & Service Delete ====== */
 function renderManageObjects(el, c) {
   const lh = S.localhostStatus;
   const showAdoptBanner = lh && lh.configured && lh.exists && !lh.adopted && ((lh.parsed_hosts||[]).length || (lh.parsed_services||[]).length);
@@ -80,7 +145,7 @@ function renderManageObjects(el, c) {
     <div class="panel">
       <div class="toolbar-row">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <input type="search" id="mg-search" value="${esc(S.manageSearch)}" placeholder="Search host, IP, service, command..." style="width:250px" oninput="S.manageSearch=this.value;renderManageObjectsBody()">
+          <input type="search" id="mg-search" value="${esc(S.manageSearch)}" placeholder="Search host, IP, service, command..." style="width:240px" oninput="S.manageSearch=this.value;renderManageObjectsBody()">
           <select onchange="S.manageGroup=this.value;renderManageObjectsBody()">
             <option value="">All Hostgroups</option>
             ${hgOpts.map(g => `<option value="${esc(g)}" ${gf===g?'selected':''}>${esc(g)}</option>`).join('')}
@@ -94,7 +159,8 @@ function renderManageObjects(el, c) {
           <button class="btn btn-sm ${S.manageFlat?'active':''}" id="mg-mode-flat" onclick="S.manageFlat=true;updateManageModeBtns();renderManageObjectsBody()">Flat</button>
           <button class="btn btn-sm" id="mg-exp-btn" style="${S.manageFlat?'display:none':''}" onclick="toggleExpandAllManaged()">${S.expandedHosts.size ? 'Collapse All' : 'Expand All'}</button>
         </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <span class="save-scope-pill draft">Draft • Apply &amp; Reload</span>
           <button class="btn btn-sm" onclick="openSvcForm(-1)">+ Add Service</button>
           <button class="btn btn-sm primary" onclick="openHostForm(-1)">+ Add Host</button>
         </div>
@@ -115,8 +181,23 @@ function updateManageModeBtns() {
   }
 }
 
+function svcRefKey(host, desc) { return host + '::' + desc; }
+function toggleSelectManagedSvc(host, desc, checked) {
+  const k = svcRefKey(host, desc);
+  if (checked) S.selectedManagedSvcs.add(k); else S.selectedManagedSvcs.delete(k);
+  renderManageObjectsBody();
+}
+function toggleSelectAllHostSvcs(host, checked) {
+  (S.managed.config.services || []).filter(s => s.host_name === host).forEach(s => {
+    const k = svcRefKey(s.host_name, s.service_description);
+    if (checked) S.selectedManagedSvcs.add(k); else S.selectedManagedSvcs.delete(k);
+  });
+  renderManageObjectsBody();
+}
+
 function renderManageObjectsBody() {
   const c = S.managed.config;
+  const dm = getDiffMaps();
   const q = (S.manageSearch || '').toLowerCase().trim();
   const gf = S.manageGroup || '';
   const sf = S.manageStatus || '';
@@ -160,31 +241,50 @@ function renderManageObjectsBody() {
 
   const bulkWrap = document.getElementById('mg-bulk-wrap');
   if (bulkWrap) {
-    bulkWrap.innerHTML = S.selectedManagedHosts.size > 0 ? `
-      <div class="bulk-bar">
-        <div><b>${S.selectedManagedHosts.size}</b> host(s) selected</div>
+    const hCnt = S.selectedManagedHosts.size;
+    const sCnt = S.selectedManagedSvcs.size;
+    let html = '';
+    if (hCnt > 0) {
+      html += `<div class="bulk-bar">
+        <div><b>${hCnt}</b> host(s) selected</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn btn-sm primary" onclick="openApplyTemplateModal([...S.selectedManagedHosts])">Apply Template</button>
           <button class="btn btn-sm" onclick="bulkManagedHosts('enable')">Enable</button>
           <button class="btn btn-sm" onclick="bulkManagedHosts('disable')">Disable</button>
-          <button class="btn btn-sm danger" onclick="bulkManagedHosts('delete')">Delete</button>
+          <button class="btn btn-sm danger" onclick="bulkManagedHosts('delete')">Delete ${hCnt} Host(s)</button>
           <button class="btn btn-sm" onclick="S.selectedManagedHosts.clear();renderManageObjectsBody()">Clear</button>
         </div>
-      </div>` : '';
+      </div>`;
+    }
+    if (sCnt > 0) {
+      html += `<div class="bulk-bar">
+        <div><b>${sCnt}</b> service(s) selected</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="bulkManagedSvcs('enable')">Enable</button>
+          <button class="btn btn-sm" onclick="bulkManagedSvcs('disable')">Disable</button>
+          <button class="btn btn-sm danger" onclick="bulkManagedSvcs('delete')">Delete ${sCnt} Service(s)</button>
+          <button class="btn btn-sm" onclick="S.selectedManagedSvcs.clear();renderManageObjectsBody()">Clear</button>
+        </div>
+      </div>`;
+    }
+    bulkWrap.innerHTML = html;
   }
 
   let bodyHTML = '';
   if (!S.manageFlat) {
     bodyHTML = filteredHosts.length ? filteredHosts.map(({ h, idx, svcs }) => {
-      const open = S.expandedHosts.has(h.name) || (q.length > 0 && svcs.length > 0);
+      const hDiff = dm.host.get(h.name);
+      const hasSvcDiff = svcs.some(({ s }) => dm.service.has(svcRefKey(s.host_name, s.service_description)));
+      const open = S.expandedHosts.has(h.name) || (q.length > 0 && svcs.length > 0) || hasSvcDiff;
       const checked = S.selectedManagedHosts.has(h.name);
-      return `<div class="host-acc ${open?'open':''}">
+      const allSvcsChecked = svcs.length > 0 && svcs.every(({ s }) => S.selectedManagedSvcs.has(svcRefKey(s.host_name, s.service_description)));
+      return `<div class="host-acc ${open?'open':''} ${diffRowClass(hDiff)}">
         <div class="host-acc-head" onclick="toggleManageHostAcc('${esc(h.name)}')">
           <div class="host-acc-left">
             <input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation()" onchange="toggleSelectManagedHost('${esc(h.name)}',this.checked)">
             <span class="host-acc-chev">▶</span>
             <div>
-              <span class="name-primary">${esc(h.name)}</span>
+              <span class="name-primary">${esc(h.name)}</span>${diffBadge(hDiff)}
               <span class="mono" style="margin-left:8px">${esc(h.address)}</span>
               ${h.alias && h.alias !== h.name ? `<span class="name-sub" style="margin-left:6px">(${esc(h.alias)})</span>` : ''}
             </div>
@@ -201,51 +301,66 @@ function renderManageObjectsBody() {
           </div>
         </div>
         <div class="host-acc-body">
-          ${svcs.length ? `<div class="table-wrap"><table><thead><tr><th>Service</th><th>Check Command</th><th>Groups</th><th>Interval</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-            ${svcs.map(({ s, idx: si }) => `<tr>
-              <td><b>${esc(s.service_description)}</b></td>
-              <td class="mono">${esc(s.check_command)}</td>
-              <td class="mono">${esc((s.servicegroups||[]).join(', ')||'-')}</td>
-              <td class="mono">${s.check_interval||5}m</td>
-              <td>${s.enabled?'<span class="badge c-ok">ON</span>':'<span class="badge c-pend">OFF</span>'}</td>
-              <td class="actions">
-                <button class="btn btn-sm" onclick="openSvcForm(${si})">Edit</button>
-                <button class="btn btn-sm" onclick="openCloneSvcModal('${esc(s.host_name)}','${esc(s.service_description)}')">Clone</button>
-                <button class="btn btn-sm danger" onclick="deleteManagedSvc('${esc(s.host_name)}','${esc(s.service_description)}')">Delete</button>
-              </td>
-            </tr>`).join('')}
+          ${svcs.length ? `<div class="table-wrap"><table><thead><tr>
+            <th style="width:30px"><input type="checkbox" ${allSvcsChecked?'checked':''} onchange="toggleSelectAllHostSvcs('${esc(h.name)}',this.checked)" title="Select all services of ${esc(h.name)}"></th>
+            <th>Service</th><th>Check Command</th><th>Groups</th><th>Interval</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+            ${svcs.map(({ s, idx: si }) => {
+              const sk = svcRefKey(s.host_name, s.service_description);
+              const sd = dm.service.get(sk);
+              return `<tr class="${diffRowClass(sd)}">
+                <td><input type="checkbox" ${S.selectedManagedSvcs.has(sk)?'checked':''} onchange="toggleSelectManagedSvc('${esc(s.host_name)}','${esc(s.service_description)}',this.checked)"></td>
+                <td><b>${esc(s.service_description)}</b>${diffBadge(sd)}</td>
+                <td class="mono">${esc(s.check_command)}</td>
+                <td class="mono">${esc((s.servicegroups||[]).join(', ')||'-')}</td>
+                <td class="mono">${s.check_interval||5}m</td>
+                <td>${s.enabled?'<span class="badge c-ok">ON</span>':'<span class="badge c-pend">OFF</span>'}</td>
+                <td class="actions">
+                  <button class="btn btn-sm" onclick="openSvcForm(${si})">Edit</button>
+                  <button class="btn btn-sm" onclick="openCloneSvcModal('${esc(s.host_name)}','${esc(s.service_description)}')">Clone</button>
+                  <button class="btn btn-sm danger" onclick="deleteManagedSvc('${esc(s.host_name)}','${esc(s.service_description)}')">Delete</button>
+                </td>
+              </tr>`;
+            }).join('')}
           </tbody></table></div>` : `<div class="empty" style="padding:14px">No services yet — <button class="btn btn-sm" onclick="openSvcForm(-1,'${esc(h.name)}')">+ Add Service</button> or <button class="btn btn-sm" onclick="openApplyTemplateModal(['${esc(h.name)}'])">Apply Template</button></div>`}
         </div>
       </div>`;
-    }).join('') : '<div class="empty">No matching hosts or services.</div>';
+    }).join('') : `<div class="art-empty">${artSVG('servers')}<h4>No Matching Hosts</h4><p>Tambahkan host baru atau ubah kata kunci pencarian Anda.</p></div>`;
   } else {
     const flatSvcs = [];
     filteredHosts.forEach(({ svcs }) => svcs.forEach(x => flatSvcs.push(x)));
     bodyHTML = `
       <div class="table-wrap"><table><thead><tr><th style="width:32px"></th><th>Host</th><th>Address</th><th>Command</th><th>Groups</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${filteredHosts.length ? filteredHosts.map(({ h, idx }) => `<tr>
-          <td><input type="checkbox" ${S.selectedManagedHosts.has(h.name)?'checked':''} onchange="toggleSelectManagedHost('${esc(h.name)}',this.checked)"></td>
-          <td><b>${esc(h.name)}</b><div class="name-sub">${esc(h.alias)}</div></td>
-          <td class="mono">${esc(h.address)}</td><td class="mono">${esc(h.check_command)}</td>
-          <td class="mono">${esc((h.hostgroups||[]).join(', ')||'-')}</td>
-          <td>${h.enabled?'<span class="badge c-ok">ON</span>':'<span class="badge c-pend">OFF</span>'}</td>
-          <td class="actions">
-            <button class="btn btn-sm" onclick="openHostForm(${idx})">Edit</button>
-            <button class="btn btn-sm" onclick="openCloneHostModal('${esc(h.name)}')">Clone</button>
-            <button class="btn btn-sm danger" onclick="deleteManagedHost('${esc(h.name)}')">Delete</button>
-          </td></tr>`).join('') : '<tr><td colspan="7" class="empty">No matching hosts.</td></tr>'}
+        ${filteredHosts.length ? filteredHosts.map(({ h, idx }) => {
+          const hd = dm.host.get(h.name);
+          return `<tr class="${diffRowClass(hd)}">
+            <td><input type="checkbox" ${S.selectedManagedHosts.has(h.name)?'checked':''} onchange="toggleSelectManagedHost('${esc(h.name)}',this.checked)"></td>
+            <td><b>${esc(h.name)}</b>${diffBadge(hd)}<div class="name-sub">${esc(h.alias)}</div></td>
+            <td class="mono">${esc(h.address)}</td><td class="mono">${esc(h.check_command)}</td>
+            <td class="mono">${esc((h.hostgroups||[]).join(', ')||'-')}</td>
+            <td>${h.enabled?'<span class="badge c-ok">ON</span>':'<span class="badge c-pend">OFF</span>'}</td>
+            <td class="actions">
+              <button class="btn btn-sm" onclick="openHostForm(${idx})">Edit</button>
+              <button class="btn btn-sm" onclick="openCloneHostModal('${esc(h.name)}')">Clone</button>
+              <button class="btn btn-sm danger" onclick="deleteManagedHost('${esc(h.name)}')">Delete</button>
+            </td></tr>`;
+        }).join('') : '<tr><td colspan="7" class="empty">No matching hosts.</td></tr>'}
       </tbody></table></div>
       <div class="panel-head" style="border-top:1px solid var(--border)"><div class="panel-title">Services (${flatSvcs.length})</div></div>
-      <div class="table-wrap"><table><thead><tr><th>Host</th><th>Service</th><th>Command</th><th>Groups</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${flatSvcs.length ? flatSvcs.map(({ s, idx }) => `<tr>
-          <td><b>${esc(s.host_name)}</b></td><td>${esc(s.service_description)}</td>
-          <td class="mono">${esc(s.check_command)}</td><td class="mono">${esc((s.servicegroups||[]).join(', ')||'-')}</td>
-          <td>${s.enabled?'<span class="badge c-ok">ON</span>':'<span class="badge c-pend">OFF</span>'}</td>
-          <td class="actions">
-            <button class="btn btn-sm" onclick="openSvcForm(${idx})">Edit</button>
-            <button class="btn btn-sm" onclick="openCloneSvcModal('${esc(s.host_name)}','${esc(s.service_description)}')">Clone</button>
-            <button class="btn btn-sm danger" onclick="deleteManagedSvc('${esc(s.host_name)}','${esc(s.service_description)}')">Delete</button>
-          </td></tr>`).join('') : '<tr><td colspan="6" class="empty">No matching services.</td></tr>'}
+      <div class="table-wrap"><table><thead><tr><th style="width:32px"></th><th>Host</th><th>Service</th><th>Command</th><th>Groups</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+        ${flatSvcs.length ? flatSvcs.map(({ s, idx }) => {
+          const sk = svcRefKey(s.host_name, s.service_description);
+          const sd = dm.service.get(sk);
+          return `<tr class="${diffRowClass(sd)}">
+            <td><input type="checkbox" ${S.selectedManagedSvcs.has(sk)?'checked':''} onchange="toggleSelectManagedSvc('${esc(s.host_name)}','${esc(s.service_description)}',this.checked)"></td>
+            <td><b>${esc(s.host_name)}</b></td><td>${esc(s.service_description)}${diffBadge(sd)}</td>
+            <td class="mono">${esc(s.check_command)}</td><td class="mono">${esc((s.servicegroups||[]).join(', ')||'-')}</td>
+            <td>${s.enabled?'<span class="badge c-ok">ON</span>':'<span class="badge c-pend">OFF</span>'}</td>
+            <td class="actions">
+              <button class="btn btn-sm" onclick="openSvcForm(${idx})">Edit</button>
+              <button class="btn btn-sm" onclick="openCloneSvcModal('${esc(s.host_name)}','${esc(s.service_description)}')">Clone</button>
+              <button class="btn btn-sm danger" onclick="deleteManagedSvc('${esc(s.host_name)}','${esc(s.service_description)}')">Delete</button>
+            </td></tr>`;
+        }).join('') : '<tr><td colspan="7" class="empty">No matching services.</td></tr>'}
       </tbody></table></div>`;
   }
 
@@ -266,23 +381,26 @@ function renderManageObjectsBody() {
   updateManageModeBtns();
 }
 
-function toggleManageHostAcc(name) {
-  if (S.expandedHosts.has(name)) S.expandedHosts.delete(name);
-  else S.expandedHosts.add(name);
-  renderManageObjectsBody();
-}
+function toggleManageHostAcc(name) { if (S.expandedHosts.has(name)) S.expandedHosts.delete(name); else S.expandedHosts.add(name); renderManageObjectsBody(); }
 function toggleExpandAllManaged() {
   if (S.expandedHosts.size > 0) S.expandedHosts.clear();
   else (S.managed.config.hosts || []).forEach(h => S.expandedHosts.add(h.name));
   renderManageObjectsBody();
 }
-function toggleSelectManagedHost(name, checked) {
-  if (checked) S.selectedManagedHosts.add(name); else S.selectedManagedHosts.delete(name);
-  renderManageObjectsBody();
-}
+function toggleSelectManagedHost(name, checked) { if (checked) S.selectedManagedHosts.add(name); else S.selectedManagedHosts.delete(name); renderManageObjectsBody(); }
+
 async function bulkManagedHosts(action) {
   const hosts = [...S.selectedManagedHosts];
-  if (action === 'delete' && !confirm(`Delete ${hosts.length} host(s) and their services?`)) return;
+  if (action === 'delete') {
+    const ok = await encoreConfirm({
+      title: `Delete ${hosts.length} Host(s)?`,
+      message: 'Host terpilih beserta seluruh service miliknya akan dihapus dari draft konfigurasi. Anda tetap bisa Discard sebelum Apply & Reload.',
+      items: hosts,
+      confirmText: `Delete ${hosts.length} Host(s)`,
+      danger: true
+    });
+    if (!ok) return;
+  }
   const res = await fetch('/api/v1/config/hosts/bulk', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ action, hosts })
@@ -290,17 +408,43 @@ async function bulkManagedHosts(action) {
   const d = await res.json();
   if (!res.ok) { toast('Error: ' + d.error); return; }
   S.selectedManagedHosts.clear();
-  toast(`Bulk ${action}: ${d.affected} host(s) updated — click Apply & Reload`);
+  toast(`Bulk ${action}: ${d.affected} host(s) staged — click Apply & Reload`);
   await loadManage(); await loadMeta();
 }
 
-/* ====== TEMPLATES TAB ====== */
+async function bulkManagedSvcs(action) {
+  const refs = [...S.selectedManagedSvcs].map(k => {
+    const i = k.indexOf('::');
+    return { host_name: k.slice(0, i), service_description: k.slice(i + 2) };
+  });
+  if (action === 'delete') {
+    const ok = await encoreConfirm({
+      title: `Delete ${refs.length} Service(s)?`,
+      message: 'Service terpilih akan dihapus dari draft konfigurasi. Klik Apply & Reload untuk menerapkan, atau Discard untuk membatalkan.',
+      items: refs.map(r => `${r.host_name} / ${r.service_description}`),
+      confirmText: `Delete ${refs.length} Service(s)`,
+      danger: true
+    });
+    if (!ok) return;
+  }
+  const res = await fetch('/api/v1/config/services/bulk', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ action, services: refs })
+  });
+  const d = await res.json();
+  if (!res.ok) { toast('Error: ' + d.error); return; }
+  S.selectedManagedSvcs.clear();
+  toast(`Bulk ${action}: ${d.affected} service(s) staged — click Apply & Reload`);
+  await loadManage(); await loadMeta();
+}
+
+/* ====== TEMPLATES TAB (Instant Save) ====== */
 function renderTemplatesTab(el, c) {
   const tpls = c.templates || [];
   el.innerHTML = `
     <div class="panel">
       <div class="panel-head">
-        <div class="panel-title">Service Check Templates (${tpls.length})</div>
+        <div class="panel-title">Service Check Templates (${tpls.length}) <span class="save-scope-pill instant">Instant Save</span></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn btn-sm" onclick="openSaveTplFromHostModal()">Save From Host</button>
           <button class="btn btn-sm primary" onclick="openTemplateForm(-1)">+ New Template</button>
@@ -314,7 +458,7 @@ function renderTemplatesTab(el, c) {
             <button class="btn btn-sm primary" onclick="openApplyTemplateModal([], '${esc(t.name)}')">Apply</button>
             <button class="btn btn-sm" onclick="openTemplateForm(${i})">Edit</button>
             <button class="btn btn-sm" onclick="openTemplateForm(${i}, true)">Clone</button>
-            <button class="btn btn-sm danger" onclick="deleteManagedItem('templates','name=${encodeURIComponent(t.name)}')">Delete</button>
+            <button class="btn btn-sm danger" onclick="deleteManagedItem('templates','name=${encodeURIComponent(t.name)}','Template ${esc(t.name)}')">Delete</button>
           </td>
         </tr>`).join('') : '<tr><td colspan="3" class="empty">No templates yet.</td></tr>'}
       </tbody></table></div>
@@ -328,6 +472,7 @@ function openTemplateForm(idx, isClone) {
   };
   const lines = (t.services || []).map(s => `${s.service_description} | ${s.check_command} | ${s.check_interval||5}`).join('\n');
   openModal(`<h2>${isClone ? 'Clone Template' : (idx >= 0 ? 'Edit Template' : 'New Service Template')}</h2>
+    <div style="margin-bottom:10px"><span class="save-scope-pill instant">Instant Save — langsung tersimpan tanpa reload Nagios</span></div>
     <div class="form-row"><label>Template Name *</label><input id="tpl-name" type="text" value="${esc(isClone ? t.name + '-copy' : t.name)}" ${idx>=0 && !isClone ? 'readonly' : ''}></div>
     <div class="form-row"><label>Description</label><input id="tpl-desc" type="text" value="${esc(t.description || '')}"></div>
     <div class="form-row"><label>Services (1 per line: <code class="code-chip">Service Name | check_command | interval_min</code>)</label>
@@ -341,16 +486,9 @@ async function saveTemplateForm() {
   const rawLines = document.getElementById('tpl-svcs').value.split('\n').map(l => l.trim()).filter(Boolean);
   const services = rawLines.map(line => {
     const parts = line.split('|').map(x => x.trim());
-    return {
-      service_description: parts[0] || '',
-      check_command: parts[1] || '',
-      check_interval: Number(parts[2]) || 5,
-      retry_interval: 1,
-      max_check_attempts: 3,
-      check_period: '24x7'
-    };
+    return { service_description: parts[0] || '', check_command: parts[1] || '', check_interval: Number(parts[2]) || 5, retry_interval: 1, max_check_attempts: 3, check_period: '24x7' };
   });
-  await apiPost('/api/v1/config/templates', { name, description, services }, 'Template saved');
+  await apiPost('/api/v1/config/templates', { name, description, services }, 'Template saved (instant)', true);
 }
 function openSaveTplFromHostModal() {
   const hosts = S.managed.config.hosts || [];
@@ -360,13 +498,14 @@ function openSaveTplFromHostModal() {
     </div>
     <div class="form-row"><label>New Template Name *</label><input id="tpl-new-name" type="text" placeholder="e.g. prod-app-standard"></div>
     <div class="form-row"><label>Description</label><input id="tpl-new-desc" type="text" placeholder="Optional description"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/templates/from-host',{host_name:document.getElementById('tpl-src-host').value,name:document.getElementById('tpl-new-name').value.trim(),description:document.getElementById('tpl-new-desc').value.trim()},'Template created')">Save Template</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/templates/from-host',{host_name:document.getElementById('tpl-src-host').value,name:document.getElementById('tpl-new-name').value.trim(),description:document.getElementById('tpl-new-desc').value.trim()},'Template created (instant)',true)">Save Template</button></div>`);
 }
 function openApplyTemplateModal(preselectedHosts, preselectedTpl) {
   const tpls = S.managed.config.templates || [];
   const hosts = S.managed.config.hosts || [];
   const preSet = new Set(preselectedHosts || []);
   openModal(`<h2>Apply Service Template</h2>
+    <div style="margin-bottom:10px"><span class="save-scope-pill draft">Creates Draft Services — requires Apply &amp; Reload</span></div>
     <div class="form-row"><label>Template *</label>
       <select id="ap-tpl">${tpls.map(t => `<option value="${esc(t.name)}" ${t.name===preselectedTpl?'selected':''}>${esc(t.name)} (${(t.services||[]).length} services)</option>`).join('')}</select>
     </div>
@@ -396,25 +535,29 @@ async function submitApplyTemplate() {
 
 /* ====== COMMANDS & GROUPS TABS ====== */
 async function renderCommandsTab(el, c) {
+  const dm = getDiffMaps();
   const sData = await (await fetch('/api/v1/scripts')).json();
   const scripts = sData.scripts || [];
   el.innerHTML = `
     <div class="panel">
       <div class="panel-head">
-        <div class="panel-title">Managed Commands (${c.commands.length})</div>
+        <div class="panel-title">Managed Commands (${c.commands.length}) <span class="save-scope-pill draft">Draft • Apply &amp; Reload</span></div>
         <div style="display:flex;gap:6px">
           <button class="btn btn-sm" onclick="quickRegisterNCPA()">+ NCPA Command</button>
           <button class="btn btn-sm primary" onclick="openCmdForm(-1)">+ Add Command</button>
         </div>
       </div>
       <div class="table-wrap"><table><thead><tr><th>Name</th><th>Command Line</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${c.commands.length ? c.commands.map((cmd, i) => `<tr><td><b>${esc(cmd.command_name)}</b></td><td class="mono">${esc(cmd.command_line)}</td>
-          <td class="actions"><button class="btn btn-sm" onclick="openCmdForm(${i})">Edit</button><button class="btn btn-sm" onclick="openCmdForm(${i},true)">Clone</button><button class="btn btn-sm danger" onclick="deleteManagedItem('commands','name=${encodeURIComponent(cmd.command_name)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="3" class="empty">No managed commands.</td></tr>'}
+        ${c.commands.length ? c.commands.map((cmd, i) => {
+          const cd = dm.command.get(cmd.command_name);
+          return `<tr class="${diffRowClass(cd)}"><td><b>${esc(cmd.command_name)}</b>${diffBadge(cd)}</td><td class="mono">${esc(cmd.command_line)}</td>
+          <td class="actions"><button class="btn btn-sm" onclick="openCmdForm(${i})">Edit</button><button class="btn btn-sm" onclick="openCmdForm(${i},true)">Clone</button><button class="btn btn-sm danger" onclick="deleteManagedItem('commands','name=${encodeURIComponent(cmd.command_name)}','Command ${esc(cmd.command_name)}')">Delete</button></td></tr>`;
+        }).join('') : '<tr><td colspan="3" class="empty">No managed commands.</td></tr>'}
       </tbody></table></div>
     </div>
     <div class="panel">
       <div class="panel-head">
-        <div class="panel-title">Custom Scripts (${scripts.length})</div>
+        <div class="panel-title">Custom Scripts (${scripts.length}) <span class="save-scope-pill instant">Instant Save to Disk</span></div>
         <div style="display:flex;gap:6px">
           <button class="btn btn-sm primary" onclick="openScriptModal('','bash')">+ Bash</button>
           <button class="btn btn-sm" onclick="openScriptModal('','python')">+ Python</button>
@@ -434,37 +577,50 @@ async function renderCommandsTab(el, c) {
 }
 
 function renderGroupsManageTab(el, c) {
+  const dm = getDiffMaps();
   el.innerHTML = `
     <div class="panel">
-      <div class="panel-head"><div class="panel-title">Hostgroups</div><button class="btn btn-sm primary" onclick="openGroupForm('hostgroups')">+ Hostgroup</button></div>
+      <div class="panel-head"><div class="panel-title">Hostgroups <span class="save-scope-pill draft">Draft • Apply &amp; Reload</span></div><button class="btn btn-sm primary" onclick="openGroupForm('hostgroups')">+ Hostgroup</button></div>
       <div class="table-wrap"><table><thead><tr><th>Name</th><th>Alias</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${c.hostgroups.length ? c.hostgroups.map(g => `<tr><td><b>${esc(g.group_name)}</b></td><td>${esc(g.alias)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('hostgroups','name=${encodeURIComponent(g.group_name)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="3" class="empty">None</td></tr>'}
+        ${c.hostgroups.length ? c.hostgroups.map(g => {
+          const gd = dm.hostgroup.get(g.group_name);
+          return `<tr class="${diffRowClass(gd)}"><td><b>${esc(g.group_name)}</b>${diffBadge(gd)}</td><td>${esc(g.alias)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('hostgroups','name=${encodeURIComponent(g.group_name)}','Hostgroup ${esc(g.group_name)}')">Delete</button></td></tr>`;
+        }).join('') : '<tr><td colspan="3" class="empty">None</td></tr>'}
       </tbody></table></div>
     </div>
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Servicegroups</div><button class="btn btn-sm primary" onclick="openGroupForm('servicegroups')">+ Servicegroup</button></div>
       <div class="table-wrap"><table><thead><tr><th>Name</th><th>Alias</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${c.servicegroups.length ? c.servicegroups.map(g => `<tr><td><b>${esc(g.group_name)}</b></td><td>${esc(g.alias)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('servicegroups','name=${encodeURIComponent(g.group_name)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="3" class="empty">None</td></tr>'}
+        ${c.servicegroups.length ? c.servicegroups.map(g => {
+          const gd = dm.servicegroup.get(g.group_name);
+          return `<tr class="${diffRowClass(gd)}"><td><b>${esc(g.group_name)}</b>${diffBadge(gd)}</td><td>${esc(g.alias)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('servicegroups','name=${encodeURIComponent(g.group_name)}','Servicegroup ${esc(g.group_name)}')">Delete</button></td></tr>`;
+        }).join('') : '<tr><td colspan="3" class="empty">None</td></tr>'}
       </tbody></table></div>
     </div>
     <div class="panel">
       <div class="panel-head"><div class="panel-title">Contacts (auto-synced to Email Notifications)</div><button class="btn btn-sm primary" onclick="openContactForm()">+ Contact</button></div>
       <div class="table-wrap"><table><thead><tr><th>Name</th><th>Alias</th><th>Email</th><th style="text-align:right">Actions</th></tr></thead><tbody>
-        ${c.contacts.length ? c.contacts.map(ct => `<tr><td><b>${esc(ct.contact_name)}</b></td><td>${esc(ct.alias)}</td><td class="mono">${esc(ct.email)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('contacts','name=${encodeURIComponent(ct.contact_name)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">None</td></tr>'}
+        ${c.contacts.length ? c.contacts.map(ct => {
+          const cd = dm.contact.get(ct.contact_name);
+          return `<tr class="${diffRowClass(cd)}"><td><b>${esc(ct.contact_name)}</b>${diffBadge(cd)}</td><td>${esc(ct.alias)}</td><td class="mono">${esc(ct.email)}</td><td class="actions"><button class="btn btn-sm danger" onclick="deleteManagedItem('contacts','name=${encodeURIComponent(ct.contact_name)}','Contact ${esc(ct.contact_name)}')">Delete</button></td></tr>`;
+        }).join('') : '<tr><td colspan="4" class="empty">None</td></tr>'}
       </tbody></table></div>
     </div>`;
 }
 
-/* ====== NOTIFICATIONS TAB (Built-in SMTP + Webhook) ====== */
+/* ====== NOTIFICATIONS TAB (Instant Save — clearly badged!) ====== */
 async function renderNotificationsTab(el) {
   const data = await (await fetch('/api/v1/notifications/config')).json();
   const n = data.config || {};
   const hist = data.history || [];
   el.innerHTML = `
+    <div class="callout-banner" style="background:var(--ok-bg);border-color:var(--ok);color:var(--ok-fg)">
+      <div><b>Instant Save:</b> Pengaturan Email (SMTP) &amp; Webhook berjalan langsung di <b>Encore Gateway</b> — klik <b>Save &amp; Activate</b> langsung berlaku tanpa perlu <i>Apply &amp; Reload</i> Nagios.</div>
+    </div>
     <div class="split-2">
       <div class="panel">
         <div class="panel-head">
-          <div class="panel-title">Built-in Email Notification (SMTP)</div>
+          <div class="panel-title">Built-in Email Notification (SMTP) <span class="save-scope-pill instant">Instant</span></div>
           <label class="chk-pill"><input type="checkbox" id="nf-enabled" ${n.enabled?'checked':''}> Enable Email</label>
         </div>
         <div style="padding:16px">
@@ -497,7 +653,7 @@ async function renderNotificationsTab(el) {
             <label class="chk-pill"><input type="checkbox" id="nf-rec" ${n.notify_recovery!==false?'checked':''}> RECOVERY</label>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-sm primary" onclick="saveNotifyConfig()">Save Settings</button>
+            <button class="btn btn-sm primary" onclick="saveNotifyConfig()">Save &amp; Activate</button>
             <button class="btn btn-sm" onclick="testNotify('email')">Send Test Email</button>
           </div>
         </div>
@@ -506,7 +662,7 @@ async function renderNotificationsTab(el) {
       <div>
         <div class="panel">
           <div class="panel-head">
-            <div class="panel-title">Webhook (Telegram / Slack / Discord)</div>
+            <div class="panel-title">Webhook (Telegram / Slack / Discord) <span class="save-scope-pill instant">Instant</span></div>
             <label class="chk-pill"><input type="checkbox" id="nf-wh-en" ${n.webhook_enabled?'checked':''}> Enable Webhook</label>
           </div>
           <div style="padding:16px">
@@ -521,7 +677,7 @@ async function renderNotificationsTab(el) {
             <div class="form-row"><label>Webhook URL</label><input id="nf-wh-url" type="text" placeholder="https://api.telegram.org/botTOKEN/sendMessage" value="${esc(n.webhook_url||'')}"></div>
             <div class="form-row"><label>Telegram Chat ID (Telegram only)</label><input id="nf-wh-chat" type="text" placeholder="-1001234567890" value="${esc(n.webhook_chat_id||'')}"></div>
             <div style="display:flex;gap:8px;margin-top:8px">
-              <button class="btn btn-sm primary" onclick="saveNotifyConfig()">Save Settings</button>
+              <button class="btn btn-sm primary" onclick="saveNotifyConfig()">Save &amp; Activate</button>
               <button class="btn btn-sm" onclick="testNotify('webhook')">Send Test Webhook</button>
             </div>
           </div>
@@ -568,22 +724,19 @@ async function saveNotifyConfig() {
   };
   const res = await fetch('/api/v1/notifications/config', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
   const d = await res.json();
-  toast(res.ok ? 'Notification settings saved' : ('Error: ' + d.error));
+  toast(res.ok ? 'Saved & active immediately (no Nagios reload needed)' : ('Error: ' + d.error));
 }
 
 async function testNotify(channel) {
   await saveNotifyConfig();
   toast(`Sending test ${channel}...`);
-  const res = await fetch('/api/v1/notifications/test', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ channel })
-  });
+  const res = await fetch('/api/v1/notifications/test', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ channel }) });
   const d = await res.json();
   toast(res.ok ? `Test ${channel} sent!` : (`Test failed: ${d.error}`));
   renderNotificationsTab(document.getElementById('manage-content'));
 }
 
-/* ====== LOCALHOST HELPERS (Adopt Banner + Fallback Raw Modal) ====== */
+/* ====== LOCALHOST HELPERS ====== */
 async function openLocalhostRawModal() {
   const data = await (await fetch('/api/v1/config/localhost')).json();
   if (!data.configured || !data.exists) { toast('localhost.cfg not found'); return; }
@@ -591,11 +744,16 @@ async function openLocalhostRawModal() {
     <textarea id="lh-raw-editor" class="raw-editor">${esc(data.raw)}</textarea>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal()">Close</button>
-      <button class="btn primary" onclick="saveLocalhostRaw()">Save Raw &amp; Reload</button>
+      <button class="btn primary" onclick="saveLocalhostRaw()">Save Raw &amp; Auto-Reload</button>
     </div>`);
 }
 async function adoptLocalhost() {
-  if (!confirm('Adopt localhost.cfg into Encore Managed Config? Original file will be backed up.')) return;
+  const ok = await encoreConfirm({
+    title: 'Adopt localhost.cfg?',
+    message: 'Host dan service di localhost.cfg akan dipindahkan ke Encore Managed Config. File asli akan dibackup otomatis.',
+    confirmText: 'Adopt & Reload'
+  });
+  if (!ok) return;
   const con = document.getElementById('validate-console');
   con.style.display = 'block'; con.textContent = 'Adopting & validating...';
   const res = await fetch('/api/v1/config/localhost/adopt', { method: 'POST' });
@@ -612,14 +770,14 @@ async function saveLocalhostRaw() {
   if (res.ok) closeModal();
 }
 
-/* ====== SECRETS TAB ====== */
+/* ====== SECRETS TAB (Auto-Reload) ====== */
 async function renderSecretsTab(el) {
   const data = await (await fetch('/api/v1/secrets')).json();
   const list = data.secrets || [];
   el.innerHTML = `
     <div class="panel">
       <div class="panel-head">
-        <div class="panel-title">Resource Secrets (<code class="code-chip">$USER2$..$USER32$</code>)</div>
+        <div class="panel-title">Resource Secrets (<code class="code-chip">$USER2$..$USER32$</code>) <span class="save-scope-pill auto">Auto-Reload Nagios</span></div>
         <button class="btn btn-sm primary" onclick="openSecretModal()">+ Set Secret</button>
       </div>
       <div class="table-wrap"><table><thead><tr><th>Macro</th><th>Value (Masked)</th><th>Usage</th><th style="text-align:right">Actions</th></tr></thead><tbody>
@@ -634,9 +792,10 @@ async function renderSecretsTab(el) {
 }
 function openSecretModal(key) {
   openModal(`<h2>${key ? 'Update ' + esc(key) : 'Set Resource Secret'}</h2>
+    <div style="margin-bottom:10px"><span class="save-scope-pill auto">Auto-Reload — menyimpan ke resource.cfg &amp; reload Nagios otomatis</span></div>
     <div class="form-row"><label>Macro Key ($USER2$ .. $USER32$)</label><input id="sec-key" type="text" value="${esc(key || '$USER2$')}" ${key?'readonly':''}></div>
     <div class="form-row"><label>Secret Value (e.g. NCPA Token)</label><input id="sec-val" type="password" placeholder="Enter secret token..."></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveSecretModal()">Save &amp; Reload</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveSecretModal()">Save &amp; Auto-Reload</button></div>`);
 }
 async function saveSecretModal() {
   const key = document.getElementById('sec-key').value.trim();
@@ -647,17 +806,14 @@ async function saveSecretModal() {
   closeModal(); toast('Secret saved & Nagios reloading'); loadManage();
 }
 async function deleteSecret(key) {
-  if (!confirm(`Delete secret macro ${key}?`)) return;
+  const ok = await encoreConfirm({ title: `Delete Secret ${key}?`, message: 'Macro secret akan dihapus dari resource.cfg dan Nagios akan otomatis reload.', confirmText: 'Delete Secret', danger: true });
+  if (!ok) return;
   const res = await fetch('/api/v1/secrets?key=' + encodeURIComponent(key), { method:'DELETE' });
   if (res.ok) { toast('Deleted & reloading'); loadManage(); }
 }
 
 /* ====== SYSTEM TABS ====== */
-function setSysTab(t) {
-  S.sysTab = t;
-  ['controls','backups','audit'].forEach(k => document.getElementById('stab-'+k)?.classList.toggle('active', k===t));
-  loadSystem();
-}
+function setSysTab(t) { S.sysTab = t; ['controls','backups','audit'].forEach(k => document.getElementById('stab-'+k)?.classList.toggle('active', k===t)); loadSystem(); }
 async function loadSystem() {
   const el = document.getElementById('system-content');
   if (S.sysTab === 'controls') {
@@ -692,6 +848,7 @@ function openHostForm(idx) {
   const h = idx>=0 ? S.managed.config.hosts[idx] : { name:'', alias:'', address:'', check_command:'check-host-alive', check_interval:5, retry_interval:1, max_check_attempts:3, check_period:'24x7', contacts:'', hostgroups:[], enabled:true };
   const tpls = S.managed.config.templates || [];
   openModal(`<h2>${idx>=0?'Edit Host':'Add Host'}</h2>
+    <div style="margin-bottom:10px"><span class="save-scope-pill draft">Draft — klik Apply &amp; Reload setelah selesai mengedit</span></div>
     <div class="form-grid">
       <div class="form-row"><label>Host Name *</label><input id="f-h-name" type="text" value="${esc(h.name)}" ${idx>=0?'readonly':''}></div>
       <div class="form-row"><label>IP / Address *</label><input id="f-h-addr" type="text" value="${esc(h.address)}"></div>
@@ -707,7 +864,7 @@ function openHostForm(idx) {
         ${tpls.map(t => `<label class="chk-pill"><input type="checkbox" class="f-h-tpl" value="${esc(t.name)}"> ${esc(t.name)} (${(t.services||[]).length})</label>`).join('')}
       </div></div>` : ''}
     <label class="chk-pill"><input type="checkbox" id="f-h-en" ${h.enabled!==false?'checked':''}> Enabled</label>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveHostForm()">Save</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveHostForm()">Save Draft</button></div>`);
 }
 async function saveHostForm() {
   const name = document.getElementById('f-h-name').value.trim();
@@ -734,7 +891,7 @@ async function saveHostForm() {
   }
   closeModal();
   S.expandedHosts.add(name);
-  toast(selTpls.length ? `Host saved + ${selTpls.length} template(s) applied` : 'Host saved — click Apply & Reload');
+  toast(selTpls.length ? `Host draft saved + ${selTpls.length} template(s) applied` : 'Host draft saved — click Apply & Reload');
   await loadManage(); await loadMeta();
 }
 function openCloneHostModal(srcName) {
@@ -743,7 +900,7 @@ function openCloneHostModal(srcName) {
     <div class="form-row"><label>New IP / Address *</label><input id="c-h-addr" type="text" placeholder="10.0.0.x"></div>
     <div class="form-row"><label>New Alias</label><input id="c-h-alias" type="text"></div>
     <label class="chk-pill"><input type="checkbox" id="c-h-svcs" checked> Clone all services of ${esc(srcName)}</label>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitCloneHost('${esc(srcName)}')">Clone</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitCloneHost('${esc(srcName)}')">Clone Draft</button></div>`);
 }
 async function submitCloneHost(srcName) {
   await apiPost('/api/v1/config/hosts/clone', {
@@ -758,6 +915,7 @@ async function openSvcForm(idx, preHost) {
   const hostOpts = S.managed.config.hosts.map(h => `<option value="${esc(h.name)}">`).join('');
   const cmdOpts = (S.catalogCmds || []).map(c => `<option value="${esc(c.example || c.command_name)}">${esc(c.command_name)} (${esc(c.source)})</option>`).join('');
   openModal(`<h2>${idx>=0?'Edit Service':'Add Service'}</h2>
+    <div style="margin-bottom:10px"><span class="save-scope-pill draft">Draft — klik Apply &amp; Reload setelah selesai</span></div>
     <div class="presets">
       <button class="btn btn-sm" onclick="applySvcPreset('HTTP','check_http')">HTTP</button>
       <button class="btn btn-sm" onclick="applySvcPreset('TCP 443','check_tcp!443')">TCP</button>
@@ -782,7 +940,7 @@ async function openSvcForm(idx, preHost) {
       <div class="form-row"><label>Max Attempts</label><input id="f-s-att" type="number" value="${s.max_check_attempts||3}"></div>
     </div>
     <label class="chk-pill"><input type="checkbox" id="f-s-en" ${s.enabled!==false?'checked':''}> Enabled</label>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveSvcForm()">Save</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveSvcForm()">Save Draft</button></div>`);
   updateCmdHint();
 }
 function updateCmdHint() {
@@ -791,11 +949,8 @@ function updateCmdHint() {
   const hint = document.getElementById('f-s-cmd-hint');
   if (!hint || !base) return;
   const found = (S.catalogCmds || []).find(c => c.command_name === base);
-  if (found) {
-    hint.innerHTML = `<span style="color:var(--ok-fg)">✓ Defined</span> (${esc(found.source)}) — <span class="mono">${esc(found.command_line)}</span>`;
-  } else if ((S.catalogCmds || []).length > 0) {
-    hint.innerHTML = `<span style="color:var(--warn-fg)">⚠ Command "${esc(base)}" not found in active catalog yet</span>`;
-  }
+  if (found) hint.innerHTML = `<span style="color:var(--ok-fg)">✓ Defined</span> (${esc(found.source)}) — <span class="mono">${esc(found.command_line)}</span>`;
+  else if ((S.catalogCmds || []).length > 0) hint.innerHTML = `<span style="color:var(--warn-fg)">⚠ Command "${esc(base)}" not found in active catalog yet</span>`;
 }
 function applySvcPreset(desc, cmd) {
   if (!document.getElementById('f-s-desc').value) document.getElementById('f-s-desc').value = desc;
@@ -813,56 +968,55 @@ async function saveSvcForm() {
     check_interval: Number(document.getElementById('f-s-int').value)||5, retry_interval: 1,
     max_check_attempts: Number(document.getElementById('f-s-att').value)||3, check_period: '24x7',
     enabled: document.getElementById('f-s-en').checked
-  }, 'Service saved');
+  }, 'Service draft saved');
 }
 function openCloneSvcModal(srcHost, srcDesc) {
   openModal(`<h2>Clone Service: ${esc(srcHost)} / ${esc(srcDesc)}</h2>
     <div class="form-row"><label>Target Host *</label><input id="c-s-host" type="text" value="${esc(srcHost)}"></div>
     <div class="form-row"><label>New Description *</label><input id="c-s-desc" type="text" value="${esc(srcDesc)}-copy"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/services/clone',{source_host:'${esc(srcHost)}',source_description:'${esc(srcDesc)}',target_host:document.getElementById('c-s-host').value.trim(),target_description:document.getElementById('c-s-desc').value.trim()},'Service cloned')">Clone</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/services/clone',{source_host:'${esc(srcHost)}',source_description:'${esc(srcDesc)}',target_host:document.getElementById('c-s-host').value.trim(),target_description:document.getElementById('c-s-desc').value.trim()},'Service cloned')">Clone Draft</button></div>`);
 }
 function openCmdForm(idx, isClone) {
   const c = idx>=0 ? S.managed.config.commands[idx] : { command_name:'', command_line:'$USER1$/check_http -H $HOSTADDRESS$' };
   openModal(`<h2>${isClone?'Clone Command':(idx>=0?'Edit Command':'Add Command')}</h2>
+    <div style="margin-bottom:10px"><span class="save-scope-pill draft">Draft — requires Apply &amp; Reload</span></div>
     <div class="form-row"><label>Name *</label><input id="f-c-name" type="text" value="${esc(isClone?c.command_name+'_copy':c.command_name)}"></div>
     <div class="form-row"><label>Command Line *</label><input id="f-c-line" type="text" value="${esc(c.command_line)}"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/commands',{command_name:document.getElementById('f-c-name').value.trim(),command_line:document.getElementById('f-c-line').value.trim()},'Command saved')">Save</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/commands',{command_name:document.getElementById('f-c-name').value.trim(),command_line:document.getElementById('f-c-line').value.trim()},'Command draft saved')">Save Draft</button></div>`);
 }
 function openGroupForm(kind) {
   openModal(`<h2>Add ${kind==='hostgroups'?'Hostgroup':'Servicegroup'}</h2>
     <div class="form-row"><label>Name *</label><input id="f-g-name" type="text"></div>
     <div class="form-row"><label>Alias</label><input id="f-g-alias" type="text"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/${kind}',{group_name:document.getElementById('f-g-name').value.trim(),alias:document.getElementById('f-g-alias').value.trim()},'Group saved')">Save</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/${kind}',{group_name:document.getElementById('f-g-name').value.trim(),alias:document.getElementById('f-g-alias').value.trim()},'Group draft saved')">Save Draft</button></div>`);
 }
 function openContactForm() {
   openModal(`<h2>Add Contact</h2>
     <div class="form-row"><label>Name *</label><input id="f-ct-name" type="text"></div>
     <div class="form-row"><label>Alias</label><input id="f-ct-alias" type="text"></div>
     <div class="form-row"><label>Email</label><input id="f-ct-email" type="text"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/contacts',{contact_name:document.getElementById('f-ct-name').value.trim(),alias:document.getElementById('f-ct-alias').value.trim(),email:document.getElementById('f-ct-email').value.trim()},'Contact saved')">Save</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/contacts',{contact_name:document.getElementById('f-ct-name').value.trim(),alias:document.getElementById('f-ct-alias').value.trim(),email:document.getElementById('f-ct-email').value.trim()},'Contact draft saved')">Save Draft</button></div>`);
 }
 async function openScriptModal(name, kind) {
   let content = '';
-  if (name) {
-    content = (await (await fetch('/api/v1/scripts/content?name=' + encodeURIComponent(name))).json()).content || '';
-  } else if (kind === 'python') {
-    content = `#!/usr/bin/env python3\nimport sys\nhost = sys.argv[1] if len(sys.argv) > 1 else "localhost"\nprint(f"OK - python check {host} | val=1;5;10")\nsys.exit(0)\n`;
-  } else {
-    content = `#!/bin/sh\nHOST="\${1:-localhost}"\necho "OK - check \$HOST | latency=1.2ms;50;100"\nexit 0\n`;
-  }
+  if (name) content = (await (await fetch('/api/v1/scripts/content?name=' + encodeURIComponent(name))).json()).content || '';
+  else if (kind === 'python') content = `#!/usr/bin/env python3\nimport sys\nhost = sys.argv[1] if len(sys.argv) > 1 else "localhost"\nprint(f"OK - python check {host} | val=1;5;10")\nsys.exit(0)\n`;
+  else content = `#!/bin/sh\nHOST="\${1:-localhost}"\necho "OK - check \$HOST | latency=1.2ms;50;100"\nexit 0\n`;
   openModal(`<h2>${name?'Edit '+esc(name):'New Script'}</h2>
+    <div style="margin-bottom:10px"><span class="save-scope-pill instant">Instant Save to Disk (auto chmod +x)</span></div>
     <div class="form-row"><label>Filename</label><input id="sc-name" type="text" value="${esc(name||(kind==='python'?'check_custom.py':'check_custom.sh'))}" ${name?'readonly':''}></div>
-    <div class="form-row"><label>Content (auto chmod +x)</label><textarea id="sc-body" class="raw-editor">${esc(content)}</textarea></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveScriptModal()">Save</button></div>`);
+    <div class="form-row"><label>Content</label><textarea id="sc-body" class="raw-editor">${esc(content)}</textarea></div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveScriptModal()">Save Script</button></div>`);
 }
 async function saveScriptModal() {
   const res = await fetch('/api/v1/scripts', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:document.getElementById('sc-name').value.trim(), content:document.getElementById('sc-body').value}) });
   const d = await res.json();
   if (!res.ok) { toast('Error: ' + d.error); return; }
-  closeModal(); toast('Script saved'); loadManage();
+  closeModal(); toast('Script saved to disk (instant)'); loadManage();
 }
 async function deleteScript(name) {
-  if (confirm(`Delete script "${name}"?`) && (await fetch('/api/v1/scripts?name='+encodeURIComponent(name), {method:'DELETE'})).ok) { toast('Deleted'); loadManage(); }
+  const ok = await encoreConfirm({ title: `Delete Script "${name}"?`, message: 'File script akan dihapus permanen dari disk.', confirmText: 'Delete Script', danger: true });
+  if (ok && (await fetch('/api/v1/scripts?name='+encodeURIComponent(name), {method:'DELETE'})).ok) { toast('Script deleted'); loadManage(); }
 }
 function openTestScriptModal(name) {
   openModal(`<h2>Test: ${esc(name)}</h2>
@@ -879,7 +1033,7 @@ function registerScriptAsCmd(name, fullPath) {
   openModal(`<h2>Register as Command</h2>
     <div class="form-row"><label>Command Name</label><input id="f-c-name" type="text" value="${esc(name.replace(/\.(sh|py|pl)$/,''))}"></div>
     <div class="form-row"><label>Command Line</label><input id="f-c-line" type="text" value="${esc(fullPath)} $HOSTADDRESS$ $ARG1$"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/commands',{command_name:document.getElementById('f-c-name').value.trim(),command_line:document.getElementById('f-c-line').value.trim()},'Command registered')">Register</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="apiPost('/api/v1/config/commands',{command_name:document.getElementById('f-c-name').value.trim(),command_line:document.getElementById('f-c-line').value.trim()},'Command registered')">Register Draft</button></div>`);
 }
 async function quickRegisterNCPA() {
   S.catalogCmds = [];
@@ -889,36 +1043,48 @@ async function quickRegisterNCPA() {
   }, 'check_ncpa registered using $USER2$');
 }
 
-async function apiPost(url, payload, okMsg) {
+async function apiPost(url, payload, okMsg, isInstant) {
   try {
     const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || res.statusText);
     closeModal(); S.catalogCmds = [];
-    toast(okMsg + ' — click Apply & Reload');
+    toast(isInstant ? okMsg : (okMsg + ' — click Apply & Reload'));
     if (S.view === 'manage') await loadManage();
     await loadMeta();
   } catch (e) { toast('Error: ' + e.message); }
 }
-async function deleteManagedHost(name) { if (confirm(`Delete host "${name}"?`)) await deleteManagedItem('hosts', 'name='+encodeURIComponent(name)); }
-async function deleteManagedSvc(host, desc) { if (confirm(`Delete "${host}/${desc}"?`)) await deleteManagedItem('services', `host=${encodeURIComponent(host)}&description=${encodeURIComponent(desc)}`); }
-async function deleteManagedItem(kind, qs) {
+async function deleteManagedHost(name) {
+  const ok = await encoreConfirm({ title: `Delete Host "${name}"?`, message: 'Host beserta seluruh service di bawahnya akan dihapus dari draft konfigurasi.', items: [name], confirmText: 'Delete Host', danger: true });
+  if (ok) await deleteManagedItem('hosts', 'name='+encodeURIComponent(name));
+}
+async function deleteManagedSvc(host, desc) {
+  const ok = await encoreConfirm({ title: `Delete Service "${desc}"?`, message: `Service pada host ${host} akan dihapus dari draft konfigurasi.`, items: [`${host} / ${desc}`], confirmText: 'Delete Service', danger: true });
+  if (ok) await deleteManagedItem('services', `host=${encodeURIComponent(host)}&description=${encodeURIComponent(desc)}`);
+}
+async function deleteManagedItem(kind, qs, confirmLabel) {
+  if (confirmLabel) {
+    const ok = await encoreConfirm({ title: `Delete ${confirmLabel}?`, message: 'Item ini akan dihapus dari konfigurasi.', confirmText: 'Delete', danger: true });
+    if (!ok) return;
+  }
   const res = await fetch(`/api/v1/config/${kind}?${qs}`, { method:'DELETE' });
   if (!res.ok) { toast('Delete failed'); return; }
   S.catalogCmds = [];
-  toast('Deleted — click Apply & Reload'); await loadManage(); await loadMeta();
+  toast(kind === 'templates' ? 'Template deleted (instant)' : 'Deleted from draft — click Apply & Reload');
+  await loadManage(); await loadMeta();
 }
 async function runValidate(apply) {
   const con = document.getElementById('validate-console');
-  if (con) { con.style.display = 'block'; con.textContent = apply ? 'Applying...' : 'Validating...'; }
+  if (con) { con.style.display = 'block'; con.textContent = apply ? 'Applying & reloading...' : 'Validating...'; }
   const res = await fetch(apply ? '/api/v1/config/apply' : '/api/v1/config/validate', { method:'POST' });
   const d = await res.json();
   if (con) con.textContent = (d.error ? 'ERROR: '+d.error+'\n\n' : 'OK\n\n') + (d.output||'');
-  toast(res.ok ? (apply ? 'Applied & reloading!' : 'Valid!') : 'Validation failed');
+  toast(res.ok ? (apply ? 'Applied & reloading Nagios!' : 'Configuration valid!') : 'Validation failed');
   if (res.ok && apply) { if (S.view === 'manage') await loadManage(); setTimeout(refreshAll, 1400); }
 }
 async function rollbackBackup(name) {
-  if (!confirm(`Rollback to ${name}?`)) return;
+  const ok = await encoreConfirm({ title: `Rollback to ${name}?`, message: 'Konfigurasi saat ini akan diganti dengan snapshot backup ini dan Nagios akan langsung reload.', confirmText: 'Rollback & Reload', danger: true });
+  if (!ok) return;
   const res = await fetch('/api/v1/config/rollback', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({backup:name}) });
   toast(res.ok ? 'Rolled back & reloading!' : 'Rollback failed');
   if (res.ok) { await loadSystem(); setTimeout(refreshAll, 1400); }
