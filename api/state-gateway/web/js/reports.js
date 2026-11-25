@@ -3,8 +3,71 @@ let repSvcsCache = [];
 
 function setReportTab(t) {
   S.repTab = t;
-  ['sla','alerts','eventlog'].forEach(k => document.getElementById('rtab-' + k)?.classList.toggle('active', k === t));
+  ['sla','metrics','alerts','eventlog'].forEach(k => document.getElementById('rtab-' + k)?.classList.toggle('active', k === t));
   loadReports();
+}
+
+async function openMetricsFor(host, service) {
+  setView('reports', 'metrics');
+  await syncReportDropdowns();
+  const hSel = document.getElementById('rep-host');
+  const sSel = document.getElementById('rep-svc');
+  if (hSel) hSel.value = host || '';
+  populateRepServicesForHost(host || '');
+  if (sSel) sSel.value = service || '';
+  loadReports();
+}
+
+/* Pure SVG Area + Line Metric Chart with WARN/CRIT threshold lines */
+function renderMetricChartSVG(ser) {
+  const pts = ser.points || [];
+  if (!pts.length) return '<div class="empty" style="padding:16px">No samples yet</div>';
+  const w = 520, h = 148, padL = 44, padR = 12, padT = 14, padB = 22;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  let minY = ser.min, maxY = ser.max;
+  if (ser.warn != null && ser.warn > maxY && ser.warn < maxY * 3 + 100) maxY = Math.max(maxY, ser.warn);
+  if (ser.crit != null && ser.crit > maxY && ser.crit < maxY * 3 + 100) maxY = Math.max(maxY, ser.crit);
+  if (minY > 0 && minY < maxY * 0.25) minY = 0;
+  if (maxY <= minY) maxY = minY + 1;
+  const minT = pts[0].ts, maxT = Math.max(pts[pts.length - 1].ts, minT + 1);
+
+  const sx = ts => padL + ((ts - minT) / (maxT - minT)) * plotW;
+  const sy = v => padT + plotH - ((v - minY) / (maxY - minY)) * plotH;
+
+  const coords = pts.map(p => `${sx(p.ts).toFixed(1)},${sy(p.v).toFixed(1)}`);
+  const lineD = pts.length === 1 ? `M ${padL},${sy(pts[0].v).toFixed(1)} L ${w - padR},${sy(pts[0].v).toFixed(1)}` : 'M ' + coords.join(' L ');
+  const areaD = pts.length === 1
+    ? `${lineD} L ${w - padR},${padT + plotH} L ${padL},${padT + plotH} Z`
+    : `${lineD} L ${sx(pts[pts.length - 1].ts).toFixed(1)},${padT + plotH} L ${sx(pts[0].ts).toFixed(1)},${padT + plotH} Z`;
+
+  const gradId = 'mg-' + Math.random().toString(36).slice(2, 8);
+  let threshHTML = '';
+  if (ser.warn != null && ser.warn >= minY && ser.warn <= maxY) {
+    const wy = sy(ser.warn).toFixed(1);
+    threshHTML += `<line x1="${padL}" y1="${wy}" x2="${w - padR}" y2="${wy}" stroke="var(--warn)" stroke-width="1.2" stroke-dasharray="4 3"/><text x="${w - padR - 2}" y="${(Number(wy) - 3).toFixed(1)}" text-anchor="end" fill="var(--warn-fg)" font-size="9">WARN ${ser.warn}</text>`;
+  }
+  if (ser.crit != null && ser.crit >= minY && ser.crit <= maxY) {
+    const cy = sy(ser.crit).toFixed(1);
+    threshHTML += `<line x1="${padL}" y1="${cy}" x2="${w - padR}" y2="${cy}" stroke="var(--crit)" stroke-width="1.2" stroke-dasharray="4 3"/><text x="${w - padR - 2}" y="${(Number(cy) - 3).toFixed(1)}" text-anchor="end" fill="var(--crit-fg)" font-size="9">CRIT ${ser.crit}</text>`;
+  }
+  const dots = pts.length <= 45 ? pts.map(p => `<circle cx="${sx(p.ts).toFixed(1)}" cy="${sy(p.v).toFixed(1)}" r="2.4" fill="var(--accent)"><title>${new Date(p.ts*1000).toLocaleTimeString()} — ${p.v}${ser.unit||''}</title></circle>`).join('') : '';
+  const tStart = new Date(minT * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const tEnd = new Date(maxT * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:148px;display:block">
+    <defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent)" stop-opacity="0.28"/><stop offset="100%" stop-color="var(--accent)" stop-opacity="0.02"/></linearGradient></defs>
+    <line x1="${padL}" y1="${padT}" x2="${w-padR}" y2="${padT}" stroke="var(--border)" stroke-dasharray="3 3"/>
+    <line x1="${padL}" y1="${padT + plotH/2}" x2="${w-padR}" y2="${padT + plotH/2}" stroke="var(--border)" stroke-dasharray="3 3"/>
+    <line x1="${padL}" y1="${padT + plotH}" x2="${w-padR}" y2="${padT + plotH}" stroke="var(--border)"/>
+    <text x="${padL-5}" y="${padT+4}" text-anchor="end" fill="var(--muted)" font-size="9.5">${maxY.toFixed(1)}</text>
+    <text x="${padL-5}" y="${padT+plotH/2+3}" text-anchor="end" fill="var(--muted)" font-size="9.5">${((maxY+minY)/2).toFixed(1)}</text>
+    <text x="${padL-5}" y="${padT+plotH}" text-anchor="end" fill="var(--muted)" font-size="9.5">${minY.toFixed(1)}</text>
+    <text x="${padL}" y="${h-5}" fill="var(--muted)" font-size="9.5">${tStart}</text>
+    <text x="${w-padR}" y="${h-5}" text-anchor="end" fill="var(--muted)" font-size="9.5">${tEnd}</text>
+    <path d="${areaD}" fill="url(#${gradId})"/>
+    <path d="${lineD}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${threshHTML}${dots}
+  </svg>`;
 }
 
 function setReportRange(r) {
@@ -165,9 +228,9 @@ function renderTrendSVG(timeline) {
   }).join('');
 
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:132px;display:block">
-    <line x1="${padL}" y1="${padT}" x2="${w-padR}" y2="${padT}" stroke="var(--border)" stroke-dasharray="3 3"/>
+    <line x1="${padL}" y1="${padT}" x2="${w-padR}" y2="${padT}" stroke="var(--ok)" stroke-opacity="0.45" stroke-dasharray="4 3"/>
     <line x1="${padL}" y1="${padT + plotH/2}" x2="${w-padR}" y2="${padT + plotH/2}" stroke="var(--border)" stroke-dasharray="3 3"/>
-    <text x="${padL-4}" y="${padT+4}" text-anchor="end" fill="var(--muted)" font-size="9">100%</text>
+    <text x="${padL-4}" y="${padT+4}" text-anchor="end" fill="var(--ok-fg)" font-size="9">99.9%</text>
     <text x="${padL-4}" y="${padT+plotH/2+3}" text-anchor="end" fill="var(--muted)" font-size="9">50%</text>
     <text x="${padL-4}" y="${padT+plotH}" text-anchor="end" fill="var(--muted)" font-size="9">0%</text>
     ${bars}
@@ -285,6 +348,35 @@ async function loadReports() {
         </div>
       </div>
       <div class="panel">${tableHTML}</div>`;
+  } else if (S.repTab === 'metrics') {
+    const selHost = host || (repHostsCache[0] && repHostsCache[0].name) || '';
+    const svcsForHost = repSvcsCache.filter(s => !selHost || s.host_name === selHost);
+    const selSvc = service || (svcsForHost[0] && svcsForHost[0].description) || '';
+    const mRange = (S.repRange === '7d' || S.repRange === '30d') ? '7d' : '24h';
+    if (!selHost || !selSvc) {
+      el.innerHTML = `<div class="panel"><div class="art-empty">${artSVG('search')}<h4>Select Host &amp; Service</h4><p>Pilih Host dan Service pada filter di atas untuk menampilkan grafik time-series metrik (CPU, RAM, Latency, dll).</p></div></div>`;
+      return;
+    }
+    const qs = new URLSearchParams({ host: selHost, service: selSvc, range: mRange });
+    const data = await (await fetch('/api/v1/metrics?' + qs)).json();
+    const series = data.series || [];
+    el.innerHTML = series.length ? `
+      <div style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div class="name-primary">Metrics: ${esc(selHost)} / ${esc(selSvc)} <span class="flag-tag">${esc(mRange)}</span></div>
+        <span class="name-sub">${series.length} metric series recorded from Nagios perf_data</span>
+      </div>
+      <div class="metric-grid">${series.map(ser => `
+        <div class="chart-card">
+          <div class="chart-title"><span>${esc(ser.label)} ${ser.unit ? '(' + esc(ser.unit) + ')' : ''}</span><span class="mono">Last: <b>${ser.last}${esc(ser.unit||'')}</b></span></div>
+          ${renderMetricChartSVG(ser)}
+          <div class="metric-stats">
+            <span>Min: <b>${ser.min}${esc(ser.unit||'')}</b></span>
+            <span>Avg: <b>${ser.avg}${esc(ser.unit||'')}</b></span>
+            <span>Max: <b>${ser.max}${esc(ser.unit||'')}</b></span>
+            <span>Samples: <b>${(ser.points||[]).length}</b></span>
+          </div>
+        </div>`).join('')}
+      </div>` : `<div class="panel"><div class="art-empty">${artSVG('servers')}<h4>No Time-Series Metrics Yet</h4><p>Belum ada data <code>perf_data</code> tercatat untuk <b>${esc(selHost)} / ${esc(selSvc)}</b>. Data akan terkumpul otomatis setiap kali check berjalan.</p></div></div>`;
   } else if (S.repTab === 'alerts') {
     const hardOnly = document.getElementById('rep-hard-only')?.checked ? '1' : '0';
     const qs = new URLSearchParams({ from, to, type: 'alerts', hard_only: hardOnly, limit: 150 });

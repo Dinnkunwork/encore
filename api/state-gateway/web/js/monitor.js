@@ -546,7 +546,11 @@ function renderGroupsView() {
 }
 
 async function renderDowntimesView() {
-  const dts = (await (await fetch('/api/v1/downtimes')).json()).downtimes || [];
+  const [dtRes, recRes] = await Promise.all([fetch('/api/v1/downtimes'), fetch('/api/v1/downtimes/recurring')]);
+  const dts = (await dtRes.json()).downtimes || [];
+  const recs = (await recRes.json()).schedules || [];
+  const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
   const rows = dts.length ? dts.map(d => {
     const delCmd = d.type === 1 ? `DEL_SVC_DOWNTIME;${d.downtime_id}` : `DEL_HOST_DOWNTIME;${d.downtime_id}`;
     return `<tr>
@@ -555,11 +559,73 @@ async function renderDowntimesView() {
       <td class="mono">${new Date(d.start_time*1000).toLocaleString()} → ${new Date(d.end_time*1000).toLocaleString()}</td>
       <td>${d.is_in_effect ? '<span class="badge c-warn">ACTIVE</span>' : '<span class="badge c-pend">SCHEDULED</span>'}</td>
       <td><b>${esc(d.author)}</b>: ${esc(d.comment)}</td>
-      <td class="actions"><button class="btn btn-sm danger" onclick="sendCmd('${delCmd}','Cancel downtime #${d.downtime_id}')">Cancel</button></td>
+      <td class="actions">${canOperate() ? `<button class="btn btn-sm danger" onclick="sendCmd('${jsEsc(delCmd)}','Cancel downtime #${d.downtime_id}')">Cancel</button>` : '-'}</td>
     </tr>`;
   }).join('') : '<tr><td colspan="6" class="empty">No active or scheduled downtimes</td></tr>';
 
-  document.getElementById('mon-body').innerHTML = `<div class="panel"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Target</th><th>Window</th><th>Status</th><th>Comment</th><th style="text-align:right">Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  const recRows = recs.length ? recs.map(r => `<tr>
+    <td><b>${esc(r.name)}</b><div class="name-sub">${esc(r.comment)}</div></td>
+    <td><span class="flag-tag">${esc(r.target_type)}</span> <span class="mono">${esc(r.target_type==='hostgroup'?r.hostgroup:(r.host + (r.service?' / '+r.service:'')))}</span></td>
+    <td class="mono">${(r.days||[]).map(d => dayNames[d]).join(', ')} @ ${esc(r.start_time)} (${r.duration_min}m)</td>
+    <td>${r.enabled ? '<span class="badge c-ok">ON</span>' : '<span class="badge c-pend">OFF</span>'}</td>
+    <td class="actions">${canOperate() ? `<button class="btn btn-sm danger" onclick="deleteRecurringDT('${jsEsc(r.id)}','${jsEsc(r.name)}')">Delete</button>` : '-'}</td>
+  </tr>`).join('') : '<tr><td colspan="5" class="empty">No recurring maintenance schedules</td></tr>';
+
+  document.getElementById('mon-body').innerHTML = `
+    <div class="panel"><div class="panel-head"><div class="panel-title">Active &amp; Scheduled Downtimes (${dts.length})</div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>Target</th><th>Window</th><th>Status</th><th>Comment</th><th style="text-align:right">Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Recurring Maintenance Schedules (${recs.length}) <span class="save-scope-pill instant">Auto Scheduler</span></div>
+        ${canOperate() ? '<button class="btn btn-sm primary" onclick="openRecurringDTModal()">+ Add Schedule</button>' : ''}
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Schedule</th><th>Target</th><th>Recurrence</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>${recRows}</tbody></table></div>
+    </div>`;
+}
+
+function openRecurringDTModal() {
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  openModal(`<h2>Add Recurring Maintenance Schedule</h2>
+    <div class="form-grid">
+      <div class="form-row"><label>Schedule Name *</label><input id="rdt-name" type="text" placeholder="Weekly DB Backup"></div>
+      <div class="form-row"><label>Target Type</label>
+        <select id="rdt-type" onchange="document.getElementById('rdt-hg-row').style.display=this.value==='hostgroup'?'':'none';document.getElementById('rdt-h-row').style.display=this.value!=='hostgroup'?'':'none';document.getElementById('rdt-s-row').style.display=this.value==='service'?'':'none'">
+          <option value="host">Host</option><option value="service">Service</option><option value="hostgroup">Hostgroup</option>
+        </select>
+      </div>
+      <div class="form-row" id="rdt-h-row"><label>Host *</label><input id="rdt-host" type="text" placeholder="localhost"></div>
+      <div class="form-row" id="rdt-s-row" style="display:none"><label>Service *</label><input id="rdt-svc" type="text" placeholder="HTTP"></div>
+      <div class="form-row" id="rdt-hg-row" style="display:none"><label>Hostgroup *</label><input id="rdt-hg" type="text" placeholder="linux-servers"></div>
+      <div class="form-row"><label>Start Time (24h HH:MM) *</label><input id="rdt-time" type="text" value="02:00"></div>
+      <div class="form-row"><label>Duration (minutes) *</label><input id="rdt-dur" type="number" value="120" min="1"></div>
+      <div class="form-row full"><label>Days of Week *</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${days.map((d,i)=>`<label class="chk-pill"><input type="checkbox" class="rdt-day" value="${i}" ${i===0?'checked':''}> ${d}</label>`).join('')}</div>
+      </div>
+      <div class="form-row full"><label>Comment</label><input id="rdt-cmt" type="text" value="Recurring scheduled maintenance"></div>
+    </div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveRecurringDT()">Save Schedule</button></div>`);
+}
+async function saveRecurringDT() {
+  const days = [...document.querySelectorAll('.rdt-day:checked')].map(c => Number(c.value));
+  const payload = {
+    name: document.getElementById('rdt-name').value.trim(),
+    target_type: document.getElementById('rdt-type').value,
+    host: document.getElementById('rdt-host').value.trim(),
+    service: document.getElementById('rdt-svc').value.trim(),
+    hostgroup: document.getElementById('rdt-hg').value.trim(),
+    start_time: document.getElementById('rdt-time').value.trim(),
+    duration_min: Number(document.getElementById('rdt-dur').value) || 60,
+    days, comment: document.getElementById('rdt-cmt').value.trim(), enabled: true
+  };
+  const res = await fetch('/api/v1/downtimes/recurring', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+  const d = await res.json();
+  if (!res.ok) { toast('Error: ' + d.error); return; }
+  closeModal(); toast('Recurring schedule saved'); renderDowntimesView();
+}
+async function deleteRecurringDT(id, name) {
+  const ok = await encoreConfirm({ title: `Delete Schedule "${name}"?`, message: 'Jadwal maintenance rutin ini tidak akan berjalan lagi.', confirmText: 'Delete', danger: true });
+  if (!ok) return;
+  const res = await fetch('/api/v1/downtimes/recurring?id=' + encodeURIComponent(id), { method:'DELETE' });
+  if (res.ok) { toast('Deleted'); renderDowntimesView(); }
 }
 
 function parsePerfData(pd) {
@@ -610,19 +676,29 @@ function openSvcDrawer(idx) {
     </div>
     <div class="kv-box" style="margin-bottom:10px"><div class="k">Output</div><div class="mono" style="margin-top:4px;white-space:pre-wrap;color:var(--text)">${esc(s.plugin_output||'-')}</div></div>
     ${s.perf_data ? `<div class="kv-box" style="margin-bottom:12px"><div class="k">Performance Data</div><div class="perf-chips">${parsePerfData(s.perf_data)}</div></div>` : ''}
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:14px">
-      <button class="btn btn-sm primary" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${esc(s.host_name)};${esc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻ Force Check</button>
-      ${s.current_state>0 && !s.acknowledged ? `<button class="btn btn-sm" onclick="closeDrawer();openAckModal('service','${esc(s.host_name)}','${esc(s.description)}')">✓ Acknowledge</button>` : ''}
-      ${s.acknowledged ? `<button class="btn btn-sm" onclick="sendCmd('REMOVE_SVC_ACKNOWLEDGEMENT;${esc(s.host_name)};${esc(s.description)}','Remove ACK')">Remove ACK</button>` : ''}
-      <button class="btn btn-sm" onclick="closeDrawer();openDowntimeModal('service','${esc(s.host_name)}','${esc(s.description)}')">⏱ Downtime</button>
-      <button class="btn btn-sm" onclick="sendCmd('DISABLE_SVC_CHECK;${esc(s.host_name)};${esc(s.description)}','Disable check')">Disable</button>
-      <button class="btn btn-sm" onclick="sendCmd('ENABLE_SVC_CHECK;${esc(s.host_name)};${esc(s.description)}','Enable check')">Enable</button>
-    </div>
+    <div id="drawer-metrics-box" style="margin-bottom:12px"></div>
+    ${canOperate() ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:14px">
+      <button class="btn btn-sm primary" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻ Force Check</button>
+      ${s.current_state>0 && !s.acknowledged ? `<button class="btn btn-sm" onclick="closeDrawer();openAckModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">✓ Acknowledge</button>` : ''}
+      ${s.acknowledged ? `<button class="btn btn-sm" onclick="sendCmd('REMOVE_SVC_ACKNOWLEDGEMENT;${jsEsc(s.host_name)};${jsEsc(s.description)}','Remove ACK')">Remove ACK</button>` : ''}
+      <button class="btn btn-sm" onclick="closeDrawer();openDowntimeModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">⏱ Downtime</button>
+      ${isAdmin() ? `<button class="btn btn-sm" onclick="sendCmd('DISABLE_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)}','Disable check')">Disable</button>
+      <button class="btn btn-sm" onclick="sendCmd('ENABLE_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)}','Enable check')">Enable</button>` : ''}
+    </div>` : ''}
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-      <button class="btn btn-sm" onclick="closeDrawer();openReportFor('${esc(s.host_name)}','${esc(s.description)}')">View SLA Report ›</button>
-      <button class="btn btn-sm" onclick="closeDrawer();jumpToManageHost('${esc(s.host_name)}')">Edit Config ›</button>
+      <button class="btn btn-sm" onclick="closeDrawer();openReportFor('${jsEsc(s.host_name)}','${jsEsc(s.description)}')">View SLA Report ›</button>
+      <button class="btn btn-sm" onclick="closeDrawer();openMetricsFor('${jsEsc(s.host_name)}','${jsEsc(s.description)}')">Metrics Charts ›</button>
+      ${isAdmin() ? `<button class="btn btn-sm" onclick="closeDrawer();jumpToManageHost('${jsEsc(s.host_name)}')">Edit Config ›</button>` : ''}
     </div>`;
   document.getElementById('drawer-wrap').classList.add('open');
+  // Load mini metric trend chart inside drawer
+  fetch(`/api/v1/metrics?host=${encodeURIComponent(s.host_name)}&service=${encodeURIComponent(s.description)}&range=6h`)
+    .then(r => r.json()).then(d => {
+      const box = document.getElementById('drawer-metrics-box');
+      if (!box || !d.series || !d.series.length) return;
+      const ser = d.series[0];
+      box.innerHTML = `<div class="kv-box"><div class="k" style="display:flex;justify-content:space-between;margin-bottom:6px"><span>Trend (6h): ${esc(ser.label)}</span><span>Last: ${ser.last}${esc(ser.unit||'')}</span></div>${renderMetricChartSVG(ser)}</div>`;
+    }).catch(() => {});
 }
 
 function openAckModal(kind, host, desc) {

@@ -18,7 +18,7 @@
   <aside class="sidebar" id="sidebar">
     <div class="sb-head">
       <a class="sb-brand" href="#" onclick="setView('overview');return false">
-        <img src="/assets/logo/logo.svg" alt="Encore">
+        <encore-icon name="logo" size="2" live></encore-icon>
         <div class="brand-text"><strong>Encore</strong><span>Monitoring Console</span></div>
       </a>
       <button class="sb-toggle desktop-only" id="sb-toggle-btn" onclick="toggleSidebar()" title="Collapse sidebar">«</button>
@@ -89,7 +89,17 @@
           <option value="0">Paused</option>
         </select>
         <button class="btn btn-sm" onclick="refreshAll()" title="Refresh now">↻</button>
-        <button class="btn btn-sm" id="theme-btn" onclick="toggleTheme()">Dark</button>
+        <select id="theme-select" onchange="applyTheme(this.value)" aria-label="Theme" title="Select Theme">
+          <option value="light">Crisp Light</option>
+          <option value="dark">Midnight Slate</option>
+          <option value="cyber">Encore Cyber</option>
+          <option value="nord">Nordic Frost</option>
+          <option value="emerald">Terminal Ops</option>
+        </select>
+        <button class="user-chip" id="user-chip" onclick="openAccountModal()" title="Account &amp; RBAC Role" style="display:none">
+          <span id="user-chip-name">admin</span>
+          <span class="flag-tag" id="user-chip-role">ADMIN</span>
+        </button>
       </div>
     </header>
 
@@ -219,6 +229,7 @@
             <button class="subtab" id="mtab-groups" onclick="setManageTab('groups')">Groups</button>
             <button class="subtab" id="mtab-notifications" onclick="setManageTab('notifications')">Notifications</button>
             <button class="subtab" id="mtab-secrets" onclick="setManageTab('secrets')">Secrets</button>
+            <button class="subtab" id="mtab-users" onclick="setManageTab('users')">Users</button>
           </div>
           <div class="subtab-actions">
             <button class="btn btn-sm" id="mg-review-btn" style="display:none" onclick="openDiffReviewModal()">Review Diff</button>
@@ -265,6 +276,7 @@
         <div class="subtabs">
           <div class="subtab-list">
             <button class="subtab active" id="rtab-sla" onclick="setReportTab('sla')">SLA &amp; Charts</button>
+            <button class="subtab" id="rtab-metrics" onclick="setReportTab('metrics')">Metrics</button>
             <button class="subtab" id="rtab-alerts" onclick="setReportTab('alerts')">Alerts</button>
             <button class="subtab" id="rtab-eventlog" onclick="setReportTab('eventlog')">Event Log</button>
           </div>
@@ -311,14 +323,14 @@
 </div>
 <div id="toast"></div>
 
+<script src="/js/encore-icons.js"></script>
 <script src="/js/core.js"></script>
 <script src="/js/monitor.js"></script>
 <script src="/js/manage.js"></script>
 <script src="/js/guide.js"></script>
 <script src="/js/reports.js"></script>
 <script>
-  refreshAll();
-  setAutoInterval();
+  initAuthAndBoot();
 </script>
 </body>
 </html>

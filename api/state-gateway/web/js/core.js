@@ -33,16 +33,85 @@ const S = {
   repRange: '24h',
   repGroupByHost: true,
   repExpandedHosts: new Set(),
-  ovTrendCache: { ts: 0, data: null }
+  ovTrendCache: { ts: 0, data: null },
+  me: { auth_enabled: false, user: { username: 'local-admin', display_name: 'Local Admin', role: 'admin' } }
 };
 
+function canOperate() { const r = S.me?.user?.role || 'admin'; return r === 'admin' || r === 'operator'; }
+function isAdmin() { return (S.me?.user?.role || 'admin') === 'admin'; }
+
 function applyTheme(t) {
+  const valid = ['light','dark','cyber','nord','emerald'];
+  if (!valid.includes(t)) t = 'light';
   document.documentElement.setAttribute('data-theme', t);
-  document.getElementById('theme-btn').textContent = t === 'dark' ? 'Light' : 'Dark';
+  const sel = document.getElementById('theme-select');
+  if (sel) sel.value = t;
   localStorage.setItem('encore-theme', t);
 }
 applyTheme(localStorage.getItem('encore-theme') || 'light');
-function toggleTheme() { applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); }
+
+async function initAuthAndBoot() {
+  try {
+    const res = await fetch('/api/v1/auth/me');
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (res.ok) {
+      S.me = await res.json();
+      const chip = document.getElementById('user-chip');
+      if (chip) {
+        chip.style.display = 'inline-flex';
+        document.getElementById('user-chip-name').textContent = S.me.user.username;
+        document.getElementById('user-chip-role').textContent = (S.me.user.role || 'admin').toUpperCase();
+      }
+      // Apply RBAC menu visibility
+      if (!isAdmin()) {
+        document.getElementById('nav-manage')?.style.setProperty('display', 'none');
+        document.getElementById('nav-system')?.style.setProperty('display', 'none');
+      }
+    }
+  } catch (e) {}
+  refreshAll();
+  setAutoInterval();
+}
+
+function openAccountModal() {
+  const u = S.me.user || {};
+  openModal(`
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+      <encore-icon name="user" size="3" live></encore-icon>
+      <div>
+        <h2 style="margin:0">${esc(u.display_name || u.username)}</h2>
+        <div class="name-sub">@${esc(u.username)} • Role: <b>${esc((u.role||'admin').toUpperCase())}</b></div>
+      </div>
+    </div>
+    ${S.me.auth_enabled ? `
+      <div class="form-row"><label>Current Password</label><input id="pw-cur" type="password"></div>
+      <div class="form-row"><label>New Password (min 4 chars)</label><input id="pw-new" type="password"></div>
+      <div class="modal-foot">
+        <button class="btn danger" onclick="doLogout()">Sign Out</button>
+        <button class="btn" onclick="closeModal()">Close</button>
+        <button class="btn primary" onclick="submitChangePassword()">Change Password</button>
+      </div>
+    ` : `
+      <p class="name-sub" style="margin-bottom:12px">Multi-user login belum diaktifkan. Tambahkan flag <code class="code-chip">-auth-user admin -auth-pass PASSWORD</code> pada service gateway atau buat user pertama di <b>Manage → Users</b>.</p>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeModal()">Close</button>
+        <button class="btn primary" onclick="closeModal();setView('manage','users')">Manage Users ›</button>
+      </div>
+    `}`);
+}
+async function submitChangePassword() {
+  const res = await fetch('/api/v1/auth/password', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ current_password: document.getElementById('pw-cur').value, new_password: document.getElementById('pw-new').value })
+  });
+  const d = await res.json();
+  if (!res.ok) { toast('Error: ' + d.error); return; }
+  closeModal(); toast('Password updated!');
+}
+async function doLogout() {
+  await fetch('/api/v1/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
 function toggleSidebar() {
   const sb = document.getElementById('sidebar');
   sb.classList.toggle('collapsed');
@@ -84,6 +153,7 @@ function copyText(txt) {
   navigator.clipboard?.writeText(txt).then(() => toast('Copied to clipboard')).catch(() => toast(txt));
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function jsEsc(s) { return esc(String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r|\n/g, ' ')); }
 function relTime(ts) {
   if (!ts) return 'never';
   const d = Math.max(0, Math.floor(Date.now()/1000) - ts);
@@ -160,30 +230,17 @@ function resolveConfirm(ok) {
   }
 }
 
-/* Lightweight Inline SVG Art Helpers (themed via CSS variables) */
+/* Crisp Pixelated Mascot Art Helpers (from encore-art-templates) */
 function artSVG(kind) {
-  if (kind === 'radar-ok') {
-    return `<svg width="74" height="74" viewBox="0 0 80 80" fill="none">
-      <circle cx="40" cy="40" r="34" stroke="var(--ok)" stroke-opacity="0.18" stroke-width="2"/>
-      <circle cx="40" cy="40" r="23" stroke="var(--ok)" stroke-opacity="0.32" stroke-width="2" stroke-dasharray="4 4"/>
-      <circle cx="40" cy="40" r="13" fill="var(--ok-bg)" stroke="var(--ok)" stroke-width="2"/>
-      <path d="M34 40.5l4 4 8.5-9" stroke="var(--ok)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>`;
-  }
-  if (kind === 'servers') {
-    return `<svg width="74" height="64" viewBox="0 0 80 68" fill="none">
-      <rect x="12" y="10" width="56" height="18" rx="5" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="1.8"/>
-      <circle cx="22" cy="19" r="3" fill="var(--ok)"/>
-      <rect x="30" y="17" width="28" height="4" rx="2" fill="var(--border)"/>
-      <rect x="12" y="34" width="56" height="18" rx="5" fill="var(--surface-2)" stroke="var(--border)" stroke-width="1.8"/>
-      <circle cx="22" cy="43" r="3" fill="var(--accent)"/>
-      <rect x="30" y="41" width="22" height="4" rx="2" fill="var(--border)"/>
-    </svg>`;
-  }
-  return `<svg width="68" height="62" viewBox="0 0 72 64" fill="none">
-    <rect x="10" y="12" width="52" height="40" rx="8" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="1.8"/>
-    <path d="M22 36l10-10 8 7 12-13" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>`;
+  const map = {
+    'radar-ok': '/assets/mascots/bot-ok.svg',
+    'servers': '/assets/mascots/bot-empty.svg',
+    'search': '/assets/mascots/bot-search.svg',
+    '403': '/assets/mascots/bot-403.svg',
+    '503': '/assets/mascots/bot-503.svg'
+  };
+  const src = map[kind] || '/assets/mascots/bot-empty.svg';
+  return `<img src="${src}" alt="" class="pixel-art" style="width:76px;height:76px;display:block;margin:0 auto 10px">`;
 }
 
 function isUserInteracting() {

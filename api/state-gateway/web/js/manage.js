@@ -1,6 +1,6 @@
 function setManageTab(mt) {
   S.manageTab = mt;
-  ['objects','templates','commands','groups','notifications','secrets'].forEach(t => {
+  ['objects','templates','commands','groups','notifications','secrets','users'].forEach(t => {
     const el = document.getElementById('mtab-' + t);
     if (el) el.classList.toggle('active', t === mt);
   });
@@ -109,6 +109,7 @@ async function loadManage() {
 
   if (S.manageTab === 'secrets') { await renderSecretsTab(el); return; }
   if (S.manageTab === 'notifications') { await renderNotificationsTab(el); return; }
+  if (S.manageTab === 'users') { await renderUsersTab(el); return; }
   if (!S.managed.enabled) {
     el.innerHTML = `<div class="panel"><div class="empty">Config management disabled. Start gateway with <code class="code-chip">-managed-dir /usr/local/nagios/etc/encore.d</code>.</div></div>`;
     return;
@@ -161,6 +162,7 @@ function renderManageObjects(el, c) {
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           <span class="save-scope-pill draft">Draft • Apply &amp; Reload</span>
+          <button class="btn btn-sm" onclick="openLegacyImportModal()">Import .cfg</button>
           <button class="btn btn-sm" onclick="openSvcForm(-1)">+ Add Service</button>
           <button class="btn btn-sm primary" onclick="openHostForm(-1)">+ Add Host</button>
         </div>
@@ -612,6 +614,8 @@ function renderGroupsManageTab(el, c) {
 async function renderNotificationsTab(el) {
   const data = await (await fetch('/api/v1/notifications/config')).json();
   const n = data.config || {};
+  S._notifyCfg = n;
+  const routes = n.routes || [];
   const hist = data.history || [];
   el.innerHTML = `
     <div class="callout-banner" style="background:var(--ok-bg);border-color:var(--ok);color:var(--ok-fg)">
@@ -696,6 +700,25 @@ async function renderNotificationsTab(el) {
           </tbody></table></div>
         </div>
       </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Hostgroup Routing Rules (${routes.length}) <span class="save-scope-pill instant">Instant</span></div>
+        <button class="btn btn-sm primary" onclick="openNotifyRouteModal(-1)">+ Add Route</button>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Route</th><th>Hostgroup</th><th>Email Recipients</th><th>Webhook</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+        ${routes.length ? routes.map((rt, i) => `<tr>
+          <td><b>${esc(rt.name)}</b></td>
+          <td><span class="flag-tag">${esc(rt.hostgroup)}</span></td>
+          <td class="mono">${esc((rt.recipients||[]).join(', ')||'-')}</td>
+          <td class="mono">${rt.webhook_enabled ? esc(rt.webhook_type||'webhook') : '-'}</td>
+          <td>${rt.enabled ? '<span class="badge c-ok">ON</span>' : '<span class="badge c-pend">OFF</span>'}</td>
+          <td class="actions">
+            <button class="btn btn-sm" onclick="openNotifyRouteModal(${i})">Edit</button>
+            <button class="btn btn-sm danger" onclick="deleteNotifyRoute(${i})">Delete</button>
+          </td>
+        </tr>`).join('') : '<tr><td colspan="6" class="empty">No custom hostgroup routes — all alerts use global Email/Webhook above.</td></tr>'}
+      </tbody></table></div>
     </div>`;
 }
 
@@ -722,7 +745,8 @@ async function saveNotifyConfig() {
     webhook_enabled: document.getElementById('nf-wh-en').checked,
     webhook_type: document.getElementById('nf-wh-type').value,
     webhook_url: document.getElementById('nf-wh-url').value.trim(),
-    webhook_chat_id: document.getElementById('nf-wh-chat').value.trim()
+    webhook_chat_id: document.getElementById('nf-wh-chat').value.trim(),
+    routes: (S._notifyCfg && S._notifyCfg.routes) || []
   };
   const res = await fetch('/api/v1/notifications/config', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
   const d = await res.json();
@@ -834,8 +858,21 @@ async function loadSystem() {
     </div></div>`;
   } else if (S.sysTab === 'backups') {
     const backups = (await (await fetch('/api/v1/config/backups')).json()).backups || [];
-    el.innerHTML = `<div class="panel"><div class="table-wrap"><table><thead><tr><th>Backup</th><th>Timestamp</th><th>Size</th><th style="text-align:right">Action</th></tr></thead><tbody>
-      ${backups.length ? backups.map(b => `<tr><td class="mono">${esc(b.name)}</td><td class="mono">${esc(b.timestamp)}</td><td class="mono">${b.size_bytes} B</td><td class="actions"><button class="btn btn-sm" onclick="rollbackBackup('${esc(b.name)}')">Rollback</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">No backups yet</td></tr>'}
+    el.innerHTML = `<div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Configuration Backups (${backups.length})</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <a class="btn btn-sm" href="/api/v1/config/backups/download?name=current" style="text-decoration:none">Download Current</a>
+          <button class="btn btn-sm" onclick="openLegacyImportModal()">Import Nagios .cfg</button>
+          <button class="btn btn-sm primary" onclick="openImportJSONModal()">Import Encore JSON</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Backup</th><th>Timestamp</th><th>Size</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+      ${backups.length ? backups.map(b => `<tr><td class="mono">${esc(b.name)}</td><td class="mono">${esc(b.timestamp)}</td><td class="mono">${b.size_bytes} B</td>
+        <td class="actions">
+          <a class="btn btn-sm" href="/api/v1/config/backups/download?name=${encodeURIComponent(b.name)}" style="text-decoration:none">Download</a>
+          <button class="btn btn-sm" onclick="rollbackBackup('${jsEsc(b.name)}')">Rollback</button>
+        </td></tr>`).join('') : '<tr><td colspan="4" class="empty">No backups yet</td></tr>'}
     </tbody></table></div></div>`;
   } else {
     const audit = (await (await fetch('/api/v1/audit?limit=60')).json()).entries || [];
@@ -1090,4 +1127,193 @@ async function rollbackBackup(name) {
   const res = await fetch('/api/v1/config/rollback', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({backup:name}) });
   toast(res.ok ? 'Rolled back & reloading!' : 'Rollback failed');
   if (res.ok) { await loadSystem(); setTimeout(refreshAll, 1400); }
+}
+
+/* ====== HOSTGROUP NOTIFICATION ROUTING ====== */
+function openNotifyRouteModal(idx) {
+  const routes = (S._notifyCfg && S._notifyCfg.routes) || [];
+  const rt = idx >= 0 ? routes[idx] : { id: '', name: '', hostgroup: '', recipients: [], webhook_enabled: false, webhook_type: 'telegram', webhook_url: '', webhook_chat_id: '', enabled: true };
+  openModal(`<h2>${idx >= 0 ? 'Edit Routing Rule' : 'Add Hostgroup Routing Rule'}</h2>
+    <div class="form-grid">
+      <div class="form-row"><label>Rule Name *</label><input id="rt-name" type="text" value="${esc(rt.name)}" placeholder="DBA Alerts"></div>
+      <div class="form-row"><label>Hostgroup (* for all) *</label><input id="rt-hg" type="text" value="${esc(rt.hostgroup)}" placeholder="db-prod"></div>
+      <div class="form-row full"><label>Email Recipients (comma-separated)</label><input id="rt-rcpt" type="text" value="${esc((rt.recipients||[]).join(', '))}" placeholder="dba@company.com"></div>
+      <div class="form-row"><label>Webhook Type</label>
+        <select id="rt-wtype"><option value="telegram" ${rt.webhook_type==='telegram'?'selected':''}>Telegram</option><option value="slack" ${rt.webhook_type==='slack'?'selected':''}>Slack</option><option value="discord" ${rt.webhook_type==='discord'?'selected':''}>Discord</option><option value="generic" ${rt.webhook_type==='generic'?'selected':''}>Generic</option></select>
+      </div>
+      <div class="form-row"><label>Telegram Chat ID</label><input id="rt-wchat" type="text" value="${esc(rt.webhook_chat_id||'')}"></div>
+      <div class="form-row full"><label>Webhook URL</label><input id="rt-wurl" type="text" value="${esc(rt.webhook_url||'')}"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin:8px 0">
+      <label class="chk-pill"><input type="checkbox" id="rt-wen" ${rt.webhook_enabled?'checked':''}> Enable Webhook</label>
+      <label class="chk-pill"><input type="checkbox" id="rt-en" ${rt.enabled!==false?'checked':''}> Rule Enabled</label>
+    </div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveNotifyRoute(${idx})">Save Route</button></div>`);
+}
+async function saveNotifyRoute(idx) {
+  const routes = [...((S._notifyCfg && S._notifyCfg.routes) || [])];
+  const item = {
+    id: idx >= 0 ? routes[idx].id : ('rt-' + Math.random().toString(36).slice(2, 8)),
+    name: document.getElementById('rt-name').value.trim(),
+    hostgroup: document.getElementById('rt-hg').value.trim(),
+    recipients: document.getElementById('rt-rcpt').value.split(',').map(x => x.trim()).filter(Boolean),
+    webhook_enabled: document.getElementById('rt-wen').checked,
+    webhook_type: document.getElementById('rt-wtype').value,
+    webhook_url: document.getElementById('rt-wurl').value.trim(),
+    webhook_chat_id: document.getElementById('rt-wchat').value.trim(),
+    enabled: document.getElementById('rt-en').checked
+  };
+  if (!item.name || !item.hostgroup) { toast('Rule name & hostgroup required'); return; }
+  if (idx >= 0) routes[idx] = item; else routes.push(item);
+  S._notifyCfg.routes = routes;
+  closeModal();
+  await saveNotifyConfig();
+  renderNotificationsTab(document.getElementById('manage-content'));
+}
+async function deleteNotifyRoute(idx) {
+  const routes = [...((S._notifyCfg && S._notifyCfg.routes) || [])];
+  const ok = await encoreConfirm({ title: `Delete Route "${routes[idx]?.name}"?`, message: 'Routing rule ini akan dihapus segera.', confirmText: 'Delete', danger: true });
+  if (!ok) return;
+  routes.splice(idx, 1);
+  S._notifyCfg.routes = routes;
+  await saveNotifyConfig();
+  renderNotificationsTab(document.getElementById('manage-content'));
+}
+
+/* ====== MANAGE -> USERS (Multi-User RBAC) ====== */
+async function renderUsersTab(el) {
+  const res = await fetch('/api/v1/users');
+  if (res.status === 403) {
+    el.innerHTML = `<div class="panel"><div class="art-empty">${artSVG('403')}<h4>Admin Access Required</h4><p>Hanya akun dengan role <b>ADMIN</b> yang dapat mengelola user &amp; RBAC.</p></div></div>`;
+    return;
+  }
+  const data = await res.json();
+  const users = data.users || [];
+  el.innerHTML = `
+    <div class="callout-banner" style="background:var(--ok-bg);border-color:var(--ok);color:var(--ok-fg)">
+      <div><b>RBAC Roles:</b> <b>ADMIN</b> (full access) • <b>OPERATOR</b> (view + Force Check/ACK/Downtime) • <b>VIEWER</b> (read-only + export reports). Password di-hash PBKDF2-SHA256.</div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Users &amp; Access Control (${users.length}) <span class="save-scope-pill instant">Instant Save</span></div>
+        <button class="btn btn-sm primary" onclick="openUserForm(null)">+ Add User</button>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Username</th><th>Display Name</th><th>Role</th><th>Status</th><th>Last Login</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+        ${users.length ? users.map(u => `<tr>
+          <td><b>${esc(u.username)}</b></td>
+          <td>${esc(u.display_name)}</td>
+          <td><span class="badge ${u.role==='admin'?'c-crit':(u.role==='operator'?'c-warn':'c-ok')}">${esc(u.role.toUpperCase())}</span></td>
+          <td>${u.enabled ? '<span class="badge c-ok">ACTIVE</span>' : '<span class="badge c-pend">DISABLED</span>'}</td>
+          <td class="mono">${u.last_login ? relTime(Math.floor(Date.parse(u.last_login)/1000)) : 'never'}</td>
+          <td class="actions">
+            <button class="btn btn-sm" onclick="openUserForm('${jsEsc(u.username)}','${jsEsc(u.display_name)}','${jsEsc(u.role)}',${u.enabled})">Edit</button>
+            <button class="btn btn-sm danger" onclick="deleteUser('${jsEsc(u.username)}')">Delete</button>
+          </td>
+        </tr>`).join('') : `<tr><td colspan="6"><div class="art-empty">${artSVG('servers')}<h4>No Users Yet (Open Mode)</h4><p>Klik <b>+ Add User</b> untuk membuat akun <b>admin</b> pertama dan langsung mengaktifkan Login Page + RBAC.</p></div></td></tr>`}
+      </tbody></table></div>
+    </div>`;
+}
+function openUserForm(username, displayName, role, enabled) {
+  const isEdit = !!username;
+  openModal(`<h2>${isEdit ? 'Edit User: ' + esc(username) : 'Add User'}</h2>
+    <div class="form-grid">
+      <div class="form-row"><label>Username *</label><input id="u-name" type="text" value="${esc(username||'')}" ${isEdit?'readonly':''} placeholder="operator1"></div>
+      <div class="form-row"><label>Display Name</label><input id="u-disp" type="text" value="${esc(displayName||'')}" placeholder="NOC Operator"></div>
+      <div class="form-row"><label>RBAC Role *</label>
+        <select id="u-role">
+          <option value="viewer" ${role==='viewer'?'selected':''}>Viewer (Read-Only)</option>
+          <option value="operator" ${role==='operator'?'selected':''}>Operator (NOC Actions)</option>
+          <option value="admin" ${(!role||role==='admin')?'selected':''}>Admin (Full Access)</option>
+        </select>
+      </div>
+      <div class="form-row"><label>${isEdit ? 'New Password (blank = keep)' : 'Password (min 4 chars) *'}</label><input id="u-pass" type="password" placeholder="••••••••"></div>
+    </div>
+    <label class="chk-pill"><input type="checkbox" id="u-en" ${enabled!==false?'checked':''}> Account Enabled</label>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveUserForm()">Save User</button></div>`);
+}
+async function saveUserForm() {
+  const res = await fetch('/api/v1/users', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      username: document.getElementById('u-name').value.trim(),
+      display_name: document.getElementById('u-disp').value.trim(),
+      role: document.getElementById('u-role').value,
+      password: document.getElementById('u-pass').value,
+      enabled: document.getElementById('u-en').checked
+    })
+  });
+  const d = await res.json();
+  if (!res.ok) { toast('Error: ' + d.error); return; }
+  closeModal(); toast('User saved'); renderUsersTab(document.getElementById('manage-content'));
+}
+async function deleteUser(username) {
+  const ok = await encoreConfirm({ title: `Delete User "${username}"?`, message: 'Akun ini akan dihapus permanen dan seluruh session aktifnya dicabut.', confirmText: 'Delete User', danger: true });
+  if (!ok) return;
+  const res = await fetch('/api/v1/users?username=' + encodeURIComponent(username), { method: 'DELETE' });
+  const d = await res.json();
+  if (!res.ok) { toast('Error: ' + d.error); return; }
+  toast('User deleted'); renderUsersTab(document.getElementById('manage-content'));
+}
+
+/* ====== LEGACY NAGIOS .CFG IMPORTER & ENCORE JSON IMPORT ====== */
+function openLegacyImportModal() {
+  openModal(`<h2>Import Legacy Nagios Core (.cfg)</h2>
+    <p class="name-sub" style="margin-bottom:10px">Upload 1 atau banyak file <code class="code-chip">.cfg</code> (hosts, services, commands, hostgroups, contacts) dari server Nagios lama atau paste isinya di bawah. Hasil import masuk sebagai <b>Draft</b> agar aman divalidasi dulu.</p>
+    <div class="form-row"><label>Upload File(s) (.cfg)</label><input id="imp-files" type="file" multiple accept=".cfg,.conf,.txt" onchange="readLegacyCfgFiles(this.files)"></div>
+    <div class="form-row"><label>Nagios .cfg Content</label><textarea id="imp-raw" class="raw-editor" style="min-height:170px" placeholder="define host {\n  host_name web-01\n  address 10.0.0.10\n  check_command check-host-alive\n}"></textarea></div>
+    <label class="chk-pill"><input type="checkbox" id="imp-ow"> Overwrite existing objects with same name</label>
+    <pre class="console-out" id="imp-preview" style="margin:10px 0 0"></pre>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="runLegacyImport(true)">Dry-Run Preview</button>
+      <button class="btn primary" onclick="runLegacyImport(false)">Import to Draft</button>
+    </div>`);
+}
+async function readLegacyCfgFiles(files) {
+  if (!files || !files.length) return;
+  let combined = '';
+  for (const f of files) {
+    combined += `\n# === ${f.name} ===\n` + await f.text() + '\n';
+  }
+  document.getElementById('imp-raw').value = combined.trim();
+  toast(`Loaded ${files.length} file(s) — click Dry-Run Preview`);
+}
+async function runLegacyImport(dryRun) {
+  const content = document.getElementById('imp-raw').value;
+  const overwrite = document.getElementById('imp-ow').checked;
+  const pre = document.getElementById('imp-preview');
+  pre.style.display = 'block'; pre.textContent = dryRun ? 'Analyzing .cfg...' : 'Importing to draft...';
+  const res = await fetch('/api/v1/config/import/nagios', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ content, overwrite, dry_run: dryRun })
+  });
+  const d = await res.json();
+  if (!res.ok) { pre.textContent = 'ERROR: ' + d.error; return; }
+  pre.textContent = `${dryRun ? 'PREVIEW' : 'IMPORTED TO DRAFT'}:\n` +
+    `Hosts: +${d.hosts_new} new, ${d.hosts_updated} updated, ${d.hosts_skipped} skipped\n` +
+    `Services: +${d.services_new} new, ${d.services_updated} updated, ${d.services_skipped} skipped\n` +
+    `Commands: +${d.commands_new} | Groups: +${d.groups_new} | Contacts: +${d.contacts_new} | Templates/Skipped: ${d.skipped_blocks}\n\n` +
+    (d.preview_items || []).join('\n');
+  if (!dryRun) {
+    toast(`Imported +${d.hosts_new} hosts, +${d.services_new} services to draft — click Validate & Apply`);
+    await loadManage(); await loadMeta();
+  }
+}
+
+function openImportJSONModal() {
+  openModal(`<h2>Import Encore Config Backup (.json)</h2>
+    <p class="name-sub" style="margin-bottom:10px">Upload file backup <code class="code-chip">.json</code> dari server Encore lain. Config akan dimuat ke <b>Draft</b> sehingga Anda bisa Review Diff &amp; Validate sebelum Apply.</p>
+    <div class="form-row"><label>Select Backup JSON File</label><input id="imp-json-file" type="file" accept=".json"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitImportJSON()">Import to Draft</button></div>`);
+}
+async function submitImportJSON() {
+  const f = document.getElementById('imp-json-file')?.files?.[0];
+  if (!f) { toast('Select a .json file first'); return; }
+  const text = await f.text();
+  const res = await fetch('/api/v1/config/backups/import', { method: 'POST', headers: {'Content-Type':'application/json'}, body: text });
+  const d = await res.json();
+  if (!res.ok) { toast('Error: ' + d.error); return; }
+  closeModal();
+  toast(`Imported ${d.hosts} hosts, ${d.services} services to draft — click Validate & Apply`);
+  await loadMeta(); setView('manage', 'objects');
 }
