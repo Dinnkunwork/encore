@@ -62,14 +62,20 @@ type SessionInfo struct {
 	Expires  time.Time
 }
 
+type basicCacheEntry struct {
+	user    UserRecord
+	expires time.Time
+}
+
 type AuthManager struct {
-	mu       sync.RWMutex
-	enabled  bool
-	filePath string
-	cs       *ConfigStore
-	users    map[string]*UserRecord
-	sessions map[string]*SessionInfo
-	attempts map[string][]time.Time // IP -> failed timestamps
+	mu         sync.RWMutex
+	enabled    bool
+	filePath   string
+	cs         *ConfigStore
+	users      map[string]*UserRecord
+	sessions   map[string]*SessionInfo
+	attempts   map[string][]time.Time // IP -> failed timestamps
+	basicCache map[string]basicCacheEntry
 }
 
 func isValidRole(r string) bool {
@@ -164,10 +170,11 @@ func randomTokenHex(nBytes int) string {
 
 func NewAuthManager(managedDir, seedUser, seedPass string, cs *ConfigStore) *AuthManager {
 	am := &AuthManager{
-		cs:       cs,
-		users:    make(map[string]*UserRecord),
-		sessions: make(map[string]*SessionInfo),
-		attempts: make(map[string][]time.Time),
+		cs:         cs,
+		users:      make(map[string]*UserRecord),
+		sessions:   make(map[string]*SessionInfo),
+		attempts:   make(map[string][]time.Time),
+		basicCache: make(map[string]basicCacheEntry),
 	}
 	if managedDir != "" {
 		am.filePath = filepath.Join(managedDir, "encore-users.json")
@@ -331,16 +338,35 @@ func (am *AuthManager) AuthenticateRequest(r *http.Request) (*UserRecord, bool) 
 		am.mu.Unlock()
 	}
 
-	// 2. Fallback to HTTP Basic Auth (automation / curl compatibility)
+	// 2. Fallback to HTTP Basic Auth (automation / curl / legacy browser cache)
+	// Uses a 5-min SHA-256 verified cache + runs PBKDF2 outside lock to avoid 400ms stalls.
 	if u, p, ok := r.BasicAuth(); ok {
 		am.mu.RLock()
 		rec, exists := am.users[u]
-		if exists && rec.Enabled && verifyPassword(rec.PasswordHash, p) {
-			cp := *rec
+		if !exists || !rec.Enabled {
 			am.mu.RUnlock()
+			return nil, false
+		}
+		cp := *rec
+		am.mu.RUnlock()
+
+		sum := sha256.Sum256([]byte(u + "\x00" + p + "\x00" + cp.PasswordHash))
+		ck := hex.EncodeToString(sum[:])
+
+		am.mu.RLock()
+		ce, hit := am.basicCache[ck]
+		am.mu.RUnlock()
+		if hit && time.Now().Before(ce.expires) {
+			uc := ce.user
+			return &uc, true
+		}
+
+		if verifyPassword(cp.PasswordHash, p) {
+			am.mu.Lock()
+			am.basicCache[ck] = basicCacheEntry{user: cp, expires: time.Now().Add(5 * time.Minute)}
+			am.mu.Unlock()
 			return &cp, true
 		}
-		am.mu.RUnlock()
 	}
 
 	return nil, false
@@ -488,6 +514,7 @@ func (am *AuthManager) UpsertUser(username, displayName, role, password string, 
 					delete(am.sessions, k)
 				}
 			}
+			am.basicCache = make(map[string]basicCacheEntry)
 		}
 	} else {
 		h, err := hashPassword(password)
@@ -531,6 +558,7 @@ func (am *AuthManager) DeleteUser(username, actor string) error {
 			delete(am.sessions, k)
 		}
 	}
+	am.basicCache = make(map[string]basicCacheEntry)
 	if err := am.saveLocked(); err != nil {
 		return err
 	}
@@ -555,6 +583,7 @@ func (am *AuthManager) ChangeOwnPassword(username, oldPass, newPass string) erro
 		return err
 	}
 	u.PasswordHash = h
+	am.basicCache = make(map[string]basicCacheEntry)
 	return am.saveLocked()
 }
 

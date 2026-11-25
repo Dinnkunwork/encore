@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/subtle"
 	"embed"
@@ -845,6 +846,72 @@ func parseQueryOpts(r *http.Request) (QueryOpts, error) {
 	}, nil
 }
 
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		w, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
+		return w
+	},
+}
+
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	gz          *gzip.Writer
+	wroteHeader bool
+	shouldGzip  bool
+}
+
+func (g *gzipResponseWriter) initGzip() {
+	if g.wroteHeader {
+		return
+	}
+	ct := g.Header().Get("Content-Type")
+	if strings.Contains(ct, "json") || strings.Contains(ct, "text/") || strings.Contains(ct, "javascript") || strings.Contains(ct, "svg") {
+		g.shouldGzip = true
+		g.Header().Set("Content-Encoding", "gzip")
+		g.Header().Add("Vary", "Accept-Encoding")
+		g.Header().Del("Content-Length")
+		gw := gzipWriterPool.Get().(*gzip.Writer)
+		gw.Reset(g.ResponseWriter)
+		g.gz = gw
+	}
+}
+
+func (g *gzipResponseWriter) WriteHeader(code int) {
+	g.initGzip()
+	g.wroteHeader = true
+	g.ResponseWriter.WriteHeader(code)
+}
+
+func (g *gzipResponseWriter) Write(b []byte) (int, error) {
+	if !g.wroteHeader {
+		if g.Header().Get("Content-Type") == "" {
+			g.Header().Set("Content-Type", http.DetectContentType(b))
+		}
+		g.WriteHeader(http.StatusOK)
+	}
+	if g.shouldGzip && g.gz != nil {
+		return g.gz.Write(b)
+	}
+	return g.ResponseWriter.Write(b)
+}
+
+func gzipMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		gw := &gzipResponseWriter{ResponseWriter: w}
+		defer func() {
+			if gw.gz != nil {
+				_ = gw.gz.Close()
+				gzipWriterPool.Put(gw.gz)
+			}
+		}()
+		next.ServeHTTP(gw, r)
+	})
+}
+
 func basicAuthMiddleware(user, pass string, next http.Handler) http.Handler {
 	if user == "" || pass == "" {
 		return next
@@ -1279,7 +1346,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *listenAddr,
-		Handler:           am.Middleware(mux),
+		Handler:           gzipMiddleware(am.Middleware(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

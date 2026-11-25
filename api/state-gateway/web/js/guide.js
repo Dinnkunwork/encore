@@ -246,23 +246,30 @@ Service Status   check_ncpa!services!-q service=nginx,status=running</pre>
         </ol>
       </div>`;
   } else if (S.guideTab === 'catalog') {
-    el.innerHTML = '<div class="panel"><div class="empty">Loading catalog...</div></div>';
+    const drawCatalog = pData => {
+      el.innerHTML = `
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">Active Commands (${S.catalogCmds.length})</div>
+            <input type="search" id="cat-search" value="${esc(q)}" placeholder="Filter command..." oninput="filterCatalog()">
+          </div>
+          <div class="table-wrap"><table><thead><tr><th>Command</th><th>Source</th><th>Example</th><th>Command Line</th><th style="text-align:right">Copy</th></tr></thead><tbody id="cat-cmd-body"></tbody></table></div>
+        </div>
+        <div class="panel" style="padding:14px 16px">
+          <div class="name-primary" style="margin-bottom:6px">Plugins (${(pData.plugins||[]).length}) — <span class="mono">${esc(pData.user1_dir||'')}</span></div>
+          <div class="perf-chips">${(pData.plugins||[]).slice(0,80).map(p => `<span class="perf-chip" title="${esc(p.path)}" style="${p.is_custom?'background:var(--ok-bg);color:var(--ok-fg)':''}">${esc(p.name)}</span>`).join('')}</div>
+        </div>`;
+      filterCatalog();
+    };
+    if (S.catalogCmds.length && S._catalogPlugins) {
+      drawCatalog(S._catalogPlugins);
+      return;
+    }
+    el.innerHTML = '<div class="panel"><div class="empty"><encore-icon name="loader" size="2" live></encore-icon> Loading catalog...</div></div>';
     const [cRes, pRes] = await Promise.all([fetch('/api/v1/catalog/commands'), fetch('/api/v1/catalog/plugins')]);
     S.catalogCmds = (await cRes.json()).commands || [];
-    const pData = await pRes.json();
-    el.innerHTML = `
-      <div class="panel">
-        <div class="panel-head">
-          <div class="panel-title">Active Commands (${S.catalogCmds.length})</div>
-          <input type="search" id="cat-search" value="${esc(q)}" placeholder="Filter command..." oninput="filterCatalog()">
-        </div>
-        <div class="table-wrap"><table><thead><tr><th>Command</th><th>Source</th><th>Example</th><th>Command Line</th><th style="text-align:right">Copy</th></tr></thead><tbody id="cat-cmd-body"></tbody></table></div>
-      </div>
-      <div class="panel" style="padding:14px 16px">
-        <div class="name-primary" style="margin-bottom:6px">Plugins (${(pData.plugins||[]).length}) — <span class="mono">${esc(pData.user1_dir)}</span></div>
-        <div class="perf-chips">${(pData.plugins||[]).slice(0,80).map(p => `<span class="perf-chip" title="${esc(p.path)}" style="${p.is_custom?'background:var(--ok-bg);color:var(--ok-fg)':''}">${esc(p.name)}</span>`).join('')}</div>
-      </div>`;
-    filterCatalog();
+    S._catalogPlugins = await pRes.json();
+    drawCatalog(S._catalogPlugins);
   } else {
     const p = await (await fetch('/api/v1/catalog/paths')).json();
     el.innerHTML = `

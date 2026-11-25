@@ -12,7 +12,19 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+)
+
+type logCacheEntry struct {
+	sig     string
+	expires time.Time
+	events  []LogEvent
+}
+
+var (
+	logCacheMu sync.RWMutex
+	logCache   = make(map[string]logCacheEntry)
 )
 
 type LogEvent struct {
@@ -180,6 +192,23 @@ func parseNagiosLogLine(line string) (LogEvent, bool) {
 
 func readLogEvents(nagiosLog, archivesDir string, from, to int64) []LogEvent {
 	files := collectLogFiles(nagiosLog, archivesDir, from, to)
+	// Build lightweight cache signature from active log mtime/size + archive file count
+	var sigB strings.Builder
+	fmt.Fprintf(&sigB, "%d|%d|%d", from/60, to/60, len(files))
+	if nagiosLog != "" {
+		if st, err := os.Stat(nagiosLog); err == nil {
+			fmt.Fprintf(&sigB, "|%d|%d", st.ModTime().UnixNano(), st.Size())
+		}
+	}
+	cacheKey := nagiosLog + "|" + archivesDir + "|" + sigB.String()
+
+	logCacheMu.RLock()
+	if ce, ok := logCache[cacheKey]; ok && time.Now().Before(ce.expires) {
+		logCacheMu.RUnlock()
+		return ce.events
+	}
+	logCacheMu.RUnlock()
+
 	var events []LogEvent
 	for _, p := range files {
 		f, err := os.Open(p)
@@ -201,6 +230,13 @@ func readLogEvents(nagiosLog, archivesDir string, from, to int64) []LogEvent {
 		_ = f.Close()
 	}
 	sort.Slice(events, func(i, j int) bool { return events[i].Timestamp < events[j].Timestamp })
+
+	logCacheMu.Lock()
+	if len(logCache) > 16 {
+		logCache = make(map[string]logCacheEntry)
+	}
+	logCache[cacheKey] = logCacheEntry{sig: cacheKey, expires: time.Now().Add(30 * time.Second), events: events}
+	logCacheMu.Unlock()
 	return events
 }
 

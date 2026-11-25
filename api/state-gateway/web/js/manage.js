@@ -4,7 +4,7 @@ function setManageTab(mt) {
     const el = document.getElementById('mtab-' + t);
     if (el) el.classList.toggle('active', t === mt);
   });
-  loadManage();
+  loadManage(false);
 }
 
 function jumpToManageHost(hostName) {
@@ -97,28 +97,42 @@ async function discardPendingChanges() {
   await loadMeta();
 }
 
-async function loadManage() {
-  const [cfgRes, lhRes] = await Promise.all([
-    fetch('/api/v1/config'),
-    fetch('/api/v1/config/localhost').catch(() => null)
-  ]);
-  S.managed = await cfgRes.json();
-  if (lhRes && lhRes.ok) S.localhostStatus = await lhRes.json();
+async function loadManage(forceRefresh = true) {
   const el = document.getElementById('manage-content');
-  const c = S.managed.config;
-
   if (S.manageTab === 'secrets') { await renderSecretsTab(el); return; }
   if (S.manageTab === 'notifications') { await renderNotificationsTab(el); return; }
   if (S.manageTab === 'users') { await renderUsersTab(el); return; }
-  if (!S.managed.enabled) {
-    el.innerHTML = `<div class="panel"><div class="empty">Config management disabled. Start gateway with <code class="code-chip">-managed-dir /usr/local/nagios/etc/encore.d</code>.</div></div>`;
+
+  // Instant Stale-While-Revalidate render if config is already cached in memory
+  const renderCurrent = async () => {
+    const c = S.managed.config;
+    if (!S.managed.enabled) {
+      el.innerHTML = `<div class="panel"><div class="empty">Config management disabled. Start gateway with <code class="code-chip">-managed-dir /usr/local/nagios/etc/encore.d</code>.</div></div>`;
+      return;
+    }
+    if (S.manageTab === 'objects') renderManageObjects(el, c);
+    else if (S.manageTab === 'templates') renderTemplatesTab(el, c);
+    else if (S.manageTab === 'commands') await renderCommandsTab(el, c);
+    else if (S.manageTab === 'groups') renderGroupsManageTab(el, c);
+  };
+
+  const hasCache = !forceRefresh && S.managed && S.managed.enabled && S._managedLoaded;
+  if (hasCache && S.manageTab !== 'commands') {
+    await renderCurrent();
+    // Revalidate silently in background
+    fetch('/api/v1/config').then(r => r.json()).then(d => { S.managed = d; }).catch(() => {});
     return;
   }
 
-  if (S.manageTab === 'objects') renderManageObjects(el, c);
-  else if (S.manageTab === 'templates') renderTemplatesTab(el, c);
-  else if (S.manageTab === 'commands') await renderCommandsTab(el, c);
-  else if (S.manageTab === 'groups') renderGroupsManageTab(el, c);
+  const reqs = [fetch('/api/v1/config')];
+  if (!S.localhostStatus || !S.localhostStatus.adopted) {
+    reqs.push(fetch('/api/v1/config/localhost').catch(() => null));
+  }
+  const [cfgRes, lhRes] = await Promise.all(reqs);
+  S.managed = await cfgRes.json();
+  S._managedLoaded = true;
+  if (lhRes && lhRes.ok) S.localhostStatus = await lhRes.json();
+  await renderCurrent();
 }
 
 /* ====== OBJECTS TAB: Search + Accordion + Diff Highlight + Bulk Host & Service Delete ====== */
