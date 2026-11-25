@@ -676,6 +676,181 @@ func (s *StateStore) QueryServices(opts QueryOpts) ([]ServiceState, int) {
 	return matched[opts.Offset:end], total
 }
 
+type HostInventoryGroup struct {
+	Host       HostState      `json:"host"`
+	Hostgroups []string       `json:"hostgroups,omitempty"`
+	SvcOK      int            `json:"svc_ok"`
+	SvcWarn    int            `json:"svc_warn"`
+	SvcCrit    int            `json:"svc_crit"`
+	SvcUnk     int            `json:"svc_unk"`
+	SvcPend    int            `json:"svc_pend"`
+	SvcTotal   int            `json:"svc_total"`
+	HasProblem bool           `json:"has_problem"`
+	Services   []ServiceState `json:"services"`
+}
+
+func (s *StateStore) QueryInventoryByHost(opts QueryOpts, healthFilter string) ([]HostInventoryGroup, int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	searchLower := strings.ToLower(opts.Search)
+	svcSeverity := func(st int) int {
+		switch st {
+		case 2:
+			return 4 // CRITICAL
+		case 1:
+			return 3 // WARNING
+		case 3:
+			return 2 // UNKNOWN
+		default:
+			return 1 // OK
+		}
+	}
+
+	// Group services by host_name
+	svcsByHost := make(map[string][]ServiceState, len(s.hosts))
+	for _, sv := range s.services {
+		if opts.Servicegroup != "" && !s.svcToGroups[svcKey(sv.HostName, sv.Description)][opts.Servicegroup] {
+			continue
+		}
+		svcsByHost[sv.HostName] = append(svcsByHost[sv.HostName], *sv)
+	}
+
+	matched := make([]HostInventoryGroup, 0, len(s.hosts))
+	for _, h := range s.hosts {
+		if opts.Hostgroup != "" && !s.hostToGroups[h.Name][opts.Hostgroup] {
+			continue
+		}
+		allSvcs := svcsByHost[h.Name]
+		if opts.Servicegroup != "" && len(allSvcs) == 0 {
+			continue
+		}
+
+		// Collect hostgroups sorted
+		var hgs []string
+		for g := range s.hostToGroups[h.Name] {
+			hgs = append(hgs, g)
+		}
+		sort.Strings(hgs)
+
+		grp := HostInventoryGroup{
+			Host:       *h,
+			Hostgroups: hgs,
+			SvcTotal:   len(allSvcs),
+		}
+		for _, sv := range allSvcs {
+			if sv.HasBeenChecked == 0 {
+				grp.SvcPend++
+				continue
+			}
+			switch sv.CurrentState {
+			case 0:
+				grp.SvcOK++
+			case 1:
+				grp.SvcWarn++
+			case 2:
+				grp.SvcCrit++
+			default:
+				grp.SvcUnk++
+			}
+		}
+		hostBad := h.HasBeenChecked == 1 && h.CurrentState > 0
+		grp.HasProblem = hostBad || grp.SvcWarn > 0 || grp.SvcCrit > 0 || grp.SvcUnk > 0
+
+		// Health filter (problems / healthy)
+		if healthFilter == "problems" && !grp.HasProblem {
+			continue
+		}
+		if healthFilter == "healthy" && grp.HasProblem {
+			continue
+		}
+
+		// Filter services inside host based on search / state / unhandled
+		hostSearchMatch := searchLower == "" ||
+			strings.Contains(strings.ToLower(h.Name), searchLower) ||
+			strings.Contains(strings.ToLower(h.Address), searchLower) ||
+			strings.Contains(strings.ToLower(h.PluginOutput), searchLower)
+		hostUnhandled := hostBad && h.Acknowledged == 0 && h.DowntimeDepth == 0
+
+		filteredSvcs := make([]ServiceState, 0, len(allSvcs))
+		for _, sv := range allSvcs {
+			if opts.State != nil && sv.CurrentState != *opts.State {
+				continue
+			}
+			if opts.Unhandled && !(sv.HasBeenChecked == 1 && sv.CurrentState > 0 && sv.Acknowledged == 0 && sv.DowntimeDepth == 0) {
+				continue
+			}
+			if searchLower != "" && !hostSearchMatch {
+				if !strings.Contains(strings.ToLower(sv.Description), searchLower) &&
+					!strings.Contains(strings.ToLower(sv.PluginOutput), searchLower) {
+					continue
+				}
+			}
+			filteredSvcs = append(filteredSvcs, sv)
+		}
+
+		if searchLower != "" && !hostSearchMatch && len(filteredSvcs) == 0 {
+			continue
+		}
+		if opts.Unhandled && !hostUnhandled && len(filteredSvcs) == 0 {
+			continue
+		}
+		if opts.State != nil && len(filteredSvcs) == 0 {
+			// Still keep host if filtering for CRITICAL(2) and host itself is DOWN, or OK(0) and host is UP with 0 services
+			if !(*opts.State == 2 && h.CurrentState == 1) && !(*opts.State == 0 && h.CurrentState == 0 && len(allSvcs) == 0) {
+				continue
+			}
+		}
+
+		sort.Slice(filteredSvcs, func(i, j int) bool {
+			si, sj := svcSeverity(filteredSvcs[i].CurrentState), svcSeverity(filteredSvcs[j].CurrentState)
+			if si != sj {
+				return si > sj
+			}
+			return filteredSvcs[i].Description < filteredSvcs[j].Description
+		})
+		grp.Services = filteredSvcs
+		matched = append(matched, grp)
+	}
+
+	sort.Slice(matched, func(i, j int) bool {
+		switch opts.SortBy {
+		case "name":
+			return matched[i].Host.Name < matched[j].Host.Name
+		case "services":
+			if matched[i].SvcTotal != matched[j].SvcTotal {
+				return matched[i].SvcTotal > matched[j].SvcTotal
+			}
+		default: // severity / problems first
+			if matched[i].HasProblem != matched[j].HasProblem {
+				return matched[i].HasProblem
+			}
+			iHostDown := matched[i].Host.HasBeenChecked == 1 && matched[i].Host.CurrentState > 0
+			jHostDown := matched[j].Host.HasBeenChecked == 1 && matched[j].Host.CurrentState > 0
+			if iHostDown != jHostDown {
+				return iHostDown
+			}
+			if matched[i].SvcCrit != matched[j].SvcCrit {
+				return matched[i].SvcCrit > matched[j].SvcCrit
+			}
+			if matched[i].SvcWarn != matched[j].SvcWarn {
+				return matched[i].SvcWarn > matched[j].SvcWarn
+			}
+		}
+		return matched[i].Host.Name < matched[j].Host.Name
+	})
+
+	total := len(matched)
+	if opts.Offset >= total {
+		return []HostInventoryGroup{}, total
+	}
+	end := total
+	if opts.Limit > 0 && opts.Offset+opts.Limit < end {
+		end = opts.Offset + opts.Limit
+	}
+	return matched[opts.Offset:end], total
+}
+
 func queryQH(sockPath, query string, timeout time.Duration) ([]byte, error) {
 	conn, err := net.DialTimeout("unix", sockPath, timeout)
 	if err != nil {
@@ -1232,6 +1407,33 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 			"offset":   opts.Offset,
 			"count":    len(items),
 			"services": items,
+		})
+	})
+
+	mux.HandleFunc("/api/v1/inventory/by-host", func(w http.ResponseWriter, r *http.Request) {
+		healthFilter := ""
+		q := r.URL.Query()
+		stRaw := q.Get("state")
+		if stRaw == "problems" || stRaw == "healthy" {
+			healthFilter = stRaw
+			// Clone query without non-numeric state so parseQueryOpts succeeds cleanly
+			qCopy := r.URL.Query()
+			qCopy.Del("state")
+			rClone := r.Clone(r.Context())
+			rClone.URL.RawQuery = qCopy.Encode()
+			r = rClone
+		}
+		opts, err := parseQueryOpts(r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		groups, total := store.QueryInventoryByHost(opts, healthFilter)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"total":  total,
+			"offset": opts.Offset,
+			"count":  len(groups),
+			"hosts":  groups,
 		})
 	})
 

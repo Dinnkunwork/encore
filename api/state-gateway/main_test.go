@@ -718,3 +718,76 @@ func TestSLAAccuracyWebhookAndSecurityHardening(t *testing.T) {
 		t.Fatalf("expected clientIP to trust XFF from loopback proxy, got %q", got)
 	}
 }
+
+func TestInventoryByHostAPI(t *testing.T) {
+	store := NewStateStore()
+	store.ReplaceSnapshot(
+		ProgramInfo{PID: 100},
+		[]HostState{
+			{Name: "app-01", Address: "10.0.1.1", CurrentState: 0, HasBeenChecked: 1},
+			{Name: "db-01", Address: "10.0.1.2", CurrentState: 0, HasBeenChecked: 1},
+		},
+		[]ServiceState{
+			{HostName: "app-01", Description: "CPU", CurrentState: 0, HasBeenChecked: 1},
+			{HostName: "app-01", Description: "HTTP", CurrentState: 0, HasBeenChecked: 1},
+			{HostName: "db-01", Description: "Disk", CurrentState: 2, HasBeenChecked: 1, PluginOutput: "98% full"},
+			{HostName: "db-01", Description: "CPU", CurrentState: 0, HasBeenChecked: 1},
+		},
+	)
+	store.ReplaceGroups(
+		[]HostgroupInfo{{GroupName: "databases", Members: []string{"db-01"}}},
+		nil,
+	)
+	cs, _ := NewConfigStore(t.TempDir(), "", "", "")
+	handler := newHTTPHandler(store, "", "", "", "", "", "", "", "", cs)
+
+	// Default sort puts host with problems (db-01) first, with all its services grouped & CRIT first
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/inventory/by-host", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Total int                  `json:"total"`
+		Hosts []HostInventoryGroup `json:"hosts"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Total != 2 || len(resp.Hosts) != 2 {
+		t.Fatalf("expected 2 host groups, got %+v", resp)
+	}
+	if resp.Hosts[0].Host.Name != "db-01" || !resp.Hosts[0].HasProblem || resp.Hosts[0].SvcCrit != 1 || len(resp.Hosts[0].Services) != 2 {
+		t.Fatalf("expected db-01 first with 1 CRIT and 2 services, got %+v", resp.Hosts[0])
+	}
+	if resp.Hosts[0].Services[0].Description != "Disk" {
+		t.Fatalf("expected CRIT service Disk first inside db-01, got %s", resp.Hosts[0].Services[0].Description)
+	}
+
+	// Filter state=problems returns only db-01
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/inventory/by-host?state=problems", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	resp = struct {
+		Total int                  `json:"total"`
+		Hosts []HostInventoryGroup `json:"hosts"`
+	}{}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Total != 1 || resp.Hosts[0].Host.Name != "db-01" {
+		t.Fatalf("expected only db-01 for state=problems, got %+v", resp)
+	}
+
+	// Search by service name ("Disk") returns db-01 with only matching service
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/inventory/by-host?search=Disk", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	resp = struct {
+		Total int                  `json:"total"`
+		Hosts []HostInventoryGroup `json:"hosts"`
+	}{}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.Total != 1 || len(resp.Hosts[0].Services) != 1 || resp.Hosts[0].Services[0].Description != "Disk" {
+		t.Fatalf("expected search=Disk to return db-01 with Disk service, got %+v", resp)
+	}
+}

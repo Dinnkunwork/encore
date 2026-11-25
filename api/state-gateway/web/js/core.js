@@ -1,6 +1,6 @@
 const S = {
   view: 'overview',
-  invTab: 'services',
+  invTab: 'byhost',
   probTab: 'active',
   manageTab: 'objects',
   sysTab: 'controls',
@@ -12,6 +12,9 @@ const S = {
   autoMs: 3000,
   timer: null,
   groupByHost: false,
+  invExpandedHosts: new Set(),
+  invExpandInit: false,
+  invLastGroups: [],
   summary: null,
   hostgroups: [],
   servicegroups: [],
@@ -498,8 +501,9 @@ function renderQuickJump() {
   const q = (document.getElementById('qj-input')?.value || '').trim().toLowerCase();
   const staticItems = [
     { label: 'Overview — Fleet Map & Charts', tag: 'Page', run: () => setView('overview') },
-    { label: 'Inventory — Services', tag: 'Page', run: () => setView('inventory','services') },
-    { label: 'Inventory — Hosts', tag: 'Page', run: () => setView('inventory','hosts') },
+    { label: 'Inventory — By Host (Host & Services)', tag: 'Page', run: () => setView('inventory','byhost') },
+    { label: 'Inventory — All Services', tag: 'Page', run: () => setView('inventory','services') },
+    { label: 'Inventory — Hosts Only', tag: 'Page', run: () => setView('inventory','hosts') },
     { label: 'Active Problems', tag: 'Page', run: () => setView('problems','active') },
     { label: 'Historical Reports & SLA Charts', tag: 'Page', run: () => setView('reports','sla') },
     { label: 'Manage — Hosts & Services', tag: 'Config', run: () => setView('manage','objects') },
@@ -518,7 +522,8 @@ function renderQuickJump() {
     tag: 'Host',
     run: () => {
       document.getElementById('global-search').value = h.name;
-      setView('inventory', 'services');
+      S.invExpandedHosts.add(h.name);
+      setView('inventory', 'byhost');
     }
   }));
   const all = [...staticItems, ...hostItems].filter(it => !q || it.label.toLowerCase().includes(q) || it.tag.toLowerCase().includes(q)).slice(0, 14);

@@ -139,7 +139,8 @@ function renderOverviewFleetMap(hosts) {
 function focusHostFromMap(hostName) {
   document.getElementById('global-search').value = hostName;
   S.invFilter.state = '';
-  setView('inventory', 'services');
+  S.invExpandedHosts.add(hostName);
+  setView('inventory', 'byhost');
 }
 
 async function renderOverviewMiniCharts(sum) {
@@ -284,6 +285,7 @@ function renderMonitorSubtabs() {
   const el = document.getElementById('mon-subtabs');
   if (S.view === 'inventory') {
     el.innerHTML = `
+      <button class="subtab ${S.invTab==='byhost'?'active':''}" onclick="setInvTab('byhost')">By Host</button>
       <button class="subtab ${S.invTab==='services'?'active':''}" onclick="setInvTab('services')">Services</button>
       <button class="subtab ${S.invTab==='hosts'?'active':''}" onclick="setInvTab('hosts')">Hosts</button>
       <button class="subtab ${S.invTab==='groups'?'active':''}" onclick="setInvTab('groups')">Groups</button>`;
@@ -301,10 +303,10 @@ function jumpToGroup(type, name) {
   document.getElementById('hg-select').value = type === 'hg' ? name : '';
   document.getElementById('sg-select').value = type === 'sg' ? name : '';
   S.invFilter.state = '';
-  setView('inventory', 'services');
+  setView('inventory', 'byhost');
 }
 function onGlobalSearch() {
-  if (S.view !== 'inventory' && S.view !== 'problems') setView('inventory', 'services');
+  if (S.view !== 'inventory' && S.view !== 'problems') setView('inventory', 'byhost');
   else { S.offset = 0; loadMonitorView(); }
 }
 function toggleGroupByHost() {
@@ -326,7 +328,9 @@ function populateStateSelect(mode, desiredVal) {
   const sel = document.getElementById('state-select');
   if (!sel) return;
   const cur = desiredVal !== undefined ? desiredVal : sel.value;
-  if (mode === 'hosts') {
+  if (mode === 'byhost') {
+    sel.innerHTML = '<option value="">All Hosts</option><option value="problems">Has Problems</option><option value="healthy">Healthy Only</option><option value="2">CRIT / DOWN</option><option value="1">WARNING</option><option value="0">OK</option>';
+  } else if (mode === 'hosts') {
     sel.innerHTML = '<option value="">All States</option><option value="0">UP</option><option value="1">DOWN</option><option value="2">UNREACH</option>';
   } else if (mode === 'problems') {
     sel.innerHTML = '<option value="">All Problems</option><option value="2">CRITICAL</option><option value="1">WARNING</option><option value="3">UNKNOWN</option>';
@@ -420,6 +424,140 @@ function submitBulkDowntime() {
   sendBatchCmds(cmds, 'Bulk downtime');
 }
 
+function toggleInvHost(hostName) {
+  if (S.invExpandedHosts.has(hostName)) S.invExpandedHosts.delete(hostName);
+  else S.invExpandedHosts.add(hostName);
+  S.invExpandInit = true;
+  renderInvByHostDOM();
+}
+function expandAllInvHosts(open) {
+  S.invExpandInit = true;
+  S.invExpandedHosts.clear();
+  if (open) S.invLastGroups.forEach(g => S.invExpandedHosts.add(g.host.name));
+  renderInvByHostDOM();
+}
+function toggleInvHostSelectAll(gIdx, checked) {
+  const g = S.invLastGroups[gIdx];
+  if (!g) return;
+  (g.services || []).forEach(s => {
+    const k = monItemKey('services', s);
+    if (checked) S.selectedMon.add(k);
+    else S.selectedMon.delete(k);
+  });
+  renderBulkBar();
+  renderInvByHostDOM();
+}
+function openHostDrawerDirect(gIdx) {
+  const g = S.invLastGroups[gIdx];
+  if (!g) return;
+  S.lastItems = [g.host];
+  openHostDrawer(0);
+}
+function openSvcDrawerDirect(gIdx, sIdx) {
+  const g = S.invLastGroups[gIdx];
+  if (!g || !g.services || !g.services[sIdx]) return;
+  S.lastItems = g.services;
+  openSvcDrawer(sIdx);
+}
+
+function renderInvByHostDOM() {
+  const groups = S.invLastGroups || [];
+  const limit = Number(document.getElementById('limit-select')?.value || 50);
+  const q = (document.getElementById('global-search')?.value || '').trim();
+  const start = S.total ? S.offset + 1 : 0;
+  const end = Math.min(S.offset + limit, S.total);
+
+  renderBulkBar();
+  if (!groups.length) {
+    document.getElementById('mon-body').innerHTML = `
+      <div class="panel"><div class="art-empty">${artSVG('servers')}<h4>No Matching Hosts</h4><p>Coba ubah filter atau kata kunci pencarian.</p></div></div>`;
+    return;
+  }
+
+  const cards = groups.map((g, gIdx) => {
+    const h = g.host;
+    const svcs = g.services || [];
+    const t = Math.max(1, g.svc_total || svcs.length);
+    const open = !!q || groups.length <= 2 || S.invExpandedHosts.has(h.name);
+    const allSelected = svcs.length > 0 && svcs.every(s => S.selectedMon.has(monItemKey('services', s)));
+    const hgsHTML = (g.hostgroups || []).slice(0, 3).map(hg => `<span class="flag-tag">${esc(hg)}</span>`).join('');
+    const probPill = g.svc_crit > 0
+      ? `<span class="badge c-crit">${g.svc_crit} CRIT</span>`
+      : (g.svc_warn > 0 ? `<span class="badge c-warn">${g.svc_warn} WARN</span>` : (g.svc_unk > 0 ? `<span class="badge c-unk">${g.svc_unk} UNK</span>` : `<span class="badge c-ok">${g.svc_ok}/${g.svc_total} OK</span>`));
+
+    const svcRows = svcs.length ? svcs.map((s, sIdx) => {
+      const k = monItemKey('services', s);
+      return `<tr class="clickable" onclick="openSvcDrawerDirect(${gIdx},${sIdx})">
+        <td style="width:32px" onclick="event.stopPropagation()"><input type="checkbox" class="mon-row-chk" ${S.selectedMon.has(k)?'checked':''} onchange="toggleMonSelect('${jsEsc(k)}',this.checked)"></td>
+        <td>${svcBadge(s)}</td>
+        <td><div class="name-primary">${esc(s.description)}${flagsHTML(s)}</div></td>
+        <td class="mono">${durStr(s.last_state_change)}</td>
+        <td class="mono">${relTime(s.last_check)}</td>
+        <td class="output-cell" title="${esc(s.plugin_output)}">${esc(s.plugin_output || '-')}</td>
+        <td class="actions" onclick="event.stopPropagation()">
+          <button class="icon-btn" title="Force check" onclick="sendCmd('SCHEDULE_FORCED_SVC_CHECK;${jsEsc(s.host_name)};${jsEsc(s.description)};'+Math.floor(Date.now()/1000),'Force check')">↻</button>
+          ${s.current_state > 0 && !s.acknowledged ? `<button class="icon-btn" title="Acknowledge" onclick="openAckModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">✓</button>` : ''}
+          <button class="icon-btn" title="Downtime" onclick="openDowntimeModal('service','${jsEsc(s.host_name)}','${jsEsc(s.description)}')">⏱</button>
+        </td>
+      </tr>`;
+    }).join('') : `<tr><td colspan="7" class="empty" style="padding:14px">No matching services on this host</td></tr>`;
+
+    return `<div class="host-acc ${open?'open':''}">
+      <div class="host-acc-head" onclick="toggleInvHost('${jsEsc(h.name)}')">
+        <div class="host-acc-left">
+          <span class="host-acc-chev">▶</span>
+          <input type="checkbox" ${allSelected?'checked':''} title="Select all services on ${esc(h.name)}" onclick="event.stopPropagation()" onchange="toggleInvHostSelectAll(${gIdx},this.checked)">
+          ${hostBadge(h)}
+          <div>
+            <span class="name-primary">${esc(h.name)}${flagsHTML(h)}</span>
+            <span class="mono" style="margin-left:6px">${esc(h.address)}</span>
+          </div>
+          ${hgsHTML}
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap" onclick="event.stopPropagation()">
+          <div style="width:96px" title="${g.svc_ok} OK, ${g.svc_warn} WARN, ${g.svc_crit} CRIT, ${g.svc_unk} UNK">
+            <div class="bar">
+              <div class="bar-ok" style="width:${(g.svc_ok/t)*100}%"></div>
+              <div class="bar-warn" style="width:${(g.svc_warn/t)*100}%"></div>
+              <div class="bar-crit" style="width:${(g.svc_crit/t)*100}%"></div>
+              <div class="bar-unk" style="width:${(g.svc_unk/t)*100}%"></div>
+            </div>
+          </div>
+          <span class="name-sub">${svcs.length} svc</span>
+          ${probPill}
+          <div class="actions">
+            <button class="icon-btn" title="Force check host" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${jsEsc(h.name)};'+Math.floor(Date.now()/1000),'Force check host')">↻</button>
+            <button class="icon-btn" title="Host downtime" onclick="openDowntimeModal('host','${jsEsc(h.name)}','')">⏱</button>
+            <button class="icon-btn" title="Host details" onclick="openHostDrawerDirect(${gIdx})">ⓘ</button>
+          </div>
+        </div>
+      </div>
+      <div class="host-acc-body">
+        <div class="table-wrap"><table><thead><tr><th style="width:32px"></th><th>Status</th><th>Service</th><th>Duration</th><th>Last Check</th><th>Output</th><th style="text-align:right">Actions</th></tr></thead><tbody>${svcRows}</tbody></table></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('mon-body').innerHTML = `
+    <div class="panel">
+      <div class="toolbar-row">
+        <div class="name-sub">Menampilkan <b>${start}–${end}</b> dari <b>${S.total.toLocaleString()}</b> host • Klik nama host untuk melihat seluruh service</div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm" onclick="expandAllInvHosts(true)">Expand All</button>
+          <button class="btn btn-sm" onclick="expandAllInvHosts(false)">Collapse All</button>
+        </div>
+      </div>
+      ${cards}
+      <div class="pager">
+        <span>Showing ${start}–${end} of ${S.total.toLocaleString()} hosts</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm" ${S.offset===0?'disabled':''} onclick="changePage(-1)">Prev</button>
+          <button class="btn btn-sm" ${end>=S.total?'disabled':''} onclick="changePage(1)">Next</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 async function loadMonitorView() {
   const isGroups = S.view === 'inventory' && S.invTab === 'groups';
   const isDT = S.view === 'problems' && S.probTab === 'downtimes';
@@ -431,7 +569,7 @@ async function loadMonitorView() {
 
   const mode = S.view === 'problems' ? 'problems' : S.invTab;
   document.getElementById('sg-select').style.display = mode === 'hosts' ? 'none' : '';
-  document.getElementById('group-view-btn').style.display = mode === 'hosts' ? 'none' : '';
+  document.getElementById('group-view-btn').style.display = (mode === 'hosts' || mode === 'byhost') ? 'none' : '';
   const f = S.view === 'problems' ? S.probFilter : S.invFilter;
   populateStateSelect(mode, f.state);
 
@@ -450,6 +588,24 @@ async function loadMonitorView() {
   if (hg) params.set('hostgroup', hg);
   if (sg && mode !== 'hosts') params.set('servicegroup', sg);
   if (unhandled) params.set('unhandled', '1');
+
+  if (mode === 'byhost') {
+    const data = await (await fetch('/api/v1/inventory/by-host?' + params)).json();
+    S.total = data.total || 0;
+    S.invLastGroups = data.hosts || [];
+    if (!S.invExpandInit && S.invLastGroups.length) {
+      let autoCnt = 0;
+      for (const g of S.invLastGroups) {
+        if (g.has_problem && autoCnt < 5) {
+          S.invExpandedHosts.add(g.host.name);
+          autoCnt++;
+        }
+      }
+      S.invExpandInit = true;
+    }
+    renderInvByHostDOM();
+    return;
+  }
 
   let rowsHTML = '', headHTML = '';
   if (mode === 'hosts') {
