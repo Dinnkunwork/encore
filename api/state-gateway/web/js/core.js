@@ -36,6 +36,7 @@ const S = {
   ovTrendCache: { ts: 0, data: null },
   me: { auth_enabled: false, user: { username: 'local-admin', display_name: 'Local Admin', role: 'admin' } },
   sseConnected: false,
+  livePaused: false,
   alertSound: localStorage.getItem('encore-alert-sound') === '1',
   tvMode: false
 };
@@ -104,7 +105,7 @@ function connectSSE() {
         }
       }
     } catch (err) {}
-    if (!isUserInteracting() && !_sseRefreshTimer) {
+    if (!S.livePaused && !isUserInteracting() && !_sseRefreshTimer) {
       _sseRefreshTimer = setTimeout(() => {
         _sseRefreshTimer = null;
         refreshAll();
@@ -264,11 +265,16 @@ function relTime(ts) {
 }
 function durStr(ts) {
   if (!ts) return '-';
-  const d = Math.max(0, Math.floor(Date.now()/1000) - ts);
-  const days = Math.floor(d/86400), hrs = Math.floor((d%86400)/3600), mins = Math.floor((d%3600)/60);
+  return fmtDurationSec(Math.max(0, Math.floor(Date.now()/1000) - ts));
+}
+function fmtDurationSec(sec) {
+  const d = Math.max(0, Math.round(Number(sec) || 0));
+  if (d === 0) return '0s';
+  const days = Math.floor(d/86400), hrs = Math.floor((d%86400)/3600), mins = Math.floor((d%3600)/60), secs = d%60;
   if (days > 0) return `${days}d ${hrs}h`;
   if (hrs > 0) return `${hrs}h ${mins}m`;
-  return `${mins}m ${d%60}s`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
 }
 function hostBadge(h) {
   if (!h.has_been_checked) return '<span class="badge c-pend"><img src="/assets/status/status-offline.svg">PENDING</span>';
@@ -432,16 +438,34 @@ function setView(v, sub) {
   }
 }
 
-function setAutoInterval() {
-  const userMs = Number(document.getElementById('auto-select').value);
-  // When SSE real-time push is active, relax fallback poll to 30s to save ~85% HTTP traffic
-  S.autoMs = (S.sseConnected && userMs > 0 && userMs < 30000) ? 30000 : userMs;
-  clearInterval(S.timer);
-  if (S.autoMs > 0) {
-    S.timer = setInterval(() => {
-      if (!isUserInteracting()) refreshAll();
-    }, S.autoMs);
+function toggleLiveUpdates() {
+  S.livePaused = !S.livePaused;
+  updateLiveToggleBtn();
+  setAutoInterval();
+  toast(S.livePaused ? 'Live updates paused' : 'Live updates resumed');
+}
+function updateLiveToggleBtn() {
+  const b = document.getElementById('live-toggle-btn');
+  if (!b) return;
+  if (S.livePaused) {
+    b.textContent = '⏸ Paused';
+    b.classList.remove('active');
+    b.title = 'Live updates paused — click to resume';
+  } else {
+    b.textContent = S.sseConnected ? '● Live' : '● Sync';
+    b.classList.add('active');
+    b.title = S.sseConnected ? 'Real-time SSE push active (click to pause)' : 'Fallback 5s sync active (click to pause)';
   }
+}
+function setAutoInterval() {
+  updateLiveToggleBtn();
+  clearInterval(S.timer);
+  if (S.livePaused) { S.autoMs = 0; return; }
+  // When SSE real-time push is connected, only do a 30s safety resync; if SSE drops, poll every 5s
+  S.autoMs = S.sseConnected ? 30000 : 5000;
+  S.timer = setInterval(() => {
+    if (!S.livePaused && !isUserInteracting()) refreshAll();
+  }, S.autoMs);
 }
 
 async function refreshAll() {

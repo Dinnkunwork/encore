@@ -82,12 +82,7 @@
           <input type="search" id="global-search" placeholder="Search (/) ..." oninput="onGlobalSearch()">
         </div>
         <button class="btn btn-sm desktop-only" onclick="openQuickJump()" title="Quick Jump (Ctrl+K)">⌘K</button>
-        <select id="auto-select" onchange="setAutoInterval()" aria-label="Auto refresh">
-          <option value="3000" selected>Auto 3s</option>
-          <option value="10000">Auto 10s</option>
-          <option value="30000">Auto 30s</option>
-          <option value="0">Paused</option>
-        </select>
+        <button class="btn btn-sm" id="live-toggle-btn" onclick="toggleLiveUpdates()" title="Real-time SSE active — click to pause/resume auto updates">● Live</button>
         <button class="btn btn-sm desktop-only" id="alert-sound-btn" onclick="toggleAlertSound()" title="Toggle Sound &amp; Desktop Alerts on HARD CRITICAL/DOWN">🔔 Off</button>
         <button class="btn btn-sm desktop-only" id="tv-mode-btn" onclick="toggleTVMode()" title="NOC Wallboard / TV Mode (Shift+T)">📺 TV</button>
         <button class="btn btn-sm" onclick="refreshAll()" title="Refresh now">↻</button>

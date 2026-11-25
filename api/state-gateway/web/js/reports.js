@@ -18,11 +18,62 @@ async function openMetricsFor(host, service) {
   loadReports();
 }
 
-/* Pure SVG Area + Line Metric Chart with WARN/CRIT threshold lines */
-function renderMetricChartSVG(ser) {
+/* Interactive Pure SVG Area + Line Metric Chart with Hover Crosshair & Tooltip */
+window._mcRegistry = window._mcRegistry || {};
+
+function onMetricChartMove(ev, id) {
+  const meta = window._mcRegistry[id];
+  if (!meta || !meta.pts.length) return;
+  const wrap = document.getElementById('mc-wrap-' + id);
+  const svg = document.getElementById('mc-svg-' + id);
+  const tt = document.getElementById('mc-tt-' + id);
+  const cross = document.getElementById('mc-cross-' + id);
+  const dot = document.getElementById('mc-dot-' + id);
+  const halo = document.getElementById('mc-halo-' + id);
+  if (!wrap || !svg || !tt) return;
+
+  const rect = svg.getBoundingClientRect();
+  const relX = ((ev.clientX - rect.left) / Math.max(1, rect.width)) * meta.w;
+  const clampedX = Math.max(meta.padL, Math.min(meta.w - meta.padR, relX));
+  // Find nearest sample point by X
+  let best = meta.pts[0], bestDist = Infinity;
+  for (const p of meta.pts) {
+    const d = Math.abs(p.x - clampedX);
+    if (d < bestDist) { bestDist = d; best = p; }
+  }
+  if (cross) { cross.setAttribute('x1', best.x.toFixed(1)); cross.setAttribute('x2', best.x.toFixed(1)); cross.style.display = ''; }
+  if (dot) { dot.setAttribute('cx', best.x.toFixed(1)); dot.setAttribute('cy', best.y.toFixed(1)); dot.style.display = ''; }
+  if (halo) { halo.setAttribute('cx', best.x.toFixed(1)); halo.setAttribute('cy', best.y.toFixed(1)); halo.style.display = ''; }
+
+  let statusTag = '';
+  if (meta.crit != null && best.v >= meta.crit) statusTag = ' <span style="color:#f87171;font-weight:700">CRIT</span>';
+  else if (meta.warn != null && best.v >= meta.warn) statusTag = ' <span style="color:#fbbf24;font-weight:700">WARN</span>';
+
+  const dtStr = new Date(best.ts * 1000).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  tt.innerHTML = `<div class="tt-time">${esc(dtStr)}</div><div class="tt-val">${best.v}${esc(meta.unit)}${statusTag}</div>`;
+  const leftPx = (best.x / meta.w) * rect.width;
+  const topPx = (best.y / meta.h) * rect.height;
+  const clampedLeft = Math.max(66, Math.min(rect.width - 66, leftPx));
+  tt.style.left = clampedLeft + 'px';
+  tt.style.top = Math.max(44, topPx) + 'px';
+  tt.style.display = 'block';
+}
+
+function onMetricChartLeave(id) {
+  const tt = document.getElementById('mc-tt-' + id);
+  const cross = document.getElementById('mc-cross-' + id);
+  const dot = document.getElementById('mc-dot-' + id);
+  const halo = document.getElementById('mc-halo-' + id);
+  if (tt) tt.style.display = 'none';
+  if (cross) cross.style.display = 'none';
+  if (dot) dot.style.display = 'none';
+  if (halo) halo.style.display = 'none';
+}
+
+function renderMetricChartSVG(ser, opts = {}) {
   const pts = ser.points || [];
   if (!pts.length) return '<div class="empty" style="padding:16px">No samples yet</div>';
-  const w = 520, h = 148, padL = 44, padR = 12, padT = 14, padB = 22;
+  const w = opts.width || 560, h = opts.height || 210, padL = 50, padR = 16, padT = 18, padB = 26;
   const plotW = w - padL - padR, plotH = h - padT - padB;
   let minY = ser.min, maxY = ser.max;
   if (ser.warn != null && ser.warn > maxY && ser.warn < maxY * 3 + 100) maxY = Math.max(maxY, ser.warn);
@@ -34,40 +85,51 @@ function renderMetricChartSVG(ser) {
   const sx = ts => padL + ((ts - minT) / (maxT - minT)) * plotW;
   const sy = v => padT + plotH - ((v - minY) / (maxY - minY)) * plotH;
 
-  const coords = pts.map(p => `${sx(p.ts).toFixed(1)},${sy(p.v).toFixed(1)}`);
-  const lineD = pts.length === 1 ? `M ${padL},${sy(pts[0].v).toFixed(1)} L ${w - padR},${sy(pts[0].v).toFixed(1)}` : 'M ' + coords.join(' L ');
-  const areaD = pts.length === 1
+  const mapped = pts.map(p => ({ ts: p.ts, v: p.v, x: sx(p.ts), y: sy(p.v) }));
+  const coords = mapped.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`);
+  const lineD = mapped.length === 1 ? `M ${padL},${mapped[0].y.toFixed(1)} L ${w - padR},${mapped[0].y.toFixed(1)}` : 'M ' + coords.join(' L ');
+  const areaD = mapped.length === 1
     ? `${lineD} L ${w - padR},${padT + plotH} L ${padL},${padT + plotH} Z`
-    : `${lineD} L ${sx(pts[pts.length - 1].ts).toFixed(1)},${padT + plotH} L ${sx(pts[0].ts).toFixed(1)},${padT + plotH} Z`;
+    : `${lineD} L ${mapped[mapped.length - 1].x.toFixed(1)},${padT + plotH} L ${mapped[0].x.toFixed(1)},${padT + plotH} Z`;
 
-  const gradId = 'mg-' + Math.random().toString(36).slice(2, 8);
+  const chartId = Math.random().toString(36).slice(2, 10);
+  window._mcRegistry[chartId] = { w, h, padL, padR, unit: ser.unit || '', warn: ser.warn, crit: ser.crit, pts: mapped };
+  const gradId = 'mg-' + chartId;
   let threshHTML = '';
   if (ser.warn != null && ser.warn >= minY && ser.warn <= maxY) {
     const wy = sy(ser.warn).toFixed(1);
-    threshHTML += `<line x1="${padL}" y1="${wy}" x2="${w - padR}" y2="${wy}" stroke="var(--warn)" stroke-width="1.2" stroke-dasharray="4 3"/><text x="${w - padR - 2}" y="${(Number(wy) - 3).toFixed(1)}" text-anchor="end" fill="var(--warn-fg)" font-size="9">WARN ${ser.warn}</text>`;
+    threshHTML += `<line x1="${padL}" y1="${wy}" x2="${w - padR}" y2="${wy}" stroke="var(--warn)" stroke-width="1.3" stroke-dasharray="4 3"/><text x="${w - padR - 2}" y="${(Number(wy) - 4).toFixed(1)}" text-anchor="end" fill="var(--warn-fg)" font-size="10" font-weight="600">WARN ${ser.warn}</text>`;
   }
   if (ser.crit != null && ser.crit >= minY && ser.crit <= maxY) {
     const cy = sy(ser.crit).toFixed(1);
-    threshHTML += `<line x1="${padL}" y1="${cy}" x2="${w - padR}" y2="${cy}" stroke="var(--crit)" stroke-width="1.2" stroke-dasharray="4 3"/><text x="${w - padR - 2}" y="${(Number(cy) - 3).toFixed(1)}" text-anchor="end" fill="var(--crit-fg)" font-size="9">CRIT ${ser.crit}</text>`;
+    threshHTML += `<line x1="${padL}" y1="${cy}" x2="${w - padR}" y2="${cy}" stroke="var(--crit)" stroke-width="1.3" stroke-dasharray="4 3"/><text x="${w - padR - 2}" y="${(Number(cy) - 4).toFixed(1)}" text-anchor="end" fill="var(--crit-fg)" font-size="10" font-weight="600">CRIT ${ser.crit}</text>`;
   }
-  const dots = pts.length <= 45 ? pts.map(p => `<circle cx="${sx(p.ts).toFixed(1)}" cy="${sy(p.v).toFixed(1)}" r="2.4" fill="var(--accent)"><title>${new Date(p.ts*1000).toLocaleTimeString()} — ${p.v}${ser.unit||''}</title></circle>`).join('') : '';
+  const dots = mapped.length <= 45 ? mapped.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.6" fill="var(--accent)"/>`).join('') : '';
   const tStart = new Date(minT * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const tMid = new Date(((minT + maxT) / 2) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const tEnd = new Date(maxT * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:148px;display:block">
-    <defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent)" stop-opacity="0.28"/><stop offset="100%" stop-color="var(--accent)" stop-opacity="0.02"/></linearGradient></defs>
-    <line x1="${padL}" y1="${padT}" x2="${w-padR}" y2="${padT}" stroke="var(--border)" stroke-dasharray="3 3"/>
-    <line x1="${padL}" y1="${padT + plotH/2}" x2="${w-padR}" y2="${padT + plotH/2}" stroke="var(--border)" stroke-dasharray="3 3"/>
-    <line x1="${padL}" y1="${padT + plotH}" x2="${w-padR}" y2="${padT + plotH}" stroke="var(--border)"/>
-    <text x="${padL-5}" y="${padT+4}" text-anchor="end" fill="var(--muted)" font-size="9.5">${maxY.toFixed(1)}</text>
-    <text x="${padL-5}" y="${padT+plotH/2+3}" text-anchor="end" fill="var(--muted)" font-size="9.5">${((maxY+minY)/2).toFixed(1)}</text>
-    <text x="${padL-5}" y="${padT+plotH}" text-anchor="end" fill="var(--muted)" font-size="9.5">${minY.toFixed(1)}</text>
-    <text x="${padL}" y="${h-5}" fill="var(--muted)" font-size="9.5">${tStart}</text>
-    <text x="${w-padR}" y="${h-5}" text-anchor="end" fill="var(--muted)" font-size="9.5">${tEnd}</text>
-    <path d="${areaD}" fill="url(#${gradId})"/>
-    <path d="${lineD}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    ${threshHTML}${dots}
-  </svg>`;
+  return `<div class="chart-interactive" id="mc-wrap-${chartId}" onmousemove="onMetricChartMove(event,'${chartId}')" onmouseleave="onMetricChartLeave('${chartId}')">
+    <div class="chart-tooltip" id="mc-tt-${chartId}"></div>
+    <svg id="mc-svg-${chartId}" viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block;cursor:crosshair">
+      <defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent)" stop-opacity="0.32"/><stop offset="100%" stop-color="var(--accent)" stop-opacity="0.03"/></linearGradient></defs>
+      <line x1="${padL}" y1="${padT}" x2="${w-padR}" y2="${padT}" stroke="var(--border)" stroke-dasharray="3 3"/>
+      <line x1="${padL}" y1="${padT + plotH/2}" x2="${w-padR}" y2="${padT + plotH/2}" stroke="var(--border)" stroke-dasharray="3 3"/>
+      <line x1="${padL}" y1="${padT + plotH}" x2="${w-padR}" y2="${padT + plotH}" stroke="var(--border)"/>
+      <text x="${padL-6}" y="${padT+4}" text-anchor="end" fill="var(--muted)" font-size="10.5">${maxY.toFixed(1)}</text>
+      <text x="${padL-6}" y="${padT+plotH/2+4}" text-anchor="end" fill="var(--muted)" font-size="10.5">${((maxY+minY)/2).toFixed(1)}</text>
+      <text x="${padL-6}" y="${padT+plotH+3}" text-anchor="end" fill="var(--muted)" font-size="10.5">${minY.toFixed(1)}</text>
+      <text x="${padL}" y="${h-6}" fill="var(--muted)" font-size="10.5">${tStart}</text>
+      <text x="${padL + plotW/2}" y="${h-6}" text-anchor="middle" fill="var(--muted)" font-size="10.5">${tMid}</text>
+      <text x="${w-padR}" y="${h-6}" text-anchor="end" fill="var(--muted)" font-size="10.5">${tEnd}</text>
+      <path d="${areaD}" fill="url(#${gradId})"/>
+      <path d="${lineD}" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+      ${threshHTML}${dots}
+      <line id="mc-cross-${chartId}" x1="0" y1="${padT}" x2="0" y2="${padT+plotH}" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="3 3" style="display:none"/>
+      <circle id="mc-halo-${chartId}" cx="0" cy="0" r="9" fill="var(--accent)" fill-opacity="0.22" style="display:none"/>
+      <circle id="mc-dot-${chartId}" cx="0" cy="0" r="4.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2" style="display:none"/>
+    </svg>
+  </div>`;
 }
 
 function setReportRange(r) {
@@ -202,39 +264,71 @@ function renderDonutSVG(sum) {
     </div>`;
 }
 
-/* Pure SVG Uptime & Incident Trend Bar Chart */
-function renderTrendSVG(timeline) {
+/* Interactive Pure SVG Uptime & Incident Trend Bar Chart */
+window._trRegistry = window._trRegistry || {};
+
+function onTrendBarEnter(ev, id, idx) {
+  const meta = window._trRegistry[id];
+  if (!meta || !meta.items[idx]) return;
+  const tt = document.getElementById('tr-tt-' + id);
+  const svg = document.getElementById('tr-svg-' + id);
+  if (!tt || !svg) return;
+  const b = meta.items[idx];
+  const rect = svg.getBoundingClientRect();
+  const leftPx = (b.cx / meta.w) * rect.width;
+  const clampedLeft = Math.max(76, Math.min(rect.width - 76, leftPx));
+  const col = b.ok_pct >= 99.5 ? '#34d399' : (b.ok_pct >= 95 ? '#fbbf24' : '#f87171');
+  const probDetails = (b.crit_pct || b.warn_pct) ? `<div style="font-size:11px;color:#cbd5e1">Warn: ${(b.warn_pct||0).toFixed(1)}% • Crit/Down: ${(b.crit_pct||0).toFixed(1)}%</div>` : '';
+  tt.innerHTML = `<div class="tt-time">Window: ${esc(b.label)}</div><div class="tt-val" style="color:${col}">Uptime ${b.ok_pct.toFixed(2)}%</div>${probDetails}<div style="font-size:11px;color:${b.incidents>0?'#f87171':'#94a3b8'}">${b.incidents} HARD incident(s)</div>`;
+  tt.style.left = clampedLeft + 'px';
+  tt.style.top = '42px';
+  tt.style.display = 'block';
+}
+function onTrendLeave(id) {
+  const tt = document.getElementById('tr-tt-' + id);
+  if (tt) tt.style.display = 'none';
+}
+
+function renderTrendSVG(timeline, height = 152) {
   if (!timeline || !timeline.length) return '<div class="empty" style="padding:24px">No timeline data</div>';
-  const w = 640, h = 132, padL = 32, padB = 22, padT = 12, padR = 8;
+  const w = 640, h = height, padL = 36, padB = 22, padT = 14, padR = 8;
   const plotW = w - padL - padR, plotH = h - padT - padB;
   const n = timeline.length;
   const step = plotW / n;
-  const barW = Math.max(4, Math.min(26, step * 0.68));
+  const barW = Math.max(5, Math.min(28, step * 0.72));
   const labelEvery = n > 14 ? Math.ceil(n / 10) : 1;
+  const tid = Math.random().toString(36).slice(2, 10);
+  const items = [];
 
   const bars = timeline.map((b, i) => {
     const x = padL + i * step + (step - barW) / 2;
-    const bh = Math.max(2, (b.ok_pct / 100) * plotH);
+    const cx = x + barW / 2;
+    const bh = Math.max(3, (b.ok_pct / 100) * plotH);
     const y = padT + (plotH - bh);
     const col = b.ok_pct >= 99.5 ? 'var(--ok)' : (b.ok_pct >= 95 ? 'var(--warn)' : 'var(--crit)');
-    const incDot = b.incidents > 0 ? `<circle cx="${(x + barW/2).toFixed(1)}" cy="${Math.max(padT + 4, y - 5).toFixed(1)}" r="3.5" fill="var(--crit)"/>` : '';
-    const lbl = (i % labelEvery === 0 || i === n - 1) ? `<text x="${(x + barW/2).toFixed(1)}" y="${h - 6}" text-anchor="middle" fill="var(--muted)" font-size="9.5">${esc(b.label)}</text>` : '';
-    return `<g>
-      <title>${esc(b.label)} — SLA: ${b.ok_pct.toFixed(2)}% | HARD Incidents: ${b.incidents}</title>
-      <rect x="${x.toFixed(1)}" y="${padT}" width="${barW.toFixed(1)}" height="${plotH}" rx="3" fill="var(--surface-2)"/>
-      <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${col}"/>
+    const incDot = b.incidents > 0 ? `<circle cx="${cx.toFixed(1)}" cy="${Math.max(padT + 4, y - 5).toFixed(1)}" r="3.8" fill="var(--crit)" stroke="var(--surface)" stroke-width="1"/>` : '';
+    const lbl = (i % labelEvery === 0 || i === n - 1) ? `<text x="${cx.toFixed(1)}" y="${h - 6}" text-anchor="middle" fill="var(--muted)" font-size="9.5">${esc(b.label)}</text>` : '';
+    items.push({ ...b, cx });
+    return `<g class="chart-bar-g" onmouseenter="onTrendBarEnter(event,'${tid}',${i})">
+      <rect class="chart-bar-bg" x="${x.toFixed(1)}" y="${padT}" width="${barW.toFixed(1)}" height="${plotH}" rx="3" fill="var(--surface-2)"/>
+      <rect class="chart-bar-fg" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${col}"/>
       ${incDot}${lbl}
     </g>`;
   }).join('');
 
-  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:132px;display:block">
-    <line x1="${padL}" y1="${padT}" x2="${w-padR}" y2="${padT}" stroke="var(--ok)" stroke-opacity="0.45" stroke-dasharray="4 3"/>
-    <line x1="${padL}" y1="${padT + plotH/2}" x2="${w-padR}" y2="${padT + plotH/2}" stroke="var(--border)" stroke-dasharray="3 3"/>
-    <text x="${padL-4}" y="${padT+4}" text-anchor="end" fill="var(--ok-fg)" font-size="9">99.9%</text>
-    <text x="${padL-4}" y="${padT+plotH/2+3}" text-anchor="end" fill="var(--muted)" font-size="9">50%</text>
-    <text x="${padL-4}" y="${padT+plotH}" text-anchor="end" fill="var(--muted)" font-size="9">0%</text>
-    ${bars}
-  </svg>`;
+  window._trRegistry[tid] = { w, h, items };
+
+  return `<div class="chart-interactive" onmouseleave="onTrendLeave('${tid}')">
+    <div class="chart-tooltip" id="tr-tt-${tid}"></div>
+    <svg id="tr-svg-${tid}" viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block">
+      <line x1="${padL}" y1="${padT}" x2="${w-padR}" y2="${padT}" stroke="var(--ok)" stroke-opacity="0.45" stroke-dasharray="4 3"/>
+      <line x1="${padL}" y1="${padT + plotH/2}" x2="${w-padR}" y2="${padT + plotH/2}" stroke="var(--border)" stroke-dasharray="3 3"/>
+      <text x="${padL-4}" y="${padT+4}" text-anchor="end" fill="var(--ok-fg)" font-size="9.5">100%</text>
+      <text x="${padL-4}" y="${padT+plotH/2+3}" text-anchor="end" fill="var(--muted)" font-size="9.5">50%</text>
+      <text x="${padL-4}" y="${padT+plotH}" text-anchor="end" fill="var(--muted)" font-size="9.5">0%</text>
+      ${bars}
+    </svg>
+  </div>`;
 }
 
 function toggleRepHost(h) {
@@ -299,23 +393,23 @@ async function loadReports() {
             </div>
           </div>
           <div class="host-acc-body">
-            <div class="table-wrap"><table><thead><tr><th>Service</th><th>Uptime Bar</th><th>OK %</th><th>WARN %</th><th>CRIT %</th><th>Downtime %</th><th>Incidents</th><th>MTTR</th></tr></thead><tbody>
+            <div class="table-wrap"><table><thead><tr><th>Service</th><th>Uptime Bar</th><th>OK %</th><th>WARN %</th><th>CRIT %</th><th>Problem Time</th><th>Incidents</th><th>MTTR</th></tr></thead><tbody>
               ${g.list.map(r => `<tr>
-                <td><a href="#" style="color:var(--accent);text-decoration:none;font-weight:600" onclick="openReportFor('${esc(r.host)}','${esc(r.service)}');return false">${esc(r.service)}</a></td>
+                <td><a href="#" style="color:var(--accent);text-decoration:none;font-weight:600" onclick="openReportFor('${jsEsc(r.host)}','${jsEsc(r.service)}');return false">${esc(r.service)}</a></td>
                 <td style="min-width:120px"><div class="bar"><div class="bar-ok" style="width:${r.ok_pct}%"></div><div class="bar-warn" style="width:${r.warn_pct}%"></div><div class="bar-crit" style="width:${r.crit_pct}%"></div></div></td>
                 <td class="mono" style="color:var(--ok-fg);font-weight:700">${r.ok_pct.toFixed(2)}%</td>
                 <td class="mono">${r.warn_pct.toFixed(2)}%</td>
                 <td class="mono" style="color:${r.crit_pct>0?'var(--crit-fg)':'var(--muted)'}">${r.crit_pct.toFixed(2)}%</td>
-                <td class="mono">${r.downtime_pct.toFixed(2)}%</td>
+                <td class="mono" style="color:${r.problem_sec>0?'var(--crit-fg)':'var(--muted)'}">${fmtDurationSec(r.problem_sec)}</td>
                 <td class="mono">${r.incidents}</td>
-                <td class="mono">${r.mttr_sec ? Math.round(r.mttr_sec) + 's' : '-'}</td>
+                <td class="mono">${r.mttr_sec ? fmtDurationSec(r.mttr_sec) : '-'}</td>
               </tr>`).join('')}
             </tbody></table></div>
           </div>
         </div>`;
       }).join('') : '<div class="empty">No objects in selected scope</div>';
     } else {
-      tableHTML = `<div class="table-wrap"><table><thead><tr><th>Host</th>${target==='services'?'<th>Service</th>':''}<th>Uptime Bar</th><th>UP/OK %</th><th>WARN %</th><th>CRIT/DOWN %</th><th>Downtime %</th><th>Incidents</th><th>MTTR</th></tr></thead><tbody>
+      tableHTML = `<div class="table-wrap"><table><thead><tr><th>Host</th>${target==='services'?'<th>Service</th>':''}<th>Uptime Bar</th><th>UP/OK %</th><th>WARN %</th><th>CRIT/DOWN %</th><th>Problem Time</th><th>Incidents</th><th>MTTR</th></tr></thead><tbody>
         ${rows.length ? rows.map(r => `<tr>
           <td><b>${esc(r.host)}</b></td>
           ${target==='services'?`<td>${esc(r.service)}</td>`:''}
@@ -323,19 +417,20 @@ async function loadReports() {
           <td class="mono" style="color:var(--ok-fg);font-weight:700">${r.ok_pct.toFixed(2)}%</td>
           <td class="mono">${r.warn_pct.toFixed(2)}%</td>
           <td class="mono" style="color:${r.crit_pct>0?'var(--crit-fg)':'var(--muted)'}">${r.crit_pct.toFixed(2)}%</td>
-          <td class="mono">${r.downtime_pct.toFixed(2)}%</td>
+          <td class="mono" style="color:${r.problem_sec>0?'var(--crit-fg)':'var(--muted)'}">${fmtDurationSec(r.problem_sec)}</td>
           <td class="mono">${r.incidents}</td>
-          <td class="mono">${r.mttr_sec ? Math.round(r.mttr_sec) + 's' : '-'}</td>
+          <td class="mono">${r.mttr_sec ? fmtDurationSec(r.mttr_sec) : '-'}</td>
         </tr>`).join('') : '<tr><td colspan="9" class="empty">No objects in selected scope</td></tr>'}
       </tbody></table></div>`;
     }
 
     const scopeTag = [hg, host, service].filter(Boolean).join(' / ') || 'All Scope';
+    const srcNote = sum.log_events_used > 0 ? `${sum.log_events_used} log events + live state` : 'Live state (0 alert transitions in window)';
     el.innerHTML = `
       <div class="kpi-grid" style="margin-bottom:14px">
-        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">Overall SLA</span><img class="kpi-icon" src="/assets/status/${sum.overall_sla_pct >= 99 ? 'status-ok.svg' : 'status-warn.svg'}"></div><div class="kpi-val">${(sum.overall_sla_pct ?? 100).toFixed(2)}%</div><div class="kpi-sub"><span>${sum.total_objects || 0} ${esc(target)} • ${esc(scopeTag)}</span></div></div>
-        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">HARD Incidents</span><img class="kpi-icon" src="/assets/icons/alert.svg"></div><div class="kpi-val">${sum.total_incidents || 0}</div><div class="kpi-sub"><span>Window: ${S.repRange}</span></div></div>
-        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">Avg Recovery (MTTR)</span><img class="kpi-icon" src="/assets/icons/bell.svg"></div><div class="kpi-val">${sum.avg_mttr_sec ? Math.round(sum.avg_mttr_sec) + 's' : '0s'}</div><div class="kpi-sub"><span>Mean Time To Recovery</span></div></div>
+        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">Overall Uptime (SLA)</span><img class="kpi-icon" src="/assets/status/${sum.overall_sla_pct >= 99 ? 'status-ok.svg' : 'status-warn.svg'}"></div><div class="kpi-val">${(sum.overall_sla_pct ?? 100).toFixed(2)}%</div><div class="kpi-sub"><span>${sum.total_objects || 0} ${esc(target)} • ${esc(scopeTag)}</span></div></div>
+        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">HARD Incidents</span><img class="kpi-icon" src="/assets/icons/alert.svg"></div><div class="kpi-val">${sum.total_incidents || 0}</div><div class="kpi-sub"><span>Total problem time: <b>${fmtDurationSec(sum.total_problem_sec)}</b></span></div></div>
+        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">Avg Recovery (MTTR)</span><img class="kpi-icon" src="/assets/icons/bell.svg"></div><div class="kpi-val">${sum.avg_mttr_sec ? fmtDurationSec(sum.avg_mttr_sec) : '0s'}</div><div class="kpi-sub"><span>Source: ${esc(srcNote)}</span></div></div>
       </div>
       <div class="charts-row">
         <div class="chart-card">
@@ -343,8 +438,8 @@ async function loadReports() {
           ${renderDonutSVG(sum)}
         </div>
         <div class="chart-card">
-          <div class="chart-title"><span>Uptime &amp; Incident Trend</span><span class="name-sub">Red dot = HARD incident</span></div>
-          ${renderTrendSVG(timeline)}
+          <div class="chart-title"><span>Uptime &amp; Incident Trend</span><span class="name-sub">Hover bar for details • Red dot = HARD incident</span></div>
+          ${renderTrendSVG(timeline, 152)}
         </div>
       </div>
       <div class="panel">${tableHTML}</div>`;

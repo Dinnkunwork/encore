@@ -153,12 +153,28 @@
   background: var(--surface-2); border: 1px solid var(--border); font-size: 12px; cursor: pointer;
 }
 .user-chip:hover { border-color: var(--accent); }
-.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px; }
-.metric-stats { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+@media (max-width: 520px) { .metric-grid { grid-template-columns: 1fr; } }
+.metric-stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
 .metric-stats b { color: var(--text); }
 
+/* Interactive SVG Chart Hover & Floating Tooltip */
+.chart-interactive { position: relative; user-select: none; }
+.chart-tooltip {
+  display: none; position: absolute; pointer-events: none; z-index: 25;
+  background: var(--sidebar-bg); color: #f8fafc; border: 1px solid var(--accent);
+  border-radius: 8px; padding: 7px 10px; font-size: 12px; line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.32); white-space: nowrap;
+  transform: translate(-50%, -100%); margin-top: -10px;
+}
+.chart-tooltip .tt-time { font-size: 10.5px; color: #94a3b8; margin-bottom: 2px; }
+.chart-tooltip .tt-val { font-size: 13.5px; font-weight: 700; font-family: ui-monospace, SFMono-Regular, monospace; }
+.chart-bar-g { cursor: pointer; }
+.chart-bar-g:hover .chart-bar-bg { fill: var(--accent-soft); }
+.chart-bar-g:hover .chart-bar-fg { filter: brightness(1.12); }
+
 /* Encore v8: NOC TV Wallboard Mode & Structured Template Editor */
-.tv-exit-btn { display: none; position: fixed; bottom: 18px; right: 18px; z-index: 60; }
+.btn.tv-exit-btn { display: none; position: fixed; bottom: 18px; right: 18px; z-index: 60; }
 body.tv-mode .sidebar, body.tv-mode .topbar, body.tv-mode .pending-banner { display: none !important; }
 body.tv-mode .main { margin-left: 0 !important; }
 body.tv-mode .content { max-width: 100%; padding: 18px 24px 64px; }
@@ -166,7 +182,7 @@ body.tv-mode .kpi-val { font-size: 38px; }
 body.tv-mode .kpi-card::after { display: none; }
 body.tv-mode .host-tile { padding: 14px 16px; }
 body.tv-mode .host-tile-name { font-size: 15px; }
-body.tv-mode .tv-exit-btn { display: inline-flex; }
+body.tv-mode .btn.tv-exit-btn { display: inline-flex; }
 
 .tpl-row {
   display: grid; grid-template-columns: 1.1fr 2fr 70px 32px; gap: 6px; align-items: center; margin-bottom: 6px;

@@ -173,25 +173,20 @@ async function renderOverviewMiniCharts(sum) {
     } catch (e) {}
   }
   const tl = (S.ovTrendCache.data && S.ovTrendCache.data.timeline) || [];
-  const sla24 = (S.ovTrendCache.data && S.ovTrendCache.data.summary && S.ovTrendCache.data.summary.overall_sla_pct) ?? 100;
-  const inc24 = (S.ovTrendCache.data && S.ovTrendCache.data.summary && S.ovTrendCache.data.summary.total_incidents) ?? 0;
+  const ovSum = (S.ovTrendCache.data && S.ovTrendCache.data.summary) || {};
+  const sla24 = ovSum.overall_sla_pct ?? 100;
+  const inc24 = ovSum.total_incidents ?? 0;
+  const prob24 = ovSum.total_problem_sec ?? 0;
 
   let sparkHTML = '';
   if (tl.length) {
-    const bw = Math.max(4, Math.floor(280 / tl.length) - 2);
-    const bars = tl.map((b, i) => {
-      const x = i * (280 / tl.length);
-      const bh = Math.max(3, (b.ok_pct / 100) * 44);
-      const col = b.ok_pct >= 99.5 ? 'var(--ok)' : (b.ok_pct >= 95 ? 'var(--warn)' : 'var(--crit)');
-      return `<rect x="${x.toFixed(1)}" y="${(46 - bh).toFixed(1)}" width="${bw}" height="${bh.toFixed(1)}" rx="2" fill="${col}"><title>${esc(b.label)} — ${b.ok_pct.toFixed(2)}% SLA (${b.incidents} inc)</title></rect>`;
-    }).join('');
     sparkHTML = `
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
-          <span style="font-weight:650">24h Uptime Trend</span>
-          <span class="mono">SLA <b>${sla24.toFixed(2)}%</b> • ${inc24} HARD inc</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;margin-bottom:6px">
+          <span style="font-weight:650" title="Persentase waktu seluruh service berstatus OK dalam 24 jam terakhir">24h Service Uptime</span>
+          <span class="mono"><b>${sla24.toFixed(2)}%</b> OK • ${inc24} HARD inc${prob24 > 0 ? ` • ${fmtDurationSec(prob24)} down` : ''}</span>
         </div>
-        <svg viewBox="0 0 280 48" style="width:100%;height:48px;display:block">${bars}</svg>
+        ${renderTrendSVG(tl, 88)}
       </div>`;
   }
 
@@ -238,7 +233,7 @@ async function loadOverview() {
 
   const [pRes, aRes, fhRes] = await Promise.all([
     fetch('/api/v1/services?unhandled=1&sort=severity&limit=10'),
-    fetch('/api/v1/audit?limit=5'),
+    isAdmin() ? fetch('/api/v1/audit?limit=5') : Promise.resolve(null),
     fetch('/api/v1/hosts/health')
   ]);
   const probs = (await pRes.json()).services || [];
@@ -275,12 +270,14 @@ async function loadOverview() {
     </div>`;
   }).join('') : '<div class="empty" style="padding:14px">No hostgroups</div>';
 
-  const audits = (await aRes.json()).entries || [];
-  document.getElementById('ov-audit-list').innerHTML = audits.length ? audits.map(a => `
+  const audits = (aRes && aRes.ok) ? ((await aRes.json()).entries || []) : [];
+  document.getElementById('ov-audit-list').innerHTML = !isAdmin()
+    ? '<div class="empty" style="padding:14px">Audit log requires Admin role</div>'
+    : (audits.length ? audits.map(a => `
     <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
       <div><b>${esc(a.action)}</b> <span class="mono">${esc(a.target)}</span></div>
       <span class="mono">${relTime(Math.floor(Date.parse(a.time)/1000))}</span>
-    </div>`).join('') : '<div class="empty" style="padding:14px">No activity yet</div>';
+    </div>`).join('') : '<div class="empty" style="padding:14px">No activity yet</div>');
 }
 
 function renderMonitorSubtabs() {
@@ -697,18 +694,18 @@ function openSvcDrawer(idx) {
       const box = document.getElementById('drawer-metrics-box');
       if (!box || !d.series || !d.series.length) return;
       const ser = d.series[0];
-      box.innerHTML = `<div class="kv-box"><div class="k" style="display:flex;justify-content:space-between;margin-bottom:6px"><span>Trend (6h): ${esc(ser.label)}</span><span>Last: ${ser.last}${esc(ser.unit||'')}</span></div>${renderMetricChartSVG(ser)}</div>`;
+      box.innerHTML = `<div class="kv-box"><div class="k" style="display:flex;justify-content:space-between;margin-bottom:6px"><span>Trend (6h): ${esc(ser.label)} — hover for values</span><span>Last: <b>${ser.last}${esc(ser.unit||'')}</b></span></div>${renderMetricChartSVG(ser, { width: 460, height: 175 })}</div>`;
     }).catch(() => {});
 }
 
 function openAckModal(kind, host, desc) {
-  openModal(`<h2>Acknowledge ${kind==='host'?host:host+' / '+desc}</h2>
+  openModal(`<h2>Acknowledge ${esc(kind==='host'?host:host+' / '+desc)}</h2>
     <div class="form-row"><label>Comment</label><input id="m-ack-cmt" type="text" value="Acknowledged via Encore"></div>
     <div style="display:flex;gap:12px;margin:8px 0">
       <label class="chk-pill"><input type="checkbox" id="m-ack-sticky" checked> Sticky</label>
       <label class="chk-pill"><input type="checkbox" id="m-ack-notify"> Notify</label>
     </div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitAck('${kind}','${esc(host)}','${esc(desc)}')">Acknowledge</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitAck('${jsEsc(kind)}','${jsEsc(host)}','${jsEsc(desc)}')">Acknowledge</button></div>`);
 }
 function submitAck(kind, host, desc) {
   const cmt = document.getElementById('m-ack-cmt').value.trim() || 'Acknowledged';
@@ -718,7 +715,7 @@ function submitAck(kind, host, desc) {
   closeModal(); sendCmd(cmd, 'Acknowledge');
 }
 function openDowntimeModal(kind, host, desc) {
-  openModal(`<h2>Schedule Downtime — ${kind==='host'?host:host+' / '+desc}</h2>
+  openModal(`<h2>Schedule Downtime — ${esc(kind==='host'?host:host+' / '+desc)}</h2>
     <div class="form-row"><label>Duration (min)</label>
       <div class="presets">
         <button class="btn btn-sm" onclick="document.getElementById('m-dt-min').value=30">30m</button>
@@ -729,7 +726,7 @@ function openDowntimeModal(kind, host, desc) {
       <input id="m-dt-min" type="number" value="60" min="1">
     </div>
     <div class="form-row"><label>Comment</label><input id="m-dt-cmt" type="text" value="Scheduled maintenance"></div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitDowntime('${kind}','${esc(host)}','${esc(desc)}')">Schedule</button></div>`);
+    <div class="modal-foot"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="submitDowntime('${jsEsc(kind)}','${jsEsc(host)}','${jsEsc(desc)}')">Schedule</button></div>`);
 }
 function submitDowntime(kind, host, desc) {
   const mins = Math.max(1, Number(document.getElementById('m-dt-min').value) || 60);
