@@ -87,6 +87,7 @@ type CommentInfo struct {
 type HostState struct {
 	Name            string  `json:"name"`
 	Address         string  `json:"address"`
+	Icon            string  `json:"icon,omitempty"`
 	CurrentState    int     `json:"current_state"`
 	StateType       int     `json:"state_type"`
 	HasBeenChecked  int     `json:"has_been_checked"`
@@ -1295,6 +1296,7 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 		type hostHealthItem struct {
 			Name           string `json:"name"`
 			Address        string `json:"address"`
+			Icon           string `json:"icon,omitempty"`
 			CurrentState   int    `json:"current_state"`
 			HasBeenChecked int    `json:"has_been_checked"`
 			SvcOK          int    `json:"svc_ok"`
@@ -1303,6 +1305,7 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 			SvcUnk         int    `json:"svc_unk"`
 			SvcTotal       int    `json:"svc_total"`
 		}
+		icons := cs.HostIconMap()
 		store.mu.RLock()
 		m := make(map[string]*hostHealthItem, len(store.hosts))
 		list := make([]*hostHealthItem, 0, len(store.hosts))
@@ -1310,6 +1313,7 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 			it := &hostHealthItem{
 				Name:           h.Name,
 				Address:        h.Address,
+				Icon:           icons[h.Name],
 				CurrentState:   h.CurrentState,
 				HasBeenChecked: h.HasBeenChecked,
 			}
@@ -1404,6 +1408,13 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 			return
 		}
 		items, total := store.QueryHosts(opts)
+		if icons := cs.HostIconMap(); len(icons) > 0 {
+			for i := range items {
+				if ic := icons[items[i].Name]; ic != "" {
+					items[i].Icon = ic
+				}
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"total":  total,
 			"offset": opts.Offset,
@@ -1446,6 +1457,13 @@ func newHTTPHandler(store *StateStore, qhPath, cmdPipePath, localhostCfgPath, co
 			return
 		}
 		groups, total := store.QueryInventoryByHost(opts, healthFilter)
+		if icons := cs.HostIconMap(); len(icons) > 0 {
+			for i := range groups {
+				if ic := icons[groups[i].Host.Name]; ic != "" {
+					groups[i].Host.Icon = ic
+				}
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"total":  total,
 			"offset": opts.Offset,

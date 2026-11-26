@@ -300,6 +300,7 @@ function renderManageObjectsBody() {
           <div class="host-acc-left">
             <input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation()" onchange="toggleSelectManagedHost('${esc(h.name)}',this.checked)">
             <span class="host-acc-chev">▶</span>
+            ${hostIconBadge(h, 'sm')}
             <div>
               <span class="name-primary">${esc(h.name)}</span>${diffBadge(hDiff)}
               <span class="mono" style="margin-left:8px">${esc(h.address)}</span>
@@ -351,7 +352,7 @@ function renderManageObjectsBody() {
           const hd = dm.host.get(h.name);
           return `<tr class="${diffRowClass(hd)}">
             <td><input type="checkbox" ${S.selectedManagedHosts.has(h.name)?'checked':''} onchange="toggleSelectManagedHost('${esc(h.name)}',this.checked)"></td>
-            <td><b>${esc(h.name)}</b>${diffBadge(hd)}<div class="name-sub">${esc(h.alias)}</div></td>
+            <td><div class="host-name-wrap">${hostIconBadge(h, 'sm')}<div><b>${esc(h.name)}</b>${diffBadge(hd)}<div class="name-sub">${esc(h.alias)}</div></div></div></td>
             <td class="mono">${esc(h.address)}</td><td class="mono">${esc(h.check_command)}</td>
             <td class="mono">${esc((h.hostgroups||[]).join(', ')||'-')}</td>
             <td>${h.enabled?'<span class="badge c-ok">ON</span>':'<span class="badge c-pend">OFF</span>'}</td>
@@ -986,9 +987,42 @@ async function loadSystem() {
 }
 
 /* ====== CRUD, CLONE & SCRIPTS MODALS ====== */
+function selectHostIcon(id) {
+  const inp = document.getElementById('f-h-icon');
+  if (inp) inp.value = id;
+  document.querySelectorAll('.icon-pick-btn').forEach(btn => {
+    btn.classList.toggle('active', (btn.dataset.iconId || '') === id);
+  });
+  const lbl = document.getElementById('f-h-icon-lbl');
+  if (lbl) {
+    const found = (window.HOST_ICONS || []).find(x => x.id === id);
+    lbl.textContent = found ? `${found.label} (${found.cat})` : 'Auto-detect from name / group';
+  }
+}
+
+function filterHostIconPicker() {
+  const q = (document.getElementById('f-h-icon-search')?.value || '').trim().toLowerCase();
+  document.querySelectorAll('.icon-pick-btn').forEach(btn => {
+    const hay = (btn.dataset.search || '').toLowerCase();
+    btn.style.display = (!q || hay.includes(q)) ? '' : 'none';
+  });
+}
+
 function openHostForm(idx) {
-  const h = idx>=0 ? S.managed.config.hosts[idx] : { name:'', alias:'', address:'', check_command:'check-host-alive', check_interval:5, retry_interval:1, max_check_attempts:3, check_period:'24x7', contacts:'', hostgroups:[], enabled:true };
+  const h = idx>=0 ? S.managed.config.hosts[idx] : { name:'', alias:'', address:'', icon:'', check_command:'check-host-alive', check_interval:5, retry_interval:1, max_check_attempts:3, check_period:'24x7', contacts:'', hostgroups:[], enabled:true };
   const tpls = S.managed.config.templates || [];
+  const curIcon = h.icon || '';
+  const curMeta = (window.HOST_ICONS || []).find(x => x.id === curIcon);
+  const iconBtns = `
+    <button type="button" class="icon-pick-btn ${curIcon===''?'active':''}" data-icon-id="" data-search="auto default detect" onclick="selectHostIcon('')">
+      ${hostIconSVG('server', '', null, 18)}
+      <span>Auto</span>
+    </button>` + (window.HOST_ICONS || []).map(ic => `
+    <button type="button" class="icon-pick-btn ${curIcon===ic.id?'active':''}" data-icon-id="${esc(ic.id)}" data-search="${esc(ic.id + ' ' + ic.label + ' ' + ic.cat)}" onclick="selectHostIcon('${esc(ic.id)}')" title="${esc(ic.label)} (${esc(ic.cat)})">
+      ${hostIconSVG(ic.id, '', null, 18)}
+      <span>${esc(ic.label)}</span>
+    </button>`).join('');
+
   openModal(`<h2>${idx>=0?'Edit Host':'Add Host'}</h2>
     <div style="margin-bottom:10px"><span class="save-scope-pill draft">Draft — klik Apply &amp; Reload setelah selesai mengedit</span></div>
     <div class="form-grid">
@@ -1000,6 +1034,14 @@ function openHostForm(idx) {
       <div class="form-row"><label>Contacts</label><input id="f-h-ct" type="text" value="${esc(h.contacts)}"></div>
       <div class="form-row"><label>Interval (min)</label><input id="f-h-int" type="number" value="${h.check_interval||5}"></div>
       <div class="form-row"><label>Max Attempts</label><input id="f-h-att" type="number" value="${h.max_check_attempts||3}"></div>
+    </div>
+    <div class="form-row">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <label style="margin:0">Host Icon (OS / Device) · <span id="f-h-icon-lbl" style="color:var(--accent);text-transform:none;letter-spacing:0">${curMeta ? esc(curMeta.label + ' (' + curMeta.cat + ')') : 'Auto-detect from name / group'}</span></label>
+        <input id="f-h-icon-search" type="search" placeholder="Filter icon (windows, linux, mikrotik...)" oninput="filterHostIconPicker()" style="padding:3.5px 8px;font-size:11.5px;width:210px">
+      </div>
+      <input type="hidden" id="f-h-icon" value="${esc(curIcon)}">
+      <div class="icon-picker-wrap"><div class="icon-picker-grid">${iconBtns}</div></div>
     </div>
     ${idx < 0 && tpls.length ? `<div class="form-row"><label>Apply Service Templates (optional)</label>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -1015,7 +1057,9 @@ async function saveHostForm() {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({
       name, address: document.getElementById('f-h-addr').value.trim(),
-      alias: document.getElementById('f-h-alias').value.trim(), check_command: document.getElementById('f-h-cmd').value.trim(),
+      alias: document.getElementById('f-h-alias').value.trim(),
+      icon: document.getElementById('f-h-icon')?.value || '',
+      check_command: document.getElementById('f-h-cmd').value.trim(),
       hostgroups: document.getElementById('f-h-hg').value.split(',').map(x=>x.trim()).filter(Boolean),
       contacts: document.getElementById('f-h-ct').value.trim(),
       check_interval: Number(document.getElementById('f-h-int').value)||5, retry_interval: 1,

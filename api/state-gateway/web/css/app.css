@@ -243,6 +243,57 @@ body {
 }
 .ui-ico.sm { width: 13px; height: 13px; }
 .ui-ico.lg { width: 18px; height: 18px; }
+.brand-svg { display: block; flex-shrink: 0; }
+.nav-ico {
+  width: 16px; height: 16px; flex-shrink: 0;
+  stroke: currentColor; fill: none; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round;
+  opacity: 0.84; transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.nav-item:hover .nav-ico, .nav-item.active .nav-ico { opacity: 1; }
+.panel-ico {
+  width: 15px; height: 15px; flex-shrink: 0; color: var(--accent);
+  stroke: currentColor; fill: none; stroke-width: 1.85; stroke-linecap: round; stroke-linejoin: round;
+}
+.panel.panel-alert .panel-ico { color: var(--crit-fg); }
+.panel.panel-warn .panel-ico { color: var(--warn-fg); }
+.acct-avatar {
+  width: 42px; height: 42px; border-radius: var(--radius); flex-shrink: 0;
+  display: grid; place-items: center;
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--accent);
+}
+
+/* Host OS & Device Icon Badges + Icon Picker */
+.host-ico-badge {
+  display: inline-grid; place-items: center; flex-shrink: 0;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+.host-ico-badge.sm { width: 22px; height: 22px; border-radius: 6px; }
+.host-ico-badge.md { width: 28px; height: 28px; border-radius: 7px; }
+.host-ico-badge.lg { width: 40px; height: 40px; border-radius: 10px; background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 36%, var(--border)); }
+.host-ico-svg { display: block; }
+.host-name-wrap { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.icon-picker-wrap {
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg);
+  padding: 8px; max-height: 224px; overflow-y: auto;
+}
+.icon-picker-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px;
+}
+.icon-pick-btn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  padding: 8px 6px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); cursor: pointer; font-family: inherit;
+  font-size: 10.5px; font-weight: 550; text-align: center; line-height: 1.15;
+  transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease, color 0.14s ease;
+}
+.icon-pick-btn:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.icon-pick-btn.active {
+  border-color: var(--accent); background: var(--accent-soft); color: var(--text);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent); font-weight: 700;
+}
+.icon-pick-btn span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .pixel-art { image-rendering: pixelated; }
 
 /* ==========================================================================
@@ -314,6 +365,11 @@ body {
   background: color-mix(in srgb, var(--warn) 18%, transparent);
   border-color: color-mix(in srgb, var(--warn) 48%, transparent);
   color: var(--warn-fg);
+}
+.rb-badge.ok {
+  background: var(--ok-bg);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  color: var(--ok-fg);
 }
 .rb-title { font-size: 14.5px; font-weight: 750; letter-spacing: -0.015em; color: var(--text); line-height: 1.2; }
 .rb-sub { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); margin-top: 3px; }

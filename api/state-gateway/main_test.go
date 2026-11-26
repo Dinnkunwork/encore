@@ -87,7 +87,7 @@ func TestConfigStoreCRUDAndClone(t *testing.T) {
 	}
 
 	if err := cs.UpsertHost(ManagedHost{
-		Name: "web-01", Address: "10.0.0.10", CheckCommand: "check-host-alive", Enabled: true,
+		Name: "web-01", Address: "10.0.0.10", Icon: "ubuntu", CheckCommand: "check-host-alive", Enabled: true,
 		Hostgroups: []string{"web"},
 	}); err != nil {
 		t.Fatalf("UpsertHost: %v", err)
@@ -121,10 +121,17 @@ func TestConfigStoreCRUDAndClone(t *testing.T) {
 	if !enabled || !pending || len(cfg.Hosts) != 2 || len(cfg.Services) != 5 {
 		t.Fatalf("unexpected snapshot: hosts=%d svcs=%d pending=%v", len(cfg.Hosts), len(cfg.Services), pending)
 	}
+	icons := cs.HostIconMap()
+	if icons["web-01"] != "ubuntu" || icons["web-02"] != "ubuntu" {
+		t.Fatalf("expected cloned host icon ubuntu, got %+v", icons)
+	}
 
 	// Reject injection characters
 	if err := cs.UpsertHost(ManagedHost{Name: "bad\nhost", Address: "1.2.3.4", Enabled: true}); err == nil {
 		t.Fatalf("expected error on newline in host name")
+	}
+	if err := cs.UpsertHost(ManagedHost{Name: "bad-icon", Address: "1.2.3.5", Icon: "../evil", Enabled: true}); err == nil {
+		t.Fatalf("expected error on invalid icon name")
 	}
 
 	// Render & dry-run validate

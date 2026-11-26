@@ -18,6 +18,7 @@ type ManagedHost struct {
 	Name             string   `json:"name"`
 	Alias            string   `json:"alias"`
 	Address          string   `json:"address"`
+	Icon             string   `json:"icon,omitempty"`
 	CheckCommand     string   `json:"check_command"`
 	CheckInterval    int      `json:"check_interval"`
 	RetryInterval    int      `json:"retry_interval"`
@@ -857,6 +858,21 @@ func (cs *ConfigStore) Snapshot() (ManagedConfig, bool, bool) {
 	return cs.cfg, cs.pendingChanges, cs.managedDir != ""
 }
 
+func (cs *ConfigStore) HostIconMap() map[string]string {
+	if cs == nil {
+		return nil
+	}
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	out := make(map[string]string, len(cs.cfg.Hosts))
+	for _, h := range cs.cfg.Hosts {
+		if h.Icon != "" {
+			out[h.Name] = h.Icon
+		}
+	}
+	return out
+}
+
 func (cs *ConfigStore) UpsertHost(h ManagedHost) error {
 	if err := sanitizeName(h.Name); err != nil {
 		return fmt.Errorf("host name: %w", err)
@@ -869,6 +885,17 @@ func (cs *ConfigStore) UpsertHost(h ManagedHost) error {
 	}
 	if err := sanitizeVal(h.CheckCommand); err != nil {
 		return err
+	}
+	h.Icon = strings.TrimSpace(strings.ToLower(h.Icon))
+	if h.Icon != "" {
+		if len(h.Icon) > 32 {
+			return fmt.Errorf("invalid icon name")
+		}
+		for _, r := range h.Icon {
+			if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+				return fmt.Errorf("invalid icon name")
+			}
+		}
 	}
 	if h.Alias == "" {
 		h.Alias = h.Name

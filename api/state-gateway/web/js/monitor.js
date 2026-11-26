@@ -177,7 +177,7 @@ function renderOverviewFleetMap(hosts) {
     const stCls = !ho.has_been_checked ? '' : (ho.current_state === 1 || ho.svc_crit > 0 ? 'st-down' : (ho.current_state === 2 || ho.svc_warn > 0 ? 'st-warn' : ''));
     return `<button type="button" class="host-tile ${stCls}" onclick="focusHostFromMap('${jsEsc(ho.name)}')" title="${esc(ho.name)} (${esc(ho.address)}) — Click to inspect services">
       <div class="host-tile-top">
-        <span class="host-tile-name">${esc(ho.name)}</span>
+        <span class="host-name-wrap" style="gap:6px">${hostIconBadge(ho, 'sm')}<span class="host-tile-name">${esc(ho.name)}</span></span>
         ${hostBadge(ho)}
       </div>
       <div class="mono" style="font-size:11px;margin-bottom:6px">${esc(ho.address)}</div>
@@ -354,7 +354,7 @@ async function loadOverview() {
     } else {
       rb.innerHTML = `<div class="rb-body">
         <div class="rb-lead">
-          <img class="rb-signal" src="/assets/animated/signal-pulse.svg" alt="">
+          <div class="rb-badge ok">${uiIcon('ok', 'lg')}</div>
           <div>
             <div class="rb-title">Fleet Nominal — All Monitored Systems Clear</div>
             <div class="rb-sub">${sum.hosts.up}/${sum.hosts.total} hosts UP · ${sum.services.ok}/${sum.services.total} services OK · Real-time SSE telemetry active.</div>
@@ -672,6 +672,7 @@ function renderInvByHostDOM() {
         <div class="host-acc-left">
           <span class="host-acc-chev">${uiIcon('chevron')}</span>
           ${canOperate() ? `<input type="checkbox" ${allSelected?'checked':''} aria-label="Select all services on ${esc(h.name)}" title="Select all services on ${esc(h.name)}" onclick="event.stopPropagation()" onchange="toggleInvHostSelectAll(${gIdx},this.checked)">` : ''}
+          ${hostIconBadge({ ...h, hostgroups: g.hostgroups }, 'md')}
           ${hostBadge(h)}
           <div>
             <span class="name-primary">${esc(h.name)}${flagsHTML(h)}</span>
@@ -791,7 +792,7 @@ async function loadMonitorView() {
         return `<tr class="clickable" tabindex="0" onclick="openHostDrawerByKey('${jsEsc(hKey)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openHostDrawerByKey('${jsEsc(hKey)}');}">
           ${canOperate() ? `<td onclick="event.stopPropagation()"><input type="checkbox" class="mon-row-chk" aria-label="Select ${esc(h.name)}" ${S.selectedMon.has(k)?'checked':''} onchange="toggleMonSelect('${jsEsc(k)}',this.checked)"></td>` : ''}
           <td>${hostBadge(h)}</td>
-          <td><div class="name-primary">${esc(h.name)}${flagsHTML(h)}</div><div class="name-sub">${esc(h.address)}</div></td>
+          <td><div class="host-name-wrap">${hostIconBadge(h, 'sm')}<div><div class="name-primary">${esc(h.name)}${flagsHTML(h)}</div><div class="name-sub">${esc(h.address)}</div></div></div></td>
           <td class="mono">${durStr(h.last_state_change)}</td>
           <td class="mono">${relTime(h.last_check)}</td>
           <td class="output-cell" title="${esc(h.plugin_output)}">${esc(h.plugin_output || '-')}</td>
@@ -876,8 +877,8 @@ function renderGroupsView() {
   }).join('') : '<div class="empty">No servicegroups defined</div>';
 
   document.getElementById('mon-body').innerHTML = `
-    <div class="panel"><div class="panel-head"><div class="panel-title"><img src="/assets/icons/network.svg" alt="">Hostgroups</div></div><div class="group-grid">${hgCards}</div></div>
-    <div class="panel"><div class="panel-head"><div class="panel-title"><img src="/assets/icons/cpu.svg" alt="">Servicegroups</div></div><div class="group-grid">${sgCards}</div></div>`;
+    <div class="panel"><div class="panel-head"><div class="panel-title"><svg class="panel-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="8" height="7" rx="1.8" fill="currentColor" fill-opacity="0.14"/><rect x="13" y="4" width="8" height="7" rx="1.8" fill="currentColor" fill-opacity="0.14"/><rect x="8" y="13.5" width="8" height="6.5" rx="1.8" fill="currentColor" fill-opacity="0.14"/></svg>Hostgroups</div></div><div class="group-grid">${hgCards}</div></div>
+    <div class="panel"><div class="panel-head"><div class="panel-title"><svg class="panel-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" fill-opacity="0.14"/><path d="M9.5 3v4M14.5 3v4M9.5 17v4M14.5 17v4M3 9.5h4M3 14.5h4M17 9.5h4M17 14.5h4"/></svg>Servicegroups</div></div><div class="group-grid">${sgCards}</div></div>`;
 }
 
 async function renderDowntimesView() {
@@ -1059,9 +1060,17 @@ function openHostDrawer(idx) { const h = S.lastItems[idx]; if (h) openHostDrawer
 function openSvcDrawer(idx) { const s = S.lastItems[idx]; if (s) openSvcDrawerObj(s); }
 
 function openHostDrawerObj(h) {
+  const icMeta = resolveHostIcon(h.icon, h.name, h.hostgroups);
   document.getElementById('drawer-body').innerHTML = `
     <div class="drawer-head">
-      <div>${hostBadge(h)} ${flagsHTML(h)}<h2 style="margin-top:6px">${esc(h.name)}</h2><div class="name-sub">${esc(h.address)}</div></div>
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        ${hostIconBadge(h, 'lg')}
+        <div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">${hostBadge(h)} ${flagsHTML(h)} <span class="flag-tag">${esc(icMeta.label)}</span></div>
+          <h2 style="margin-top:6px">${esc(h.name)}</h2>
+          <div class="name-sub">${esc(h.address)}</div>
+        </div>
+      </div>
       <button class="icon-btn" onclick="closeDrawer()" title="Close drawer" aria-label="Close drawer">${uiIcon('x')}</button>
     </div>
     <div class="kv-grid">

@@ -53,7 +53,7 @@ async function renderGuide() {
       <div class="guide-hero">
         <div class="guide-hero-copy">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-            <img src="/assets/logo/encore-emblem.png" alt="Encore" style="width:28px;height:28px;border-radius:7px;border:1px solid rgba(250,249,245,0.2)">
+            ${encoreLogoSVG(28, 'brand-svg')}
             <span class="badge c-ok">ENCORE v8 CONTROL ROOM</span>
           </div>
           <h2>Architecture &amp; Operator Workflow</h2>

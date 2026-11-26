@@ -15,14 +15,11 @@ Panduan sistem desain permanen untuk **Encore Control Room** (`api/state-gateway
 - **Smooth Annunciator Badges (`6px` radius):** Pill status dengan indikator LED bundar 6px (`UP`, `DOWN`, `OK`, `WARN`, `CRIT`, `PEND`).
 - **Native View Transitions API:** Transisi halaman halus (`document.startViewTransition`) dengan fallback instan & hormat pada `prefers-reduced-motion`.
 - **Interactive Radial Orbital Topology:** Diagram hub-and-spoke dengan cincin jarak konsentris, sumbu crosshair, dan node host radial yang dapat diklik.
-- **Swiss Split Login (`web/login.html`):** Layout 2-kolom arsitektural (masthead karbon dengan foto perangkat keras `swiss-control-hero.jpg`, emblem `encore-emblem.png`, beacon `telemetry-beacon.gif` + jam live di kiri; panel sign-in alabaster presisi di kanan).
-- **Bespoke Visual Assets (`web/assets/`):**
-  - `scenes/swiss-control-hero.jpg` — Foto studio perangkat telemetri anodized aluminium (Login & Guide hero).
-  - `scenes/fleet-calm.jpg` — Relief alabaster minimalis (Overview *Fleet Nominal* banner).
-  - `logo/encore-emblem.png` + favicons — Emblem presisi Swiss Bauhaus (Sidebar, Login, Browser Tab).
-  - `animated/telemetry-beacon.gif` & `animated/discovery-scan.gif` — GIF animasi telemetri & scanner jaringan 64-warna tajam.
-  - `animated/signal-pulse.svg` — Ikon pulse SVG animasi 658 byte.
-  - `icons/*.svg` — 12 ikon navigasi/panel seragam `1.8px` stroke.
+- **Swiss Split Login (`web/login.html`):** Layout 2-kolom arsitektural (masthead karbon dengan foto perangkat keras `swiss-control-hero.jpg`, emblem SVG geometris bertema + jam live di kiri; panel sign-in bersih di kanan dengan theme switcher custom tanpa detail teknis internal).
+- **Theme-Aware Brand Logo & Duotone Icon System (`web/js/encore-icons.js`):**
+  - Emblem Encore menggunakan inline geometric SVG (`var(--accent)` + `var(--accent-fg)`) sehingga otomatis selaras di seluruh 5 tema (`light`, `dark`, `cyber`, `nord`, `emerald`).
+  - Seluruh icon navigasi sidebar & header panel menggunakan inline duotone SVG (`1.75px` stroke `currentColor` + `14%` fill) yang mewarisi warna aktif tema.
+  - **24 Host OS & Device Icons:** Katalog icon host (`linux`, `windows`, `ubuntu`, `debian`, `rhel`, `alpine`, `macos`, `freebsd`, `proxmox`, `vmware`, `docker`, `kubernetes`, `cloud`, `server`, `mikrotik`, `cisco`, `network`, `firewall`, `wifi`, `loadbalancer`, `database`, `web`, `synology`, `iot`) + auto-detect cerdas dan visual **Host Icon Picker** di Manage → Add/Edit Host, ditampilkan konsisten di Overview, Inventory, Manage, dan Host Detail Drawer.
 
 ---
 

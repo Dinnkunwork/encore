@@ -336,7 +336,9 @@ function openAccountModal() {
   const u = S.me.user || {};
   openModal(`
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-      <encore-icon name="user" size="3" live></encore-icon>
+      <div class="acct-avatar" aria-hidden="true">
+        <svg class="ui-ico lg" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="4" fill="currentColor" fill-opacity="0.16"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>
+      </div>
       <div>
         <h2 style="margin:0">${esc(u.display_name || u.username)}</h2>
         <div class="name-sub">@${esc(u.username)} · Role: <b>${esc((u.role||'admin').toUpperCase())}</b></div>
