@@ -125,22 +125,24 @@ type ServiceState struct {
 }
 
 type HostCounts struct {
-	Total       int `json:"total"`
-	Up          int `json:"up"`
-	Down        int `json:"down"`
-	Unreachable int `json:"unreachable"`
-	Pending     int `json:"pending"`
-	Unhandled   int `json:"unhandled"`
+	Total         int `json:"total"`
+	Up            int `json:"up"`
+	Down          int `json:"down"`
+	Unreachable   int `json:"unreachable"`
+	Pending       int `json:"pending"`
+	Unhandled     int `json:"unhandled"`
+	UnhandledDown int `json:"unhandled_down"`
 }
 
 type ServiceCounts struct {
-	Total     int `json:"total"`
-	OK        int `json:"ok"`
-	Warning   int `json:"warning"`
-	Critical  int `json:"critical"`
-	Unknown   int `json:"unknown"`
-	Pending   int `json:"pending"`
-	Unhandled int `json:"unhandled"`
+	Total             int `json:"total"`
+	OK                int `json:"ok"`
+	Warning           int `json:"warning"`
+	Critical          int `json:"critical"`
+	Unknown           int `json:"unknown"`
+	Pending           int `json:"pending"`
+	Unhandled         int `json:"unhandled"`
+	UnhandledCritical int `json:"unhandled_critical"`
 }
 
 type SummaryResponse struct {
@@ -349,6 +351,9 @@ func (s *StateStore) Summary() SummaryResponse {
 			}
 			if h.CurrentState > 0 && h.Acknowledged == 0 && h.DowntimeDepth == 0 {
 				hc.Unhandled++
+				if h.CurrentState == 1 {
+					hc.UnhandledDown++
+				}
 			}
 		}
 	}
@@ -371,6 +376,9 @@ func (s *StateStore) Summary() SummaryResponse {
 			}
 			if sv.CurrentState > 0 && sv.Acknowledged == 0 && sv.DowntimeDepth == 0 {
 				sc.Unhandled++
+				if sv.CurrentState == 2 {
+					sc.UnhandledCritical++
+				}
 			}
 		}
 	}
@@ -420,6 +428,9 @@ func (s *StateStore) HostgroupSummaries() []HostgroupSummary {
 					}
 					if h.CurrentState > 0 && h.Acknowledged == 0 && h.DowntimeDepth == 0 {
 						hc.Unhandled++
+						if h.CurrentState == 1 {
+							hc.UnhandledDown++
+						}
 					}
 				}
 			}
@@ -445,6 +456,9 @@ func (s *StateStore) HostgroupSummaries() []HostgroupSummary {
 				}
 				if sv.CurrentState > 0 && sv.Acknowledged == 0 && sv.DowntimeDepth == 0 {
 					sc.Unhandled++
+					if sv.CurrentState == 2 {
+						sc.UnhandledCritical++
+					}
 				}
 			}
 		}
@@ -484,6 +498,9 @@ func (s *StateStore) ServicegroupSummaries() []ServicegroupSummary {
 					}
 					if sv.CurrentState > 0 && sv.Acknowledged == 0 && sv.DowntimeDepth == 0 {
 						sc.Unhandled++
+						if sv.CurrentState == 2 {
+							sc.UnhandledCritical++
+						}
 					}
 				}
 			}

@@ -46,8 +46,10 @@ async function loadMeta() {
   }
 
   const totalProb = sum.hosts.down + sum.hosts.unreachable + sum.services.warning + sum.services.critical + sum.services.unknown;
+  const hasAnyCrit = sum.hosts.down > 0 || sum.services.critical > 0;
   const pb = document.getElementById('nav-prob-badge');
   pb.style.display = totalProb > 0 ? 'inline-block' : 'none';
+  pb.classList.toggle('warn', totalProb > 0 && !hasAnyCrit);
   pb.textContent = totalProb;
 
   syncSelect('hg-select', 'All Hostgroups', S.hostgroups.map(g => g.group_name));
@@ -144,7 +146,7 @@ function renderOverviewFleetMap(hosts) {
       const ny = cy + Math.sin(ang) * ry;
       const stTxt = !ho.has_been_checked ? 'PEND' : (ho.current_state === 1 ? 'DOWN' : (ho.svc_crit > 0 ? `${ho.svc_crit}C` : (ho.svc_warn > 0 ? `${ho.svc_warn}W` : 'OK')));
       const stroke = !ho.has_been_checked ? 'var(--muted)' : (ho.current_state === 1 || ho.svc_crit > 0 ? 'var(--crit)' : (ho.current_state === 2 || ho.svc_warn > 0 ? 'var(--warn)' : 'var(--ok)'));
-      const lineCol = ho.current_state === 1 || ho.svc_crit > 0 ? 'var(--crit)' : 'var(--border-strong)';
+      const lineCol = ho.current_state === 1 || ho.svc_crit > 0 ? 'var(--crit)' : (ho.current_state === 2 || ho.svc_warn > 0 ? 'var(--warn)' : 'var(--border-strong)');
       const shortName = ho.name.length > 10 ? ho.name.slice(0, 9) + '…' : ho.name;
       return `
         <line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="${lineCol}" stroke-width="${ho.current_state===1||ho.svc_crit>0?'1.6':'1'}" stroke-dasharray="${ho.current_state===1?'4 2':''}" opacity="0.75"/>
@@ -272,35 +274,55 @@ async function loadOverview() {
   const hPct = sum.hosts.total ? Math.round((sum.hosts.up / sum.hosts.total) * 100) : 100;
   const sPct = sum.services.total ? Math.round((sum.services.ok / sum.services.total) * 100) : 100;
   const unhand = sum.hosts.unhandled + sum.services.unhandled;
+  const unhandCrit = (sum.hosts.unhandled_down ?? sum.hosts.down) + (sum.services.unhandled_critical ?? sum.services.critical);
+  const hasCritUnhandled = unhand > 0 && unhandCrit > 0;
+  const hasWarnOnlyUnhandled = unhand > 0 && !hasCritUnhandled;
 
   document.getElementById('ov-h-pct').textContent = hPct + '%';
   document.getElementById('ov-h-up').textContent = sum.hosts.up + ' UP';
-  document.getElementById('ov-h-down').textContent = sum.hosts.down + ' DOWN';
+  const hDownEl = document.getElementById('ov-h-down');
+  if (hDownEl) {
+    hDownEl.textContent = sum.hosts.down + ' DOWN';
+    hDownEl.style.color = sum.hosts.down > 0 ? 'var(--crit-fg)' : '';
+  }
   document.getElementById('ov-h-tot').textContent = sum.hosts.total + ' total';
   const hLed = document.getElementById('kpi-h-led');
-  if (hLed) hLed.className = 'kpi-led ' + (sum.hosts.down > 0 ? 'crit' : '');
+  if (hLed) hLed.className = 'kpi-led ' + (sum.hosts.down > 0 ? 'crit' : (sum.hosts.unreachable > 0 ? 'warn' : ''));
 
   document.getElementById('ov-s-pct').textContent = sPct + '%';
   document.getElementById('ov-s-ok').textContent = sum.services.ok + ' OK';
-  document.getElementById('ov-s-warn').textContent = sum.services.warning + ' WARN';
-  document.getElementById('ov-s-crit').textContent = sum.services.critical + ' CRIT';
+  const sWarnEl = document.getElementById('ov-s-warn');
+  if (sWarnEl) {
+    sWarnEl.textContent = sum.services.warning + ' WARN';
+    sWarnEl.style.color = sum.services.warning > 0 ? 'var(--warn-fg)' : '';
+  }
+  const sCritEl = document.getElementById('ov-s-crit');
+  if (sCritEl) {
+    sCritEl.textContent = sum.services.critical + ' CRIT';
+    sCritEl.style.color = sum.services.critical > 0 ? 'var(--crit-fg)' : '';
+  }
   const sLed = document.getElementById('kpi-s-led');
   if (sLed) sLed.className = 'kpi-led ' + (sum.services.critical > 0 ? 'crit' : (sum.services.warning > 0 ? 'warn' : ''));
 
   document.getElementById('ov-unhandled').textContent = unhand;
   document.getElementById('ov-u-sub').textContent = unhand > 0 ? `${sum.hosts.unhandled} hosts · ${sum.services.unhandled} services` : 'All clear';
   const uLed = document.getElementById('kpi-u-led');
-  if (uLed) uLed.className = 'kpi-led ' + (unhand > 0 ? 'crit' : '');
-  document.getElementById('kpi-unhandled-card')?.classList.toggle('is-alert', unhand > 0);
+  if (uLed) uLed.className = 'kpi-led ' + (hasCritUnhandled ? 'crit' : (hasWarnOnlyUnhandled ? 'warn' : ''));
+  const uCard = document.getElementById('kpi-unhandled-card');
+  if (uCard) {
+    uCard.classList.toggle('is-alert', hasCritUnhandled);
+    uCard.classList.toggle('is-warn', hasWarnOnlyUnhandled);
+  }
 
-  // Operational Readiness / Incident Command Strip
+  // Operational Readiness / Incident / Warning Command Strip
   const rb = document.getElementById('ov-readiness-banner');
   if (rb) {
-    rb.classList.toggle('is-incident', unhand > 0);
-    if (unhand > 0) {
+    rb.classList.toggle('is-incident', hasCritUnhandled);
+    rb.classList.toggle('is-warning', hasWarnOnlyUnhandled);
+    if (hasCritUnhandled) {
       rb.innerHTML = `<div class="rb-body">
         <div class="rb-lead">
-          <img class="rb-signal" src="/assets/animated/signal-pulse.svg" alt="">
+          <div class="rb-badge crit">${uiIcon('alert', 'lg')}</div>
           <div>
             <div class="rb-title" style="color:var(--crit-fg)">Active Incident — ${unhand} Unhandled Problem${unhand===1?'':'s'} Requiring Attention</div>
             <div class="rb-sub">${sum.hosts.down} host(s) down · ${sum.services.critical} critical · ${sum.services.warning} warning · Review the priority queue below.</div>
@@ -308,6 +330,24 @@ async function loadOverview() {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-sm danger" onclick="quickUnhandled()">Open Problems Queue</button>
+          <button class="btn btn-sm" onclick="setView('inventory','byhost')">Inspect By Host</button>
+        </div>
+      </div>`;
+    } else if (hasWarnOnlyUnhandled) {
+      const warnParts = [];
+      if (sum.services.warning > 0) warnParts.push(`${sum.services.warning} warning`);
+      if (sum.services.unknown > 0) warnParts.push(`${sum.services.unknown} unknown`);
+      if (sum.hosts.unreachable > 0) warnParts.push(`${sum.hosts.unreachable} unreachable`);
+      rb.innerHTML = `<div class="rb-body">
+        <div class="rb-lead">
+          <div class="rb-badge warn">${uiIcon('alert', 'lg')}</div>
+          <div>
+            <div class="rb-title" style="color:var(--warn-fg)">Active Warning — ${unhand} Unhandled Warning${unhand===1?'':'s'} to Review</div>
+            <div class="rb-sub">${warnParts.join(' · ') || `${unhand} warning(s)`} · No critical outages detected.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm warn" onclick="quickUnhandled()">Review Warnings</button>
           <button class="btn btn-sm" onclick="setView('inventory','byhost')">Inspect By Host</button>
         </div>
       </div>`;
@@ -334,7 +374,8 @@ async function loadOverview() {
   const topSlot = document.getElementById('ov-incident-top');
   const homeSlot = document.getElementById('ov-incident-home');
   if (probPanel && topSlot && homeSlot) {
-    probPanel.classList.toggle('panel-alert', unhand > 0);
+    probPanel.classList.toggle('panel-alert', hasCritUnhandled);
+    probPanel.classList.toggle('panel-warn', hasWarnOnlyUnhandled);
     if (unhand > 0 && probPanel.parentElement !== topSlot) topSlot.appendChild(probPanel);
     else if (unhand === 0 && probPanel.parentElement !== homeSlot) homeSlot.appendChild(probPanel);
   }
