@@ -382,16 +382,16 @@
       <!-- GUIDE -->
       <section id="sec-guide" class="view-section" style="display:none">
         <div class="subtabs">
-          <div class="subtab-list">
-            <button class="subtab active" id="gtab-quick" onclick="setGuideTab('quick')">Workflow</button>
-            <button class="subtab" id="gtab-menus" onclick="setGuideTab('menus')">Menus &amp; Features</button>
-            <button class="subtab" id="gtab-ncpa" onclick="setGuideTab('ncpa')">NCPA Setup</button>
-            <button class="subtab" id="gtab-notify" onclick="setGuideTab('notify')">Notifications</button>
-            <button class="subtab" id="gtab-catalog" onclick="setGuideTab('catalog')">Catalog</button>
-            <button class="subtab" id="gtab-paths" onclick="setGuideTab('paths')">Paths &amp; FAQ</button>
+          <div class="subtab-list" role="tablist" aria-label="User Guide Sections">
+            <button class="subtab active" id="gtab-quick" role="tab" aria-selected="true" onclick="setGuideTab('quick')">Workflow</button>
+            <button class="subtab" id="gtab-menus" role="tab" aria-selected="false" onclick="setGuideTab('menus')">Menus &amp; Features</button>
+            <button class="subtab" id="gtab-ncpa" role="tab" aria-selected="false" onclick="setGuideTab('ncpa')">NCPA Setup</button>
+            <button class="subtab" id="gtab-notify" role="tab" aria-selected="false" onclick="setGuideTab('notify')">Notifications</button>
+            <button class="subtab" id="gtab-catalog" role="tab" aria-selected="false" onclick="setGuideTab('catalog')">Catalog</button>
+            <button class="subtab" id="gtab-paths" role="tab" aria-selected="false" onclick="setGuideTab('paths')">Paths &amp; FAQ</button>
           </div>
           <div class="subtab-actions">
-            <input type="search" id="guide-search" placeholder="Filter guide..." aria-label="Filter guide" style="width:180px" oninput="renderGuide()">
+            <input type="search" id="guide-search" placeholder="Search all guide tabs..." aria-label="Search all user guide tabs" style="width:210px" oninput="renderGuide()">
           </div>
         </div>
         <div id="guide-content"></div>

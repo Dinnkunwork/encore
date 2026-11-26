@@ -1,324 +1,543 @@
-function setGuideTab(t) {
+/* ==========================================================================
+   ENCORE CONTROL ROOM — USER GUIDE (READ MODE)
+   Cross-tab search, RBAC-aware actions, interactive NCPA generator, live catalog
+   ========================================================================== */
+
+let _guidePathsCache = null;
+let _guidePluginsCache = null;
+let _guideNcpaToken = '';
+let _guideNcpaServer = (typeof location !== 'undefined' && location.hostname && location.hostname !== 'localhost') ? location.hostname : 'ENCORE_SERVER_IP';
+
+function setGuideTab(t, skipHash) {
   S.guideTab = t;
-  ['quick','menus','ncpa','notify','catalog','paths'].forEach(k => document.getElementById('gtab-'+k)?.classList.toggle('active', k===t));
+  ['quick','menus','ncpa','notify','catalog','paths'].forEach(k => {
+    const btn = document.getElementById('gtab-' + k);
+    if (btn) {
+      btn.classList.toggle('active', k === t);
+      btn.setAttribute('aria-selected', k === t ? 'true' : 'false');
+    }
+  });
+  if (!skipHash && typeof syncHashFromState === 'function') syncHashFromState();
   renderGuide();
 }
 
-function setNcpaOS(os) { S.ncpaOS = os; renderGuide(); }
+function setNcpaOS(os) {
+  S.ncpaOS = os;
+  renderGuide();
+}
+
+function updateNcpaVar(kind, val) {
+  const clean = String(val || '').trim();
+  if (kind === 'token') _guideNcpaToken = clean;
+  else _guideNcpaServer = clean || 'ENCORE_SERVER_IP';
+  const pre = document.getElementById('ncpa-install-pre');
+  if (pre) pre.textContent = ncpaInstallSnippet(S.ncpaOS);
+  const verPre = document.getElementById('ncpa-verify-pre');
+  if (verPre) verPre.textContent = ncpaVerifySnippet();
+}
+
+function ncpaTokenVal() { return _guideNcpaToken || 'YOUR_NCPA_TOKEN'; }
+function ncpaServerVal() { return _guideNcpaServer || 'ENCORE_SERVER_IP'; }
 
 function ncpaInstallSnippet(os) {
+  const tok = ncpaTokenVal();
+  const srv = ncpaServerVal();
   if (os === 'rhel') {
-    return `# 1. Tambah repo resmi Nagios & install NCPA (RHEL/Rocky/Alma 9; ganti 9 -> 8 untuk EL8)
+    return `# 1. Add official Nagios repo & install NCPA (RHEL/Rocky/Alma 9; use 8 for EL8)
 sudo rpm -Uvh https://repo.nagios.com/nagios/9/nagios-repo-9-1.el9.noarch.rpm
 sudo dnf install -y ncpa
 
-# 2. Set token (harus sama dengan $USER2$ di Encore -> Manage -> Secrets)
-sudo sed -i 's/^community_string = .*/community_string = TOKEN_ANDA/' /usr/local/ncpa/etc/ncpa.cfg
+# 2. Set community_string (must match $USER2$ in Manage -> Secrets)
+sudo sed -i 's/^community_string = .*/community_string = ${tok}/' /usr/local/ncpa/etc/ncpa.cfg
 sudo systemctl enable --now ncpa
 
-# 3. Buka port 5693/tcp HANYA dari IP Server Encore
-sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="IP_SERVER_ENCORE" port port="5693" protocol="tcp" accept'
+# 3. Allow port 5693/tcp ONLY from the Encore server
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="${srv}" port port="5693" protocol="tcp" accept'
 sudo firewall-cmd --reload`;
   }
   if (os === 'windows') {
-    return `# 1. Unduh installer NCPA (.exe) dari https://www.nagios.org/ncpa/#downloads
-# 2. Jalankan wizard -> isi Token (sama dengan $USER2$ di Encore) -> Port 5693 -> Finish
-# 3. (Opsional PowerShell Admin) Batasi firewall 5693 hanya dari IP Server Encore:
-New-NetFirewallRule -DisplayName "Encore NCPA 5693" -Direction Inbound -Protocol TCP -LocalPort 5693 -RemoteAddress IP_SERVER_ENCORE -Action Allow`;
+    return `# 1. Download the NCPA Windows installer (.exe) from https://www.nagios.org/ncpa/#downloads
+# 2. Run the wizard -> set Token (${tok}) -> Port 5693 -> Finish
+# 3. (Optional Admin PowerShell) Restrict port 5693 to the Encore server only:
+New-NetFirewallRule -DisplayName "Encore NCPA 5693" -Direction Inbound -Protocol TCP -LocalPort 5693 -RemoteAddress ${srv} -Action Allow`;
   }
-  return `# 1. Tambah repo resmi Nagios & install NCPA (Ubuntu / Debian)
+  return `# 1. Add official Nagios repo & install NCPA (Ubuntu / Debian)
 curl -sSL https://repo.nagios.com/GPG-KEY-NAGIOS-V3 | sudo gpg --dearmor -o /usr/share/keyrings/nagios.gpg
 echo "deb [signed-by=/usr/share/keyrings/nagios.gpg] https://repo.nagios.com/deb/$(lsb_release -cs) /" | sudo tee /etc/apt/sources.list.d/nagios.list
 sudo apt update && sudo apt install -y ncpa
 
-# 2. Set token (harus sama dengan $USER2$ di Encore -> Manage -> Secrets)
-sudo sed -i 's/^community_string = .*/community_string = TOKEN_ANDA/' /usr/local/ncpa/etc/ncpa.cfg
+# 2. Set community_string (must match $USER2$ in Manage -> Secrets)
+sudo sed -i 's/^community_string = .*/community_string = ${tok}/' /usr/local/ncpa/etc/ncpa.cfg
 sudo systemctl enable --now ncpa
 
-# 3. Buka port 5693/tcp HANYA dari IP Server Encore
-sudo ufw allow from IP_SERVER_ENCORE to any port 5693 proto tcp`;
+# 3. Allow port 5693/tcp ONLY from the Encore server
+sudo ufw allow from ${srv} to any port 5693 proto tcp`;
 }
 
-function guideMatches(q, text) {
-  if (!q) return true;
-  return text.toLowerCase().includes(q);
+function ncpaVerifySnippet() {
+  return `curl -k "https://TARGET_HOST_IP:5693/api/cpu/percent?token=${ncpaTokenVal()}"`;
+}
+
+/* Safe Copy Helper with Inline Feedback (avoids inline JS string quoting bugs) */
+function copyGuideBtn(btn, textOverride) {
+  const txt = typeof textOverride === 'string'
+    ? textOverride
+    : (btn?.dataset?.copy ?? btn?.closest('.code-block-wrap')?.querySelector('pre')?.textContent ?? '');
+  copyText(txt);
+  if (btn) {
+    const prev = btn.dataset.origLabel || btn.innerHTML;
+    btn.dataset.origLabel = prev;
+    btn.innerHTML = `${uiIcon('check')} Copied`;
+    btn.classList.add('active');
+    clearTimeout(btn._cpTimer);
+    btn._cpTimer = setTimeout(() => {
+      btn.innerHTML = prev;
+      btn.classList.remove('active');
+    }, 1500);
+  }
+}
+
+function guideAdminCTA(label, onClickJS, cls = 'btn btn-sm') {
+  if (!isAdmin()) return `<span class="flag-tag" title="Requires Admin role">Admin Only</span>`;
+  return `<button type="button" class="${cls}" onclick="${onClickJS}">${label}</button>`;
+}
+
+function guideMenuSections() {
+  return [
+    {
+      tab: 'menus', id: 'overview',
+      title: '1. Overview — Executive Control Room',
+      action: `<button type="button" class="btn btn-sm" onclick="setView('overview')">Open Overview</button>`,
+      items: [
+        '<b>Operational Readiness Banner:</b> Distinguishes <i>Fleet Nominal</i> (green), <i>Active Warning</i> (amber — no critical outages), and <i>Active Incident</i> (red) so warnings never masquerade as critical outages.',
+        '<b>4 Chronograph KPI Cards:</b> Clickable summary metrics for <b>01 / Host Health</b>, <b>02 / Service Health</b>, <b>03 / Unhandled</b>, and <b>04 / 24h Service SLA</b>.',
+        '<b>Customizable 12-Column Layout:</b> Click <b>Layout</b> (or <b>Display → Overview Layout → Customize</b>) to drag-and-drop widgets, reorder with <b>↑/↓</b> keyboard buttons, cycle width (<b>5 / 6 / 7 / 12</b>), hide/restore widgets, or toggle <b>Auto-pin Problems</b>. Saved in browser storage.',
+        '<b>Fleet Health Map &amp; Radial Topology:</b> Switch between <b>Health Grid</b> (with 24 Host OS/Device icons) and interactive <b>Radial Topology</b> (persisted across reloads).',
+        '<b>Distribution, 24h Uptime &amp; Live Metrics (6h):</b> Severity-accurate stacked uptime trend plus an inline 6-hour performance metric widget directly on Overview.',
+        '<b>Unhandled Problems (Hosts &amp; Services):</b> Displays both unhandled DOWN/UNREACHABLE hosts and critical/warning services with inline Force Check and Acknowledge actions.'
+      ]
+    },
+    {
+      tab: 'menus', id: 'inventory',
+      title: '2. Inventory — By Host, Services, Hosts & Groups',
+      action: `<button type="button" class="btn btn-sm" onclick="setView('inventory','byhost')">Open Inventory</button>`,
+      items: [
+        '<b>By Host (Default):</b> Accordion view grouping each host with its OS/device icon, health bar, hostgroups, and all monitored services.',
+        '<b>Services &amp; Hosts Views:</b> Filter by Hostgroup, Servicegroup, State, Sort order, or <b>Unhandled</b> toggle using sleek theme-matched dropdowns and checkboxes.',
+        '<b>Slide-Over Detail Drawer:</b> Click any host or service row to inspect live <code>plugin_output</code>, performance chips, 6h metric trends, and inline <b>Acknowledge</b> / <b>Downtime</b> forms.',
+        '<b>Bulk Operations:</b> Select multiple rows to Force Check, Acknowledge, or schedule Downtime in a single batch.'
+      ]
+    },
+    {
+      tab: 'menus', id: 'problems',
+      title: '3. Problems — Active Triage & Downtimes',
+      action: `<button type="button" class="btn btn-sm" onclick="setView('problems','active')">Open Problems</button>`,
+      items: [
+        '<b>Active Queue:</b> Automatically filters non-OK services sorted by severity (CRITICAL first, then WARNING/UNKNOWN).',
+        '<b>Scheduled &amp; Recurring Downtimes:</b> Inspect active maintenance windows, cancel with confirmation, or define recurring weekly maintenance schedules.',
+        '<b>Alert Chime &amp; TV Mode:</b> Enable real-time Web Audio HARD-alert chime or launch fullscreen NOC Wallboard via <b>Display</b> or <code>Shift+T</code>.'
+      ]
+    },
+    {
+      tab: 'menus', id: 'reports',
+      title: '4. Reports — SLA, Stacked Trends, Metrics & Digest',
+      action: `<button type="button" class="btn btn-sm" onclick="setView('reports','sla')">Open Reports</button>`,
+      items: [
+        '<b>Severity-Accurate Stacked Uptime Trend:</b> Hourly/daily stacked bars show <b>OK</b> (green), <b>Warn</b> (amber), and <b>Crit</b> (red only when critical outage occurred). Solid red dots mark critical HARD incidents; amber rings mark warning transitions.',
+        '<b>Interactive Metrics:</b> Time-series SVG area/line charts with crosshair hover tooltips and WARN/CRIT threshold dashed lines.',
+        '<b>Alerts &amp; Event Log:</b> Search historical alert transitions (with HARD-only filter) and notification history.',
+        '<b>Scheduled SLA Digest &amp; Export:</b> Automate daily/weekly SLA summaries via Email/Webhook, or export filtered reports to <b>CSV</b> and <b>Print / PDF</b>.'
+      ]
+    },
+    {
+      tab: 'menus', id: 'manage',
+      title: '5. Manage — Configuration, Host Icons, Discovery & RBAC',
+      action: guideAdminCTA('Open Manage', "setView('manage','objects')"),
+      items: [
+        '<b>Hosts &amp; Services + 24 Host OS Icons:</b> Create, edit, clone, and bulk-edit hosts with a visual <b>24-Icon OS &amp; Device Picker</b> (Linux, Windows, Ubuntu, Debian, RHEL, Proxmox, VMware, Docker, K8s, MikroTik, Cisco, Synology, Firewall, etc. + Auto-detect).',
+        '<b>Templates &amp; Network Discovery:</b> Apply reusable service bundles (Linux NCPA, Windows, Web/SSL) to multiple hosts, or scan CIDR subnets to onboard live hosts safely.',
+        '<b>Commands, Scripts &amp; Secrets:</b> Define check commands, manage custom plugins in <code>$USER1$</code>, and store sensitive tokens/passwords in <code>$USER2$..$USER32$</code>.',
+        '<b>Notifications &amp; Users (RBAC):</b> Configure Email SMTP and emoji-formatted Telegram/Discord/Slack/Generic Webhooks, and manage <b>Admin / Operator / Viewer</b> accounts.',
+        '<b>Safe Draft Workflow:</b> Review pending changes in <b>Diff Review</b>, run <b>Validate</b> (<code>nagios -v</code>), then click <b>Apply &amp; Reload</b> (with automatic backup).'
+      ]
+    },
+    {
+      tab: 'menus', id: 'system',
+      title: '6. System — Engine Controls, Backups & Audit',
+      action: guideAdminCTA('Open System', "setView('system','controls')"),
+      items: [
+        '<b>Controls:</b> Toggle global Active Checks, Notifications, Event Handlers, and Flap Detection.',
+        '<b>Backups &amp; 1-Click Rollback:</b> Every <i>Apply &amp; Reload</i> snapshots the previous config for instant one-click recovery.',
+        '<b>Audit Log:</b> Chronological trail of every administrative mutation and configuration deployment.'
+      ]
+    }
+  ];
+}
+
+function ncpaMetricRows() {
+  return [
+    { name: 'CPU Usage (%)', cmd: 'check_ncpa!cpu/percent!-w 80 -c 95' },
+    { name: 'RAM Usage (%)', cmd: 'check_ncpa!memory/virtual/percent!-w 80 -c 90' },
+    { name: 'Linux Root Disk (/)', cmd: 'check_ncpa!disk/logical/|/used_percent!-w 80 -c 90' },
+    { name: 'Windows C: Drive', cmd: 'check_ncpa!disk/logical/C:|/used_percent!-w 80 -c 90' },
+    { name: 'Systemd / Win Service', cmd: 'check_ncpa!services!-q service=nginx,status=running' },
+    { name: 'SSL Cert Expiry (Go)', cmd: 'check_http!-H $HOSTADDRESS$ -S -C 30,14' }
+  ];
+}
+
+function guideFaqItems() {
+  return [
+    { q: 'Why did Apply & Reload fail validation?', a: 'Check the exact line reported in the Validate console (for example, a missing command or hostgroup name). Fix the object or click <b>Discard</b> in the yellow Draft banner to revert all staged edits safely.' },
+    { q: 'I made a mistake after Apply & Reload — how do I roll back?', a: 'Open <b>System → Backups</b> and click <b>Restore</b> on the previous snapshot. Encore automatically validates and reloads the restored configuration.' },
+    { q: 'How do I verify Encore Gateway health from CLI or Nginx?', a: 'Query <code>GET /health</code> or <code>GET /healthz</code> on the gateway port to confirm engine socket connectivity, applied event count, and pending config state.' },
+    { q: 'Why does a warning-only host not turn red on Overview?', a: 'By design, Encore reserves red strictly for <b>CRITICAL / DOWN</b> outages. Warning-only states highlight in amber across the Readiness Banner, KPI cards, Stacked Uptime Trend, and Sidebar badge.' },
+    { q: 'How do I check SSL certificate expiry?', a: 'Use the built-in in-process Go worker command <code>check_http!-H $HOSTADDRESS$ -S -C 30,14</code> (warns at 30 days, critical at 14 days) with zero external fork overhead.' }
+  ];
+}
+
+function renderCrossTabSearch(q) {
+  const hits = [];
+  const pushHit = (tab, tabLabel, title, bodyHTML, searchHay) => {
+    if ((title + ' ' + searchHay).toLowerCase().includes(q)) {
+      hits.push({ tab, tabLabel, title, bodyHTML });
+    }
+  };
+
+  pushHit('quick', 'Workflow', 'Architecture & Operator Workflow',
+    '<p class="guide-prose">Encore pairs a C monitoring engine, in-process Go workers, and a real-time SSE Control Room with Instant Save, Draft (Apply &amp; Reload), and Auto-Reload scopes.</p>',
+    'architecture workflow sse go worker instant save draft apply reload status badges ack dt soft flap ctrl+k shift+t');
+
+  guideMenuSections().forEach(s => {
+    const raw = s.items.join(' ');
+    pushHit('menus', 'Menus & Features', s.title, `<ul class="guide-steps">${s.items.map(i => `<li>${i}</li>`).join('')}</ul>`, raw);
+  });
+
+  ncpaMetricRows().forEach(m => {
+    pushHit('ncpa', 'NCPA Setup', `NCPA Metric: ${m.name}`,
+      `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><code class="code-chip">${esc(m.cmd)}</code><button type="button" class="btn btn-sm" data-copy="${esc(m.cmd)}" onclick="copyGuideBtn(this)">Copy</button></div>`,
+      `ncpa install ubuntu debian rhel rocky windows port 5693 firewall token secret ${m.name} ${m.cmd}`);
+  });
+
+  pushHit('notify', 'Notifications', 'Email SMTP & Emoji Webhook Alerts',
+    '<p class="guide-prose">Configure SMTP (STARTTLS/SSL, App Password) or Telegram, Discord, Slack, and Generic JSON Webhooks with emoji severity formatting under <b>Manage → Notifications</b>.</p>',
+    'email smtp gmail office365 starttls ssl webhook telegram discord slack emoji notification recovery hard only');
+
+  guideFaqItems().forEach(f => {
+    pushHit('paths', 'Paths & FAQ', f.q, `<p class="guide-prose">${f.a}</p>`, f.q + ' ' + f.a);
+  });
+
+  if (S.catalogCmds && S.catalogCmds.length) {
+    S.catalogCmds.forEach(c => {
+      if ((c.name + ' ' + c.description + ' ' + c.example).toLowerCase().includes(q)) {
+        hits.push({
+          tab: 'catalog', tabLabel: 'Catalog', title: `Command: ${c.name}`,
+          bodyHTML: `<p class="guide-prose" style="margin-bottom:8px">${esc(c.description)}</p><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><code class="code-chip">${esc(c.example)}</code><button type="button" class="btn btn-sm" data-copy="${esc(c.example)}" onclick="copyGuideBtn(this)">Copy</button></div>`
+        });
+      }
+    });
+  }
+
+  return `
+    <div class="guide-search-banner" role="status" aria-live="polite">
+      <span>Found <b>${hits.length}</b> matching topic${hits.length === 1 ? '' : 's'} across all guide tabs for "<b>${esc(q)}</b>"</span>
+      <button type="button" class="btn btn-sm" onclick="document.getElementById('guide-search').value='';renderGuide()">Clear Search</button>
+    </div>
+    ${hits.length ? hits.map(h => `
+      <div class="guide-card">
+        <div class="guide-card-head">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="flag-tag">${esc(h.tabLabel)}</span>
+            <h3>${esc(h.title)}</h3>
+          </div>
+          <button type="button" class="btn btn-sm" onclick="document.getElementById('guide-search').value='';setGuideTab('${h.tab}')">Open Tab</button>
+        </div>
+        ${h.bodyHTML}
+      </div>`).join('') : `<div class="panel"><div class="art-empty">${artSVG('search')}<h4>No Matching Guide Topics</h4><p>No workflow notes, NCPA snippets, FAQs, or catalog commands matched "${esc(q)}".</p></div></div>`}`;
 }
 
 async function renderGuide() {
   const el = document.getElementById('guide-content');
+  if (!el) return;
   const q = (document.getElementById('guide-search')?.value || '').trim().toLowerCase();
+
+  if (q && S.guideTab !== 'catalog') {
+    el.innerHTML = renderCrossTabSearch(q);
+    return;
+  }
 
   if (S.guideTab === 'quick') {
     el.innerHTML = `
       <div class="guide-hero">
         <div class="guide-hero-copy">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-            ${encoreLogoSVG(28, 'brand-svg')}
-            <span class="badge c-ok">ENCORE v8 CONTROL ROOM</span>
+            ${encoreLogoSVG(30, 'brand-svg')}
+            <span class="flag-tag" style="background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.22);color:#faf9f5">ENCORE CONTROL ROOM</span>
           </div>
           <h2>Architecture &amp; Operator Workflow</h2>
-          <p>Encore pairs a C monitoring engine, in-process Go check workers, and a real-time SSE Control Room into one low-latency operational instrument.</p>
+          <p>Encore combines a C monitoring engine, in-process Go check workers, and a real-time SSE Control Room into one calm operational instrument.</p>
         </div>
-        <div class="guide-hero-img"><img src="/assets/scenes/swiss-control-hero.jpg" alt="Encore Hardware Telemetry"></div>
+        <div class="guide-hero-img"><img src="/assets/scenes/swiss-control-hero.jpg" alt="Encore Control Room Hardware"></div>
       </div>
 
       <div class="guide-card">
-        <div class="guide-card-head"><h3>Core Components</h3></div>
-        <ol class="guide-steps">
-          <li><b>Encore Core Engine (C):</b> Schedules checks, maintains live memory state, and persists historical logs with non-blocking <i>Async CoW Save</i>.</li>
-          <li><b>Encore Go Worker (<code>encore-go-worker</code>):</b> Executes <code>check_tcp</code>, <code>check_http</code> (Strict TLS &amp; SSL expiry <code>-C</code>), <code>check_dummy</code>, and <code>check_ncpa</code> in-process with zero fork overhead.</li>
-          <li><b>Encore State Gateway &amp; Control Room (<code>encore-state-gateway</code>):</b> Streams live state over SSE (with the 60fps Oscilloscope Ribbon), serves the 5-theme Swiss Control Room UI, RBAC sessions, 7-day Time-Series Metrics, Scheduled SLA Digests, Network Discovery, and SMTP/Webhook alerts.</li>
-        </ol>
+        <div class="guide-card-head"><h2>Core Components</h2></div>
+        <div class="cards-3" style="margin-bottom:0">
+          <div class="step-card"><div class="step-num">1</div><h4>Encore Core Engine</h4><p>Schedules host/service checks, evaluates HARD/SOFT thresholds, tracks downtimes, and streams state deltas over Query Handler sockets.</p></div>
+          <div class="step-card"><div class="step-num">2</div><h4>Go Fast Workers</h4><p>In-process Go executors for <code>check_ping</code>, <code>check_tcp</code>, <code>check_http</code> (including SSL expiry <code>-C</code>), and <code>check_ncpa</code> with zero fork overhead.</p></div>
+          <div class="step-card"><div class="step-num">3</div><h4>Encore Control Room</h4><p>Single-binary SSE dashboard with customizable Overview widgets, 24 Host OS icons, SLA analytics, staged config validation, and RBAC.</p></div>
+        </div>
       </div>
 
       <div class="guide-card">
-        <div class="guide-card-head"><h3>Perbedaan Jenis Tombol Save di Encore</h3></div>
+        <div class="guide-card-head"><h2>Configuration Save Scopes</h2></div>
         <div class="cards-3" style="margin-bottom:0">
           <div class="step-card">
-            <span class="save-scope-pill instant" style="margin-bottom:8px">Instant Save</span>
-            <h4>Aktif Langsung Tanpa Reload</h4>
-            <p>Digunakan di <b>Notifications (SMTP/Webhook)</b>, <b>Service Templates</b>, <b>Users (RBAC)</b>, <b>Scheduled Digest</b>, dan <b>Custom Scripts</b>. Langsung berlaku di Encore Gateway tanpa reload engine.</p>
+            <div style="margin-bottom:8px"><span class="save-scope-pill instant">Instant Save</span></div>
+            <h4>Live Immediately</h4>
+            <p>Used for <b>Email / Webhook Notifications</b>, <b>Users (RBAC)</b>, <b>Scheduled SLA Digest</b>, and <b>Service Templates</b>. Active immediately without engine reload.</p>
           </div>
           <div class="step-card">
-            <span class="save-scope-pill draft" style="margin-bottom:8px">Draft • Apply &amp; Reload</span>
-            <h4>Staged Encore Config</h4>
-            <p>Digunakan di <b>Hosts</b>, <b>Services</b>, <b>Commands</b>, <b>Groups</b>, dan <b>Contacts</b>. Perubahan ditandai badge <b>NEW / MODIFIED</b>. Anda bisa <b>Review Changes</b>, <b>Discard</b> (batal), <b>Validate</b>, lalu <b>Apply &amp; Reload</b>.</p>
+            <div style="margin-bottom:8px"><span class="save-scope-pill draft">Draft · Apply &amp; Reload</span></div>
+            <h4>Staged Monitoring Objects</h4>
+            <p>Used for <b>Hosts, Services, Commands, and Groups</b>. Saved as a draft first so you can batch edits, inspect <b>Review Changes</b>, validate, and apply cleanly.</p>
           </div>
           <div class="step-card">
-            <span class="save-scope-pill auto" style="margin-bottom:8px">Auto-Reload Encore</span>
-            <h4>Secrets (resource.cfg)</h4>
-            <p>Digunakan di <b>Manage → Secrets</b> (<code>$USER2$..$USER32$</code>). Menyimpan nilai ter-masking ke <code>resource.cfg</code> dan langsung me-reload Encore Engine secara aman.</p>
+            <div style="margin-bottom:8px"><span class="save-scope-pill auto">Auto-Reload Encore</span></div>
+            <h4>Secrets &amp; Custom Scripts</h4>
+            <p>Used for <b>Secrets (<code>$USERn$</code>)</b> and custom scripts in <code>$USER1$</code>. Written securely with mode <code>0600</code> and applied automatically.</p>
           </div>
         </div>
       </div>
 
-      <div class="panel" style="padding:16px">
-        <div class="kv-grid" style="margin:0">
-          <div class="kv-box"><div class="k">Status &amp; Exit Code Plugin</div><div class="v" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-            <span class="badge c-ok"><img src="/assets/status/status-ok.svg">UP / OK (0)</span>
-            <span class="badge c-warn"><img src="/assets/status/status-warn.svg">WARN (1)</span>
-            <span class="badge c-crit"><img src="/assets/status/status-critical.svg">CRIT / DOWN (2)</span>
-            <span class="badge c-unk"><img src="/assets/status/status-info.svg">UNK (3)</span>
-            <span class="badge c-pend">PENDING</span>
-          </div></div>
-          <div class="kv-box"><div class="k">Keyboard Shortcuts &amp; Flags</div><div class="v" style="font-size:12.5px;font-weight:500;margin-top:6px;color:var(--muted)">
-            <code class="code-chip">Ctrl+K</code> Quick Jump • <code class="code-chip">/</code> Search • <code class="code-chip">Esc</code> Close Modal/Drawer<br>
-            <span class="flag-tag">ACK</span> Sudah ditangani • <span class="flag-tag">DT</span> Maintenance • <span class="flag-tag">SOFT</span> Retry awal • <span class="flag-tag">FLAP</span> Naik-turun
-          </div></div>
-        </div>
-      </div>`;
-  } else if (S.guideTab === 'menus') {
-    const sections = [
-      {
-        title: '1. Overview — Ringkasan Eksekutif, Fleet Map & 24h Trend',
-        nav: "setView('overview')",
-        steps: [
-          '<b>KPI Cards:</b> Menampilkan persentase Host UP, Service OK, jumlah masalah <i>Unhandled</i>, serta status engine (PID, Checks, Notify). Klik kartu mana pun untuk langsung masuk ke daftarnya.',
-          '<b>Fleet Health Map:</b> Peta visual kesehatan seluruh host. Pilih mode <b>Health Grid</b> (tile padat berisi mini-bar service OK/WARN/CRIT) atau <b>Topology</b> (diagram SVG Hub-and-Spoke). Klik host untuk langsung melihat service-nya.',
-          '<b>Distribution &amp; 24h Trend:</b> Donut distribusi status service saat ini + sparkline tren SLA 24 jam terakhir.',
-          '<b>Unhandled Problems:</b> Menampilkan prioritas teratas masalah yang belum di-ACK/Downtime beserta tombol cepat Force Check (↻) dan Acknowledge (✓).'
-        ]
-      },
-      {
-        title: '2. Inventory & Problems — Monitoring Harian & Bulk Actions',
-        nav: "setView('inventory','services')",
-        steps: [
-          '<b>Inventory (Services / Hosts / Groups):</b> Pantau seluruh objek secara real-time. Gunakan filter Hostgroup, Servicegroup, State, Sort, atau aktifkan tombol <b>Grouped</b> agar service dikelompokkan per host.',
-          '<b>Problems (Active / Downtimes):</b> Menampilkan khusus objek bermasalah (default <i>All Problems</i>). Filter di Problems terpisah dari Inventory sehingga tidak saling menimpa.',
-          '<b>Detail Drawer:</b> Klik baris host/service untuk melihat output lengkap, <i>Performance Data</i>, latency, serta tombol lintas-menu (<b>View SLA Report</b>, <b>Edit Config</b>, <b>+ Add Service</b>).',
-          '<b>Bulk Actions (Multi-Select):</b> Centang beberapa baris sekaligus → muncul bar aksi untuk <b>Force Check All</b>, <b>Acknowledge All</b>, atau <b>Schedule Downtime</b> dalam 1 aksi.'
-        ]
-      },
-      {
-        title: '3. Reports — SLA Availability, Charts & Export PDF/CSV',
-        nav: "setView('reports','sla')",
-        steps: [
-          '<b>Rentang Waktu:</b> Pilih preset <b>24h</b>, <b>7d</b>, <b>30d</b>, atau <b>Custom</b> (pilih tanggal awal &amp; akhir).',
-          '<b>Filter Granular:</b> Saring laporan berdasarkan <b>Hostgroup → Host → Service</b> tertentu. Aktifkan tombol <b>Grouped</b> untuk melihat rata-rata SLA per host beserta breakdown service-nya.',
-          '<b>Visual Charts:</b> Menampilkan <i>State Breakdown Donut</i> dan <i>Uptime &amp; Incident Trend Bar Chart</i> (titik merah menandakan HARD incident).',
-          '<b>Export &amp; Digest:</b> Klik <b>CSV</b> untuk olah data di Excel, <b>Print / PDF</b> untuk cetak, atau <b>Schedule Digest</b> untuk kirim laporan SLA otomatis harian/mingguan. Tab <b>Metrics</b> menampilkan grafik time-series <code>perf_data</code>, sementara <b>Alerts</b> &amp; <b>Event Log</b> menampilkan riwayat log Encore lengkap.'
-        ]
-      },
-      {
-        title: '4. Manage → Hosts & Services — CRUD, Diff Highlight & Discard',
-        nav: "setView('manage','objects')",
-        steps: [
-          '<b>Search &amp; Accordion:</b> Cari host, IP, service, atau command secara instan. Secara default service dikelompokkan di dalam accordion tiap host agar tidak perlu scroll panjang (bisa pindah ke mode <b>Flat</b> kapan saja).',
-          '<b>Clone &amp; Bulk Delete:</b> Gunakan <b>Clone</b> untuk menduplikasi host beserta seluruh service-nya. Centang banyak host atau banyak service untuk <b>Enable / Disable / Delete</b> sekaligus dengan dialog konfirmasi modern.',
-          '<b>Visual Diff &amp; Discard:</b> Setiap perubahan baru ditandai badge <b>NEW</b> (hijau) atau <b>MODIFIED</b> (kuning). Klik <b>Review Changes</b> di banner atas untuk melihat daftar lengkap perubahan, klik <b>Discard</b> untuk membatalkan semua draft, atau <b>Validate → Apply &amp; Reload</b> untuk mengaktifkan.'
-        ]
-      },
-      {
-        title: '5. Manage → Templates — Paket Check Reusable',
-        nav: "setView('manage','templates')",
-        steps: [
-          '<b>Starter Templates:</b> Tersedia template siap pakai seperti <code>linux-ncpa-basic</code>, <code>windows-ncpa-basic</code>, dan <code>web-https-stack</code>.',
-          '<b>Save From Host:</b> Sudah punya 1 host dengan konfigurasi service sempurna? Klik <b>Save From Host</b> untuk menyimpannya menjadi template baru dalam 1 klik.',
-          '<b>Apply Template:</b> Terapkan 1 template ke 1 atau banyak host sekaligus (service yang sudah ada dilewati otomatis kecuali Anda centang <i>Overwrite</i>). Anda juga bisa langsung memilih template saat <b>+ Add Host</b>.'
-        ]
-      },
-      {
-        title: '6. Manage → Commands, Custom Scripts, Groups & Secrets',
-        nav: "setView('manage','commands')",
-        steps: [
-          '<b>Autocomplete Command:</b> Saat menambah service, kolom <i>Check Command</i> otomatis menyarankan command aktif dan memberi peringatan jika nama command belum terdaftar.',
-          '<b>Custom Scripts:</b> Tulis plugin Bash atau Python langsung di browser, otomatis <code>chmod +x</code>, uji langsung dengan tombol <b>Test</b>, lalu klik <b>+ Cmd</b> untuk mendaftarkannya.',
-          '<b>Secrets (<code>$USER2$..$USER32$</code>):</b> Simpan token/password sensitif (seperti token NCPA) di tab <b>Secrets</b> agar tidak tampil plaintext di daftar command.'
-        ]
-      },
-      {
-        title: '7. System — Engine Controls, Auto-Backup & Audit Log',
-        nav: "setView('system','controls')",
-        steps: [
-          '<b>Controls:</b> Nyalakan/matikan global Notifications, Service Checks, Host Checks, Flap Detection, atau inspeksi raw <code>localhost.cfg</code>.',
-          '<b>Backups &amp; 1-Click Rollback:</b> Setiap kali <i>Apply &amp; Reload</i> berhasil, Encore menyimpan snapshot JSON otomatis (maks. 10 versi terakhir). Klik <b>Rollback</b> untuk kembali ke versi sebelumnya kapan saja.',
-          '<b>Audit Log:</b> Mencatat seluruh aktivitas perubahan konfigurasi, external command, discard, dan pengiriman notifikasi.'
-        ]
-      }
-    ].filter(s => guideMatches(q, s.title + ' ' + s.steps.join(' ')));
-
-    el.innerHTML = sections.length ? sections.map(s => `
       <div class="guide-card">
-        <div class="guide-card-head">
-          <h3>${s.title}</h3>
-          <button class="btn btn-sm" onclick="${s.nav}">Open Menu ›</button>
+        <div class="guide-card-head"><h2>Status Legend, Flags &amp; Keyboard Shortcuts</h2></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          <span class="badge c-ok">UP / OK (0)</span>
+          <span class="badge c-warn">WARNING / UNREACH (1)</span>
+          <span class="badge c-crit">CRITICAL / DOWN (2)</span>
+          <span class="badge c-unk">UNKNOWN (3)</span>
+          <span class="badge c-pend">PENDING</span>
         </div>
-        <ol class="guide-steps">${s.steps.map(st => `<li>${st}</li>`).join('')}</ol>
-      </div>`).join('') : '<div class="empty">No guide sections match your filter.</div>';
-  } else if (S.guideTab === 'ncpa') {
+        <ul class="guide-steps">
+          <li><span class="flag-tag">ACK</span> Problem acknowledged — suppresses repeated notifications until recovery.</li>
+          <li><span class="flag-tag">DT</span> Active scheduled downtime window — alerts muted during maintenance.</li>
+          <li><span class="flag-tag">SOFT</span> Retrying check before reaching <code>max_check_attempts</code> (no HARD alert yet).</li>
+          <li><span class="flag-tag">FLAP</span> State is oscillating rapidly between OK and problem.</li>
+          <li><b>Shortcuts:</b> <span class="code-chip">Ctrl+K</span> Quick Jump · <span class="code-chip">/</span> Global Search · <span class="code-chip">Shift+T</span> NOC TV Mode · <span class="code-chip">Esc</span> Close modal, drawer, or Customize Mode.</li>
+        </ul>
+      </div>`;
+    return;
+  }
+
+  if (S.guideTab === 'menus') {
+    const sections = guideMenuSections();
+    el.innerHTML = `
+      <div class="guide-card" style="padding:12px 16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <span class="name-sub">Jump to section:</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${sections.map(s => `<button type="button" class="btn btn-sm" onclick="document.getElementById('gsec-${s.id}')?.scrollIntoView({behavior:'smooth',block:'start'})">${esc(s.title.split('—')[0].trim())}</button>`).join('')}
+          </div>
+        </div>
+      </div>
+      ${sections.map(s => `
+        <div class="guide-card" id="gsec-${s.id}">
+          <div class="guide-card-head"><h2>${esc(s.title)}</h2>${s.action}</div>
+          <ul class="guide-steps">${s.items.map(i => `<li>${i}</li>`).join('')}</ul>
+        </div>`).join('')}`;
+    return;
+  }
+
+  if (S.guideTab === 'ncpa') {
     const snippet = ncpaInstallSnippet(S.ncpaOS);
-    const verifyCmd = `curl -sk "https://IP_TARGET:5693/api/cpu/percent?token=TOKEN_ANDA"`;
-    el.innerHTML = `
-      <div class="cards-3">
-        <div class="step-card"><div class="step-num">1</div><h4>Install NCPA di Target</h4><p>Jalankan perintah instalasi sesuai OS target di bawah, set <code class="code-chip">community_string</code>, dan buka port <code class="code-chip">5693/tcp</code> khusus dari IP Encore.</p></div>
-        <div class="step-card"><div class="step-num">2</div><h4>Simpan Token di Secrets</h4><p>Buka <b>Manage → Secrets</b>, simpan token ke <code class="code-chip">$USER2$</code> agar tidak tampil plaintext di UI.</p>
-          <div style="margin-top:8px"><button class="btn btn-sm" onclick="setView('manage','secrets')">Open Secrets ›</button></div>
-        </div>
-        <div class="step-card"><div class="step-num">3</div><h4>Register &amp; Apply Template</h4><p>Klik <b>+ Register check_ncpa</b> (in-process Go Fast Worker), lalu apply template <b>linux-ncpa-basic</b> / <b>windows-ncpa-basic</b> ke host target.</p>
-          <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn btn-sm primary" onclick="quickRegisterNCPA()">+ Register check_ncpa</button>
-            <button class="btn btn-sm" onclick="setView('manage','templates')">Templates ›</button>
-          </div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-head">
-          <div class="panel-title">Quick Install NCPA di Server Target</div>
-          <div style="display:flex;gap:6px">
-            <button class="btn btn-sm ${S.ncpaOS==='ubuntu'?'active':''}" onclick="setNcpaOS('ubuntu')">Ubuntu / Debian</button>
-            <button class="btn btn-sm ${S.ncpaOS==='rhel'?'active':''}" onclick="setNcpaOS('rhel')">RHEL / Rocky</button>
-            <button class="btn btn-sm ${S.ncpaOS==='windows'?'active':''}" onclick="setNcpaOS('windows')">Windows</button>
-          </div>
-        </div>
-        <div style="padding:14px 16px">
-          <div class="code-block-wrap">
-            <button class="btn btn-sm code-copy-btn" onclick="copyText(ncpaInstallSnippet(S.ncpaOS))">Copy</button>
-            <pre class="guide-pre">${esc(snippet)}</pre>
-          </div>
-          <div class="name-primary" style="margin:12px 0 6px;font-size:13px">Verifikasi dari Server Encore</div>
-          <div class="code-block-wrap">
-            <button class="btn btn-sm code-copy-btn" onclick="copyText('${esc(verifyCmd)}')">Copy</button>
-            <pre class="guide-pre">${esc(verifyCmd)}</pre>
-          </div>
-          <div class="name-primary" style="margin:12px 0 6px;font-size:13px">Daftar Metrik NCPA Populer (menggunakan <code class="code-chip">$USER2$</code>)</div>
-          <pre class="guide-pre">CPU Usage        check_ncpa!cpu/percent!-w 80 -c 90
-Memory RAM       check_ncpa!memory/virtual!-w 80 -c 90
-Swap Usage       check_ncpa!memory/swap!-w 50 -c 80
-Disk / (Linux)   check_ncpa!disk/logical/|/used_percent!-w 80 -c 90
-Disk C: (Win)    check_ncpa!disk/logical/C:|/used_percent!-w 80 -c 90
-Process Count    check_ncpa!processes!-w 250 -c 400
-Service Status   check_ncpa!services!-q service=nginx,status=running</pre>
-        </div>
-      </div>`;
-  } else if (S.guideTab === 'notify') {
+    const verifyCmd = ncpaVerifySnippet();
+    const metrics = ncpaMetricRows();
     el.innerHTML = `
       <div class="guide-card">
         <div class="guide-card-head">
-          <h3>Setup Email Notification (Built-in SMTP — Tanpa Postfix)</h3>
-          <button class="btn btn-sm primary" onclick="setView('manage','notifications')">Open Notifications ›</button>
+          <h2>NCPA Agent Onboarding (3 Steps)</h2>
+          <span class="badge c-ok">Port 5693 / HTTPS</span>
         </div>
-        <ol class="guide-steps">
-          <li>Buka <b>Manage → Notifications</b>, aktifkan checkbox <b>Enable Email</b>.</li>
-          <li>Isi <b>SMTP Host &amp; Port</b>:
-            <br>• <b>Gmail / Google Workspace:</b> Host <code>smtp.gmail.com</code>, Port <code>587</code> (STARTTLS), gunakan <b>App Password</b> (bukan password login biasa).
-            <br>• <b>Microsoft 365:</b> Host <code>smtp.office365.com</code>, Port <code>587</code> (STARTTLS).
-            <br>• <b>SMTP Relay Internal:</b> Port <code>25</code> (Plain) atau <code>587</code> (STARTTLS).</li>
-          <li>Isi <b>From Address</b> dan <b>Recipients</b> (pisahkan dengan koma). Jika <i>Include Manage Contacts</i> dicentang, email di tab <b>Groups → Contacts</b> otomatis ikut menerima alert.</li>
-          <li>Biarkan <b>HARD State Only</b> aktif agar tidak terkena spam saat <i>SOFT retry</i>, atur <b>Cooldown</b> (default 10 menit), lalu klik <b>Save &amp; Activate</b> (berlaku langsung tanpa reload Encore Engine) dan klik <b>Send Test Email</b>.</li>
-        </ol>
+        <div class="cards-3" style="margin-bottom:14px">
+          <div class="step-card"><div class="step-num">1</div><h4>Install NCPA on Target</h4><p>Install the agent on Ubuntu, Debian, RHEL/Rocky, or Windows, set a strong token, and restrict port 5693 to the Encore server IP.</p></div>
+          <div class="step-card"><div class="step-num">2</div><h4>Save Token as <code>$USER2$</code></h4><p>Store the NCPA token under <b>Manage → Secrets</b> so credentials stay encrypted out of host/service definitions.</p><div style="margin-top:8px">${guideAdminCTA('Open Secrets', "setView('manage','secrets')")}</div></div>
+          <div class="step-card"><div class="step-num">3</div><h4>Register &amp; Apply Template</h4><p>Register <code>check_ncpa</code> once, then apply the <b>Linux/Windows NCPA</b> template to your hosts.</p><div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">${guideAdminCTA('+ Register check_ncpa', 'quickRegisterNCPA()', 'btn btn-sm primary')}${guideAdminCTA('Templates', "setView('manage','templates')")}</div></div>
+        </div>
+
+        <div class="ncpa-gen-bar">
+          <div class="form-row" style="margin:0;flex:1;min-width:170px">
+            <label for="ncpa-tok-inp">Token (Interpolates Below)</label>
+            <input id="ncpa-tok-inp" type="text" value="${esc(_guideNcpaToken)}" placeholder="YOUR_NCPA_TOKEN" oninput="updateNcpaVar('token',this.value)">
+          </div>
+          <div class="form-row" style="margin:0;flex:1;min-width:170px">
+            <label for="ncpa-srv-inp">Encore Server IP / Host</label>
+            <input id="ncpa-srv-inp" type="text" value="${esc(_guideNcpaServer)}" placeholder="10.0.0.5" oninput="updateNcpaVar('server',this.value)">
+          </div>
+          <div style="display:flex;gap:6px;align-self:flex-end;flex-wrap:wrap" role="group" aria-label="Target operating system">
+            <button type="button" class="btn btn-sm ${S.ncpaOS==='ubuntu'?'active':''}" aria-pressed="${S.ncpaOS==='ubuntu'}" onclick="setNcpaOS('ubuntu')">Ubuntu / Debian</button>
+            <button type="button" class="btn btn-sm ${S.ncpaOS==='rhel'?'active':''}" aria-pressed="${S.ncpaOS==='rhel'}" onclick="setNcpaOS('rhel')">RHEL / Rocky</button>
+            <button type="button" class="btn btn-sm ${S.ncpaOS==='windows'?'active':''}" aria-pressed="${S.ncpaOS==='windows'}" onclick="setNcpaOS('windows')">Windows</button>
+          </div>
+        </div>
+
+        <div class="code-block-wrap">
+          <button type="button" class="btn btn-sm code-copy-btn" onclick="copyGuideBtn(this)">Copy</button>
+          <pre class="guide-pre" id="ncpa-install-pre">${esc(snippet)}</pre>
+        </div>
+
+        <h3 style="font-size:13px;margin:14px 0 6px">Verify Connectivity from Encore Server</h3>
+        <div class="code-block-wrap">
+          <button type="button" class="btn btn-sm code-copy-btn" onclick="copyGuideBtn(this)">Copy</button>
+          <pre class="guide-pre" id="ncpa-verify-pre">${esc(verifyCmd)}</pre>
+        </div>
       </div>
-      <div class="guide-card">
-        <div class="guide-card-head"><h3>Setup Webhook (Telegram / Slack / Discord)</h3></div>
-        <ol class="guide-steps">
-          <li><b>Telegram Bot:</b> Buat bot lewat <code>@BotFather</code> untuk mendapat <code>BOT_TOKEN</code>. Masukkan bot ke grup alert, lalu ambil <code>chat_id</code> (biasanya berawalan <code>-100...</code>). Isi URL: <code>https://api.telegram.org/bot&lt;BOT_TOKEN&gt;/sendMessage</code> dan isi kolom <b>Telegram Chat ID</b>.</li>
-          <li><b>Slack:</b> Buat <i>Incoming Webhook</i> di Slack App → tempel URL <code>https://hooks.slack.com/services/...</code> dan pilih tipe <b>Slack</b>.</li>
-          <li><b>Discord:</b> Buka <i>Server Settings → Integrations → Webhooks</i> → tempel URL webhook dan pilih tipe <b>Discord</b>.</li>
-          <li>Klik <b>Save &amp; Activate</b> lalu <b>Send Test Webhook</b>, dan pantau status pengiriman di tabel <b>Recent Delivery Log</b>.</li>
-        </ol>
+
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">Ready-to-Use NCPA &amp; SSL Check Commands</div></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Check</th><th>Command Syntax</th><th style="text-align:right">Action</th></tr></thead>
+          <tbody>
+            ${metrics.map(m => `<tr>
+              <td><b>${esc(m.name)}</b></td>
+              <td><code class="code-chip">${esc(m.cmd)}</code></td>
+              <td class="actions"><button type="button" class="btn btn-sm" data-copy="${esc(m.cmd)}" onclick="copyGuideBtn(this)">Copy</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table></div>
       </div>`;
-  } else if (S.guideTab === 'catalog') {
-    const drawCatalog = pData => {
+    return;
+  }
+
+  if (S.guideTab === 'notify') {
+    el.innerHTML = `
+      <div class="guide-card">
+        <div class="guide-card-head">
+          <h2>Email SMTP &amp; Webhook Notifications</h2>
+          ${guideAdminCTA('Open Notifications', "setView('manage','notifications')", 'btn btn-sm primary')}
+        </div>
+        <div class="cards-3" style="margin-bottom:14px">
+          <div class="step-card"><div class="step-num">1</div><h4>Real-Time Dispatch</h4><p>Triggered automatically on state transitions (HARD-only recommended to avoid noise during transient retries).</p></div>
+          <div class="step-card"><div class="step-num">2</div><h4>Multi-Channel Alerts</h4><p>Combine <b>Email SMTP</b> with emoji-formatted <b>Telegram, Discord, Slack,</b> or <b>Generic JSON Webhooks</b>.</p></div>
+          <div class="step-card"><div class="step-num">3</div><h4>Instant Save &amp; Test</h4><p>Changes take effect immediately without reloading the engine; use <b>Send Test</b> to verify delivery.</p></div>
+        </div>
+        <h3 style="font-size:13px;margin-bottom:6px">Quick Email SMTP Setup (Gmail / Office365 / Corporate Relay)</h3>
+        <ol class="guide-steps">
+          <li>Open <b>Manage → Notifications</b> and check <b>Enable Email</b>.</li>
+          <li>Enter SMTP Host, Port, and TLS Mode:
+            <ul class="guide-steps" style="margin-top:4px">
+              <li><b>Gmail:</b> <code>smtp.gmail.com</code> · Port <code>587</code> · <code>STARTTLS</code> (use a 16-char Google App Password).</li>
+              <li><b>Microsoft 365:</b> <code>smtp.office365.com</code> · Port <code>587</code> · <code>STARTTLS</code>.</li>
+              <li><b>Internal Relay:</b> Corporate relay IP · Port <code>25</code> or <code>587</code> · TLS <code>None</code> or <code>Skip TLS Verify</code>.</li>
+            </ul>
+          </li>
+          <li>Set <b>From Address</b>, <b>Recipients</b> (comma-separated), and enable <b>Include Manage Contacts</b> if desired.</li>
+          <li>Select trigger states (<code>DOWN</code>, <code>CRITICAL</code>, <code>RECOVERY</code>; keep <code>HARD State Only</code> checked).</li>
+          <li>Click <b>Save Settings</b>, then click <b>Send Test Email</b> to confirm delivery.</li>
+        </ol>
+        <h3 style="font-size:13px;margin:14px 0 6px">Webhook Setup (Telegram / Discord / Slack / Custom)</h3>
+        <ul class="guide-steps">
+          <li><b>Telegram:</b> Create a bot via <code>@BotFather</code>, obtain the Bot Token and Chat ID, and enter <code>https://api.telegram.org/bot&lt;TOKEN&gt;/sendMessage?chat_id=&lt;CHAT_ID&gt;</code>.</li>
+          <li><b>Discord / Slack:</b> Create an Incoming Webhook URL in your channel settings and paste it directly into <b>Webhook URL</b> (stored masked after save).</li>
+          <li><b>Generic JSON:</b> Receives structured fields (<code>event</code>, <code>target</code>, <code>host</code>, <code>service</code>, <code>state</code>, <code>output</code>, <code>timestamp</code>).</li>
+        </ul>
+      </div>`;
+    return;
+  }
+
+  if (S.guideTab === 'catalog') {
+    el.innerHTML = `<div class="panel"><div class="skel-stack"><div class="skel" style="width:40%"></div><div class="skel"></div><div class="skel"></div><div class="skel" style="width:70%"></div></div></div>`;
+    try {
+      const [cData, pData] = await Promise.all([
+        S.catalogCmds.length ? Promise.resolve({ commands: S.catalogCmds }) : apiFetchJSON('/api/v1/catalog/commands'),
+        _guidePluginsCache ? Promise.resolve(_guidePluginsCache) : apiFetchJSON('/api/v1/catalog/plugins')
+      ]);
+      S.catalogCmds = cData.commands || [];
+      _guidePluginsCache = pData;
+      const allPlugins = pData.plugins || [];
+      const filteredPlugins = q ? allPlugins.filter(p => p.name.toLowerCase().includes(q)) : allPlugins;
+      const shownPlugins = filteredPlugins.slice(0, 80);
+
       el.innerHTML = `
         <div class="panel">
           <div class="panel-head">
-            <div class="panel-title">Active Commands (${S.catalogCmds.length})</div>
-            <input type="search" id="cat-search" value="${esc(q)}" placeholder="Filter command..." oninput="filterCatalog()">
+            <div class="panel-title">Registered Check Commands (${S.catalogCmds.length})</div>
+            <span class="name-sub">Use <b>Filter guide...</b> above to search commands &amp; plugins</span>
           </div>
-          <div class="table-wrap"><table><thead><tr><th>Command</th><th>Source</th><th>Example</th><th>Command Line</th><th style="text-align:right">Copy</th></tr></thead><tbody id="cat-cmd-body"></tbody></table></div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Command</th><th>Engine</th><th>Description</th><th>Example Usage</th><th style="text-align:right">Copy</th></tr></thead>
+            <tbody id="cat-cmd-body">${renderCatalogRows(q)}</tbody>
+          </table></div>
         </div>
-        <div class="panel" style="padding:14px 16px">
-          <div class="name-primary" style="margin-bottom:6px">Plugins (${(pData.plugins||[]).length}) — <span class="mono">${esc(pData.user1_dir||'')}</span></div>
-          <div class="perf-chips">${(pData.plugins||[]).slice(0,80).map(p => `<span class="perf-chip" title="${esc(p.path)}" style="${p.is_custom?'background:var(--ok-bg);color:var(--ok-fg)':''}">${esc(p.name)}</span>`).join('')}</div>
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">Installed Plugins in $USER1$ (${filteredPlugins.length}${q ? ` of ${allPlugins.length}` : ''})</div>
+            <span class="mono">${esc(pData.dir || '')}</span>
+          </div>
+          <div style="padding:14px 16px;display:flex;gap:6px;flex-wrap:wrap">
+            ${shownPlugins.length ? shownPlugins.map(p => `<span class="code-chip" style="${p.custom?'border-color:var(--accent);color:var(--accent)':''}" title="${p.custom?'Custom script':''}">${esc(p.name)}</span>`).join('') : '<span class="name-sub">No matching plugins found.</span>'}
+          </div>
+          ${filteredPlugins.length > 80 ? `<div class="pager"><span>Showing first 80 of ${filteredPlugins.length} plugins — narrow with Filter guide...</span></div>` : ''}
         </div>`;
-      filterCatalog();
-    };
-    if (S.catalogCmds.length && S._catalogPlugins) {
-      drawCatalog(S._catalogPlugins);
-      return;
+    } catch (err) {
+      el.innerHTML = `<div class="error-card"><span>Failed to load catalog: ${esc(err.message)}</span><button type="button" class="btn btn-sm" onclick="S.catalogCmds=[];_guidePluginsCache=null;renderGuide()">Retry</button></div>`;
     }
-    el.innerHTML = '<div class="panel"><div class="empty"><encore-icon name="loader" size="2" live></encore-icon> Loading catalog...</div></div>';
-    const [cRes, pRes] = await Promise.all([fetch('/api/v1/catalog/commands'), fetch('/api/v1/catalog/plugins')]);
-    S.catalogCmds = (await cRes.json()).commands || [];
-    S._catalogPlugins = await pRes.json();
-    drawCatalog(S._catalogPlugins);
-  } else {
-    const p = await (await fetch('/api/v1/catalog/paths')).json();
+    return;
+  }
+
+  // paths & FAQ
+  el.innerHTML = `<div class="panel"><div class="skel-stack"><div class="skel" style="width:45%"></div><div class="skel"></div><div class="skel" style="width:65%"></div></div></div>`;
+  try {
+    if (!_guidePathsCache) {
+      _guidePathsCache = await apiFetchJSON('/api/v1/catalog/paths');
+    }
+    const paths = _guidePathsCache;
+    const rows = [
+      ['Main Encore Config', paths.nagios_cfg],
+      ['Encore Engine Binary', paths.nagios_bin],
+      ['Query Handler Socket', paths.qh_socket],
+      ['External Command Pipe', paths.cmd_pipe],
+      ['Managed Config Directory', paths.managed_dir],
+      ['Active Managed Config (.cfg)', paths.managed_cfg],
+      ['Secrets File ($USERn$)', paths.resource_cfg],
+      ['Plugins & Custom Scripts ($USER1$)', paths.plugins_dir]
+    ];
+    const faqs = guideFaqItems();
     el.innerHTML = `
       <div class="panel">
         <div class="panel-head"><div class="panel-title">Server File Locations</div></div>
-        <div class="table-wrap"><table><thead><tr><th>Component</th><th>Path</th></tr></thead><tbody>
-          <tr><td><b>Main Config</b></td><td class="mono">${esc(p.nagios_cfg)}</td></tr>
-          <tr><td><b>Managed Dir</b></td><td class="mono">${esc(p.managed_dir||'-')}</td></tr>
-          <tr><td><b>Custom Scripts</b></td><td class="mono">${esc(p.scripts_dir||'-')}</td></tr>
-          <tr><td><b>Backups</b></td><td class="mono">${esc(p.backups_dir||'-')}</td></tr>
-          <tr><td><b>Audit Log</b></td><td class="mono">${esc(p.audit_log||'-')}</td></tr>
-          <tr><td><b>Secrets / Resource</b></td><td class="mono">${esc(p.resource_cfg)}</td></tr>
-          <tr><td><b>Plugins ($USER1$)</b></td><td class="mono">${esc(p.plugins_dir)}</td></tr>
-          <tr><td><b>Localhost Config</b></td><td class="mono">${esc(p.localhost_cfg)}</td></tr>
-        </tbody></table></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Component</th><th>Path</th><th style="text-align:right">Copy</th></tr></thead>
+          <tbody>${rows.map(([k, v]) => `<tr>
+            <td><b>${esc(k)}</b></td>
+            <td class="mono">${esc(v || '-')}</td>
+            <td class="actions">${v ? `<button type="button" class="btn btn-sm" data-copy="${esc(v)}" onclick="copyGuideBtn(this)">Copy</button>` : ''}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>
       </div>
       <div class="guide-card">
-        <div class="guide-card-head"><h3>Troubleshooting Cepat (FAQ)</h3></div>
-        <ol class="guide-steps">
-          <li><b>Error <code>command '...' not defined anywhere</code> saat Validate:</b> Command belum terdaftar di Encore Engine. Untuk NCPA, buka <b>Guide → NCPA Setup</b> lalu klik <b>+ Register check_ncpa</b>.</li>
-          <li><b>Lupa sudah ubah apa saja / ingin batal edit:</b> Klik <b>Review Changes</b> di banner kuning atas, lalu klik <b>Discard</b> untuk kembali ke konfigurasi live terakhir.</li>
-          <li><b>Salah konfigurasi setelah Apply:</b> Buka <b>System → Backups</b> dan klik <b>Rollback</b> pada snapshot sebelum perubahan.</li>
-          <li><b>Healthcheck aman untuk monitoring Encore sendiri:</b> Gunakan endpoint publik <code>GET /healthz</code> (bebas auth, mengembalikan <code>200 ok</code> atau <code>503 degraded</code> tanpa bocor metadata). Contoh command: <code>check_http!-p 8080 -u /healthz</code>.</li>
-          <li><b>Cek Kadaluarsa Sertifikat SSL (In-Process):</b> Gunakan preset <b>SSL Cert</b> (<code>check_http!-S -C 30,14</code>) untuk peringatan 30 hari &amp; kritis 14 hari sebelum sertifikat HTTPS expired.</li>
-        </ol>
+        <div class="guide-card-head"><h2>Troubleshooting &amp; FAQ</h2></div>
+        <ul class="guide-steps">
+          ${faqs.map(f => `<li><b>${esc(f.q)}</b> ${f.a}</li>`).join('')}
+        </ul>
       </div>`;
+  } catch (err) {
+    el.innerHTML = `<div class="error-card"><span>Failed to load server paths: ${esc(err.message)}</span><button type="button" class="btn btn-sm" onclick="_guidePathsCache=null;renderGuide()">Retry</button></div>`;
   }
 }
 
-function filterCatalog() {
-  const q = (document.getElementById('cat-search')?.value || '').toLowerCase();
-  const body = document.getElementById('cat-cmd-body'); if (!body) return;
-  const rows = S.catalogCmds.filter(c => !q || c.command_name.toLowerCase().includes(q) || c.command_line.toLowerCase().includes(q));
-  body.innerHTML = rows.length ? rows.map(c => `<tr>
-    <td><b>${esc(c.command_name)}</b>${c.fast_path?' <span class="badge c-ok">Go Fast</span>':''}</td>
-    <td><span class="flag-tag">${esc(c.source)}</span></td>
-    <td class="mono">${esc(c.example)}</td>
-    <td class="output-cell mono" title="${esc(c.command_line)}">${esc(c.command_line)}</td>
-    <td class="actions"><button class="btn btn-sm" onclick="copyText('${esc(c.example)}')">Copy</button></td>
-  </tr>`).join('') : '<tr><td colspan="5" class="empty">No matches</td></tr>';
+function renderCatalogRows(q) {
+  const ql = (q || '').trim().toLowerCase();
+  const list = S.catalogCmds.filter(c => !ql || (c.name + ' ' + c.description + ' ' + c.example).toLowerCase().includes(ql));
+  return list.length ? list.map(c => `<tr>
+    <td><b>${esc(c.name)}</b></td>
+    <td>${c.in_process ? '<span class="badge c-ok">Go Fast</span>' : '<span class="badge c-pend">Plugin</span>'}</td>
+    <td class="name-sub">${esc(c.description)}</td>
+    <td><code class="code-chip">${esc(c.example)}</code></td>
+    <td class="actions"><button type="button" class="btn btn-sm" data-copy="${esc(c.example)}" onclick="copyGuideBtn(this)">Copy</button></td>
+  </tr>`).join('') : '<tr><td colspan="5" class="empty">No commands match filter</td></tr>';
+}
+
+function filterCatalogTable(q) {
+  const b = document.getElementById('cat-cmd-body');
+  if (b) b.innerHTML = renderCatalogRows(q);
 }

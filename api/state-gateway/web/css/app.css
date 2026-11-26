@@ -910,7 +910,7 @@ tr.group-row td { background: var(--surface-2); font-family: var(--font-mono); f
 .toggle-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg); }
 .raw-editor { width: 100%; min-height: 300px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; padding: 12px; border-radius: var(--radius-sm); }
 .code-chip { background: var(--surface-2); padding: 2px 6px; border-radius: var(--radius-xs); font-family: var(--font-mono); font-size: 11.5px; border: 1px solid var(--border); }
-.guide-pre { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; font-family: var(--font-mono); font-size: 12px; overflow-x: auto; margin: 8px 0 12px; white-space: pre; }
+.guide-pre { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 78px 12px 14px; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; overflow-x: auto; margin: 8px 0 12px; white-space: pre; }
 
 /* ==========================================================================
    DRAWERS (z:40), MODALS & QUICK-JUMP (z:50)
@@ -1135,14 +1135,27 @@ body.tv-mode .ov-layout-bar, body.tv-mode .ov-w-controls, body.tv-mode #ov-custo
 .art-empty h4 { color: var(--text); font-size: 13.5px; font-weight: 700; margin-bottom: 3px; }
 .art-empty p { font-size: 12px; max-width: 380px; margin: 0 auto; }
 
-.guide-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 16px 18px; margin-bottom: 14px; }
-.guide-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
-.guide-card h3 { font-size: 14px; font-weight: 700; }
-.guide-steps { margin: 8px 0 0 18px; font-size: 12.5px; color: var(--muted); }
-.guide-steps li { margin-bottom: 5px; }
+.guide-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 18px 20px; margin-bottom: 14px; }
+.guide-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.guide-card h2 { font-size: 15px; font-weight: 750; letter-spacing: -0.015em; }
+.guide-card h3 { font-size: 13.5px; font-weight: 700; }
+.guide-prose { font-size: 13px; color: var(--muted); line-height: 1.62; max-width: 72ch; }
+.guide-steps { margin: 8px 0 0 18px; font-size: 13px; color: var(--muted); line-height: 1.62; max-width: 72ch; }
+.guide-steps li { margin-bottom: 7px; }
 .guide-steps b { color: var(--text); }
+.guide-search-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; margin-bottom: 14px; border-radius: var(--radius);
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  font-size: 12.5px; color: var(--text);
+}
+.ncpa-gen-bar {
+  display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
+  padding: 12px 14px; margin-bottom: 10px; border-radius: var(--radius-sm);
+  background: var(--bg); border: 1px solid var(--border);
+}
 .code-block-wrap { position: relative; }
-.code-copy-btn { position: absolute; top: 8px; right: 8px; }
+.code-copy-btn { position: absolute; top: 8px; right: 8px; z-index: 2; }
 .tpl-row { display: grid; grid-template-columns: 1.1fr 2fr 70px 32px; gap: 6px; align-items: center; margin-bottom: 6px; }
 .tpl-err { display: none; margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--crit-bg); border: 1px solid color-mix(in srgb, var(--crit) 55%, var(--border)); color: var(--crit-fg); font-size: 12px; font-weight: 600; }
 
