@@ -6,10 +6,13 @@ Panduan sistem desain permanen untuk **Encore Control Room** (`api/state-gateway
 
 ## 1. Visual World & Signature Elements
 
-- **Material & Palette:** Warm alabaster paper (`#F3F1EC` / `#FAF9F5`) + deep graphite ink (`#141413`) + **Signal Vermilion** (`#D9381E`, 5.02:1 WCAG AA) di tema default *Alabaster Field*, serta matte carbon (`#0D0E10`) + `#FF5733` di *Carbon Studio*.
-- **Architectural Hairline Grid (`--radius: 4px`):** Mengganti kartu melayang SaaS generik dengan papan instrumen terbagi garis `1px` presisi (`--border-strong`), termasuk **Chronograph KPI Strip** 4-kolom terpadu dengan LED annunciator.
+- **Material & Palette:** Warm alabaster paper (`#F3F1EC` / `#FAF9F5`) + deep graphite ink (`#141413`) + **Signal Vermilion** (`#D9381E`, 5.02:1 WCAG AA) di tema default *Alabaster Field*, serta matte carbon (`#0D0E10`) + `#FF5733` di *Carbon Studio*. Seluruh 5 tema mengatur `color-scheme` (`light`/`dark`) agar permukaan browser (scrollbar, date picker, kontrol native) seragam.
+- **Smooth Nested-Radius Geometry (`14px` / `12px` / `8px` / `6px` / `999px`):** Mengganti tepi tajam/kasar dengan skala radius konsentris (`--radius-lg: 14px` modal/hero, `--radius: 12px` panel/KPI strip/popover, `--radius-sm: 8px` tombol/input/dropdown/tile, `--radius-xs: 6px` badge/flag, `--radius-pill: 999px` LED & health bar) serta sudut dalam presisi (`calc(var(--radius) - 1px)`), border halus (`--border`), dan elevasi lembut (`--shadow-sm`).
 - **Live SSE Oscilloscope Ribbon (`#telemetry-ribbon`):** Pita telemetri 60fps Canvas 2D di bawah topbar yang memancarkan pulsa real-time setiap SSE event masuk + live event ticker + NOC wall clock.
-- **Aviation Annunciator Badges (`2px` radius):** Pill status bertepi tajam dengan indikator LED kotak 6px (`UP`, `DOWN`, `OK`, `WARN`, `CRIT`, `PEND`).
+- **Precision Theme-Matched Form Controls:**
+  - **Custom Checkboxes:** `appearance: none` dengan fill `var(--accent)`, centang animasi `var(--accent-fg)` (otomatis kontras di semua 5 tema), state `:indeterminate`, dan highlight `.chk-pill:has(input:checked)`.
+  - **Encore Sleek Dropdowns (`EncoreDropdown`):** Progressive enhancement otomatis untuk seluruh `<select>` dengan tombol trigger halus, chevron berputar, floating menu portal (`z-index: 65`) anti-clipping, active-filter tint, navigasi keyboard penuh (`↑`/`↓`/`Enter`/`Esc`), serta swatch warna untuk pemilih tema.
+- **Smooth Annunciator Badges (`6px` radius):** Pill status dengan indikator LED bundar 6px (`UP`, `DOWN`, `OK`, `WARN`, `CRIT`, `PEND`).
 - **Native View Transitions API:** Transisi halaman halus (`document.startViewTransition`) dengan fallback instan & hormat pada `prefers-reduced-motion`.
 - **Interactive Radial Orbital Topology:** Diagram hub-and-spoke dengan cincin jarak konsentris, sumbu crosshair, dan node host radial yang dapat diklik.
 - **Swiss Split Login (`web/login.html`):** Layout 2-kolom arsitektural (masthead karbon dengan foto perangkat keras `swiss-control-hero.jpg`, emblem `encore-emblem.png`, beacon `telemetry-beacon.gif` + jam live di kiri; panel sign-in alabaster presisi di kanan).
@@ -49,6 +52,7 @@ Seluruh warna didefinisikan melalui CSS custom properties di [app.css](file:///h
 | Modals, Confirm Dialog, Quick Jump, Display Popover | `.backdrop`, `.display-menu` | `50` |
 | Interactive Chart Tooltips | `.chart-tooltip` | `55` |
 | Toast (`bottom-right`) & Exit TV Mode (`bottom-left`) | `#toast`, `.btn.tv-exit-btn` | `60` |
+| Sleek Dropdown Floating Menu Portal | `#ec-dd-portal`, `.ec-dd-menu` | `65` |
 
 ---
 

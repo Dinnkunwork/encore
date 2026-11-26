@@ -23,18 +23,18 @@
   .mast-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .mast-brand { display: flex; align-items: center; gap: 12px; }
   .mast-emblem {
-    width: 38px; height: 38px; border-radius: 4px; border: 1px solid rgba(250, 249, 245, 0.18);
+    width: 38px; height: 38px; border-radius: 9px; border: 1px solid rgba(250, 249, 245, 0.18);
     display: block; object-fit: cover; flex-shrink: 0;
   }
   .mast-brand strong { font-size: 16px; letter-spacing: 0.08em; text-transform: uppercase; display: block; line-height: 1.1; }
   .mast-brand span { font-family: var(--font-mono); font-size: 10.5px; color: #b5b0a6; letter-spacing: 0.08em; text-transform: uppercase; }
   .mast-status {
     display: inline-flex; align-items: center; gap: 8px;
-    padding: 5px 10px; border-radius: 3px;
+    padding: 5.5px 11px; border-radius: var(--radius-sm);
     background: rgba(20, 20, 19, 0.78); border: 1px solid rgba(250, 249, 245, 0.14);
     font-family: var(--font-mono); font-size: 11.5px; color: #ece9e1; font-variant-numeric: tabular-nums;
   }
-  .mast-status img { width: 18px; height: 18px; border-radius: 2px; display: block; }
+  .mast-status img { width: 18px; height: 18px; border-radius: 5px; display: block; }
   .mast-body { margin: auto 0; padding: 36px 0; max-width: 440px; }
   .mast-body h1 {
     font-size: clamp(30px, 3.6vw, 44px); font-weight: 750; letter-spacing: -0.03em; line-height: 1.08;
@@ -44,28 +44,44 @@
   .mast-specs {
     display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
     background: rgba(250, 249, 245, 0.14); border: 1px solid rgba(250, 249, 245, 0.16);
-    border-radius: 3px; overflow: hidden; max-width: 480px;
+    border-radius: var(--radius); overflow: hidden; max-width: 480px;
   }
-  .mast-spec { background: rgba(18, 18, 17, 0.84); padding: 11px 14px; backdrop-filter: blur(4px); }
+  .mast-spec { background: rgba(18, 18, 17, 0.84); padding: 11px 14px; backdrop-filter: blur(6px); }
   .mast-spec .k { font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.09em; color: #a8a49b; }
   .mast-spec .v { font-family: var(--font-mono); font-size: 12.5px; font-weight: 700; color: #faf9f5; margin-top: 3px; }
 
   .login-pane { display: grid; place-items: center; padding: 36px 24px; background: var(--bg); }
   .login-box {
-    width: min(392px, 100%); background: var(--surface); border: 1px solid var(--border-strong);
-    border-radius: var(--radius); padding: 30px 28px 22px;
+    width: min(404px, 100%); background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: 30px 28px 22px;
   }
   .login-box h2 { font-size: 19px; font-weight: 750; letter-spacing: -0.02em; margin-bottom: 5px; }
   .login-box .sub { font-size: 12.5px; color: var(--muted); margin-bottom: 20px; }
   .login-err {
-    display: none; margin-bottom: 14px; padding: 9px 12px; border-radius: var(--radius);
-    background: var(--crit-bg); border: 1px solid var(--crit); color: var(--crit-fg); font-size: 12.5px; font-weight: 600;
+    display: none; margin-bottom: 14px; padding: 9px 12px; border-radius: var(--radius-sm);
+    background: var(--crit-bg); border: 1px solid color-mix(in srgb, var(--crit) 55%, var(--border)); color: var(--crit-fg); font-size: 12.5px; font-weight: 600;
   }
   .login-foot {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--border);
     font-family: var(--font-mono); font-size: 11px; color: var(--muted);
   }
+  .login-theme-dd { position: relative; }
+  .login-theme-btn {
+    display: inline-flex; align-items: center; gap: 7px; padding: 4.5px 9px;
+    border-radius: var(--radius-sm); background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--font-sans); font-size: 11.5px; font-weight: 600;
+    cursor: pointer; transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
+  }
+  .login-theme-btn:hover { border-color: var(--border-strong); background: var(--surface-2); }
+  .login-theme-dd.open .login-theme-btn { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .login-theme-dd.open .ec-dd-chev { transform: rotate(180deg); color: var(--accent); }
+  .login-theme-menu {
+    display: none; position: absolute; right: 0; bottom: calc(100% + 6px); min-width: 172px; z-index: 40;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow-overlay); padding: 5px; transform-origin: bottom right;
+  }
+  .login-theme-dd.open .login-theme-menu { display: block; animation: ecPopIn 150ms cubic-bezier(0.16, 1, 0.3, 1) both; }
   @media (max-width: 860px) {
     body.login-page { grid-template-columns: 1fr; }
     .login-mast { padding: 24px 20px; border-right: none; border-bottom: 1px solid #2b2a27; }
@@ -115,25 +131,58 @@
       </form>
       <div class="login-foot">
         <span>HttpOnly Session · Rate Limited</span>
-        <select id="theme-sel" onchange="setTheme(this.value)" aria-label="Select Theme" style="padding:3px 6px;font-size:11px">
-          <option value="light">Alabaster Field</option>
-          <option value="dark">Carbon Studio</option>
-          <option value="cyber">Encore Cyber</option>
-          <option value="nord">Nordic Frost</option>
-          <option value="emerald">Terminal Ops</option>
-        </select>
+        <div class="login-theme-dd" id="login-theme-dd">
+          <button type="button" class="login-theme-btn" id="login-theme-btn" onclick="toggleLoginThemeMenu(event)" aria-haspopup="listbox" aria-expanded="false" aria-label="Select Theme">
+            <span class="ec-dd-swatch" id="login-theme-swatch"></span>
+            <span id="login-theme-label">Alabaster Field</span>
+            <svg class="ec-dd-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="login-theme-menu" id="login-theme-menu" role="listbox" aria-label="Theme Options"></div>
+        </div>
       </div>
     </div>
   </main>
 
   <script>
+    const LOGIN_THEMES = [
+      { id: 'light', label: 'Alabaster Field', swatch: '#d9381e' },
+      { id: 'dark', label: 'Carbon Studio', swatch: '#ff5733' },
+      { id: 'cyber', label: 'Encore Cyber', swatch: '#22e3ff' },
+      { id: 'nord', label: 'Nordic Frost', swatch: '#88c0d0' },
+      { id: 'emerald', label: 'Terminal Ops', swatch: '#10b981' }
+    ];
     function setTheme(t) {
-      document.documentElement.setAttribute('data-theme', t);
-      localStorage.setItem('encore-theme', t);
+      const item = LOGIN_THEMES.find(x => x.id === t) || LOGIN_THEMES[0];
+      document.documentElement.setAttribute('data-theme', item.id);
+      localStorage.setItem('encore-theme', item.id);
+      document.getElementById('login-theme-swatch').style.background = item.swatch;
+      document.getElementById('login-theme-label').textContent = item.label;
+      renderLoginThemeMenu(item.id);
     }
-    const saved = localStorage.getItem('encore-theme') || 'light';
-    setTheme(saved);
-    document.getElementById('theme-sel').value = saved;
+    function renderLoginThemeMenu(activeId) {
+      document.getElementById('login-theme-menu').innerHTML = LOGIN_THEMES.map(it => `
+        <button type="button" class="ec-dd-opt ${it.id===activeId?'is-sel':''}" role="option" aria-selected="${it.id===activeId?'true':'false'}" onclick="setTheme('${it.id}');closeLoginThemeMenu()">
+          <span class="ec-dd-opt-text"><span class="ec-dd-swatch" style="background:${it.swatch}"></span>${it.label}</span>
+          <svg class="ec-dd-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+        </button>`).join('');
+    }
+    function toggleLoginThemeMenu(e) {
+      e.stopPropagation();
+      const dd = document.getElementById('login-theme-dd');
+      const open = dd.classList.toggle('open');
+      document.getElementById('login-theme-btn').setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    function closeLoginThemeMenu() {
+      const dd = document.getElementById('login-theme-dd');
+      if (dd) dd.classList.remove('open');
+      document.getElementById('login-theme-btn')?.setAttribute('aria-expanded', 'false');
+    }
+    document.addEventListener('click', e => {
+      const dd = document.getElementById('login-theme-dd');
+      if (dd && dd.classList.contains('open') && !dd.contains(e.target)) closeLoginThemeMenu();
+    });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLoginThemeMenu(); });
+    setTheme(localStorage.getItem('encore-theme') || 'light');
 
     function tickClock() {
       const el = document.getElementById('mast-clock');

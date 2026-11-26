@@ -119,6 +119,7 @@ function toggleDisplayMenu(ev) {
   }
 }
 function closeDisplayMenu() {
+  closeActiveDropdown();
   const menu = document.getElementById('display-menu');
   const btn = document.getElementById('display-menu-btn');
   if (menu) menu.classList.remove('open');
@@ -127,7 +128,8 @@ function closeDisplayMenu() {
 document.addEventListener('click', e => {
   const menu = document.getElementById('display-menu');
   const btn = document.getElementById('display-menu-btn');
-  if (menu && menu.classList.contains('open') && !menu.contains(e.target) && (!btn || !btn.contains(e.target))) {
+  const ddPortal = document.getElementById('ec-dd-portal');
+  if (menu && menu.classList.contains('open') && !menu.contains(e.target) && (!btn || !btn.contains(e.target)) && (!ddPortal || !ddPortal.contains(e.target))) {
     closeDisplayMenu();
   }
 });
@@ -404,6 +406,7 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     document.getElementById('global-search').focus();
   } else if (e.key === 'Escape') {
+    if (closeActiveDropdown(true)) return;
     closeDisplayMenu();
     if (S.tvMode) { toggleTVMode(); return; }
     if (document.getElementById('confirm-backdrop')?.classList.contains('open')) resolveConfirm(false);
@@ -467,9 +470,9 @@ function flagsHTML(o) {
   return out ? `<span class="flags">${out}</span>` : '';
 }
 
-function openModal(html) { document.getElementById('modal-content').innerHTML = html; document.getElementById('modal-backdrop').classList.add('open'); }
-function closeModal() { document.getElementById('modal-backdrop').classList.remove('open'); }
-function closeDrawer() { document.getElementById('drawer-wrap').classList.remove('open'); }
+function openModal(html) { closeActiveDropdown(); document.getElementById('modal-content').innerHTML = html; document.getElementById('modal-backdrop').classList.add('open'); }
+function closeModal() { closeActiveDropdown(); document.getElementById('modal-backdrop').classList.remove('open'); }
+function closeDrawer() { closeActiveDropdown(); document.getElementById('drawer-wrap').classList.remove('open'); }
 
 /* Modern Confirmation Dialog */
 let _confirmResolver = null;
@@ -518,6 +521,7 @@ function artSVG(kind) {
 }
 
 function isUserInteracting() {
+  if (document.getElementById('ec-dd-portal')?.classList.contains('open')) return true;
   if (document.getElementById('modal-backdrop')?.classList.contains('open')) return true;
   if (document.getElementById('confirm-backdrop')?.classList.contains('open')) return true;
   if (document.getElementById('drawer-wrap')?.classList.contains('open')) return true;
@@ -742,3 +746,280 @@ function renderQuickJump() {
       <span>${esc(it.label)}</span><span class="flag-tag">${esc(it.tag)}</span>
     </button>`).join('') : '<div class="empty" style="padding:18px">No matches</div>';
 }
+
+/* ==========================================================================
+   ENCORE SLEEK DROPDOWN (Automatic Progressive Enhancement for <select>)
+   Keeps native <select> in DOM so .value, .options, .innerHTML & onchange work
+   ========================================================================== */
+const DD_THEME_SWATCHES = {
+  light: '#d9381e',
+  dark: '#ff5733',
+  cyber: '#22e3ff',
+  nord: '#88c0d0',
+  emerald: '#10b981'
+};
+const _ddState = { activeSel: null, hiIdx: -1, portal: null, bodyObs: null };
+
+function getDropdownPortal() {
+  if (_ddState.portal && document.body.contains(_ddState.portal)) return _ddState.portal;
+  const p = document.createElement('div');
+  p.id = 'ec-dd-portal';
+  p.className = 'ec-dd-menu';
+  p.setAttribute('role', 'listbox');
+  p.addEventListener('click', e => e.stopPropagation());
+  document.body.appendChild(p);
+  _ddState.portal = p;
+  return p;
+}
+
+function closeActiveDropdown(restoreFocus = false) {
+  const sel = _ddState.activeSel;
+  if (!sel) return false;
+  const portal = _ddState.portal;
+  if (portal) {
+    portal.classList.remove('open', 'flip-up');
+    portal.innerHTML = '';
+  }
+  if (sel._ecDd) {
+    sel._ecDd.wrap.classList.remove('open');
+    sel._ecDd.trigger.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) sel._ecDd.trigger.focus();
+  }
+  _ddState.activeSel = null;
+  _ddState.hiIdx = -1;
+  return true;
+}
+
+function ddSwatchHTML(sel, val) {
+  if (sel.id !== 'theme-select' && sel.id !== 'theme-sel') return '';
+  const col = DD_THEME_SWATCHES[val];
+  return col ? `<span class="ec-dd-swatch" style="background:${col}"></span>` : '';
+}
+
+function syncDropdownUI(sel) {
+  const dd = sel && sel._ecDd;
+  if (!dd) return;
+  const { wrap, trigger, label } = dd;
+  const hidden = sel.style.display === 'none' || sel.hidden;
+  wrap.style.display = hidden ? 'none' : (sel.style.flex ? 'flex' : '');
+  wrap.style.flex = sel.style.flex || '';
+  if (sel.style.width) wrap.style.width = sel.style.width;
+  trigger.disabled = !!sel.disabled;
+
+  const opt = sel.options[sel.selectedIndex] || sel.options[0];
+  const txt = opt ? opt.textContent : '';
+  const val = opt ? opt.value : '';
+  label.innerHTML = `${ddSwatchHTML(sel, val)}<span>${esc(txt)}</span>`;
+
+  const hasEmptyDefault = sel.options.length > 0 && sel.options[0].value === '';
+  wrap.classList.toggle('has-val', hasEmptyDefault && val !== '');
+
+  if (_ddState.activeSel === sel) {
+    renderDropdownOptions(sel);
+  }
+}
+
+function renderDropdownOptions(sel) {
+  const portal = getDropdownPortal();
+  const opts = Array.from(sel.options);
+  let html = '';
+  let lastGroup = null;
+  opts.forEach((opt, idx) => {
+    if (opt.hidden) return;
+    const grp = opt.parentElement && opt.parentElement.tagName === 'OPTGROUP' ? opt.parentElement.label : null;
+    if (grp && grp !== lastGroup) {
+      html += `<div class="ec-dd-group">${esc(grp)}</div>`;
+      lastGroup = grp;
+    }
+    const isSel = idx === sel.selectedIndex;
+    const isHi = idx === _ddState.hiIdx;
+    html += `
+      <button type="button" class="ec-dd-opt ${isSel ? 'is-sel' : ''} ${isHi ? 'is-hi' : ''}" role="option" data-idx="${idx}" aria-selected="${isSel ? 'true' : 'false'}" ${opt.disabled ? 'disabled' : ''}>
+        <span class="ec-dd-opt-text">${ddSwatchHTML(sel, opt.value)}<span>${esc(opt.textContent)}</span></span>
+        <svg class="ec-dd-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+      </button>`;
+  });
+  portal.innerHTML = html || '<div class="ec-dd-group">No options</div>';
+  portal.querySelectorAll('.ec-dd-opt').forEach(btn => {
+    btn.addEventListener('click', ev => {
+      ev.stopPropagation();
+      const idx = Number(btn.dataset.idx);
+      selectDropdownIndex(sel, idx);
+    });
+    btn.addEventListener('mouseenter', () => {
+      _ddState.hiIdx = Number(btn.dataset.idx);
+      highlightDropdownItem();
+    });
+  });
+}
+
+function highlightDropdownItem() {
+  const portal = _ddState.portal;
+  if (!portal) return;
+  portal.querySelectorAll('.ec-dd-opt').forEach(btn => {
+    const active = Number(btn.dataset.idx) === _ddState.hiIdx;
+    btn.classList.toggle('is-hi', active);
+    if (active) btn.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+function selectDropdownIndex(sel, idx) {
+  if (!sel || idx < 0 || idx >= sel.options.length || sel.options[idx].disabled) return;
+  const changed = sel.selectedIndex !== idx;
+  sel.selectedIndex = idx;
+  syncDropdownUI(sel);
+  closeActiveDropdown(true);
+  if (changed) {
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+}
+
+function positionDropdownPortal(trigger, portal) {
+  const r = trigger.getBoundingClientRect();
+  const minW = Math.min(Math.max(r.width, 160), window.innerWidth - 20);
+  portal.style.minWidth = minW + 'px';
+  portal.style.maxWidth = Math.min(340, window.innerWidth - 20) + 'px';
+  portal.style.visibility = 'hidden';
+  portal.classList.add('open');
+  const pr = portal.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - r.bottom - 10;
+  const spaceAbove = r.top - 10;
+  const flipUp = spaceBelow < Math.min(pr.height, 220) && spaceAbove > spaceBelow;
+  portal.classList.toggle('flip-up', flipUp);
+  const top = flipUp ? Math.max(10, r.top - pr.height - 6) : Math.min(window.innerHeight - pr.height - 10, r.bottom + 6);
+  const left = Math.min(Math.max(10, r.left), Math.max(10, window.innerWidth - pr.width - 10));
+  portal.style.top = top + 'px';
+  portal.style.left = left + 'px';
+  portal.style.visibility = '';
+}
+
+function openDropdown(sel) {
+  if (!sel || !sel._ecDd || sel.disabled) return;
+  if (_ddState.activeSel === sel) {
+    closeActiveDropdown(true);
+    return;
+  }
+  closeActiveDropdown(false);
+  _ddState.activeSel = sel;
+  _ddState.hiIdx = Math.max(0, sel.selectedIndex);
+  const portal = getDropdownPortal();
+  renderDropdownOptions(sel);
+  sel._ecDd.wrap.classList.add('open');
+  sel._ecDd.trigger.setAttribute('aria-expanded', 'true');
+  positionDropdownPortal(sel._ecDd.trigger, portal);
+  const activeBtn = portal.querySelector('.ec-dd-opt.is-sel') || portal.querySelector('.ec-dd-opt');
+  if (activeBtn) activeBtn.scrollIntoView({ block: 'nearest' });
+}
+
+function moveDropdownHighlight(delta) {
+  const sel = _ddState.activeSel;
+  if (!sel) return;
+  const opts = Array.from(sel.options);
+  const valid = opts.map((o, i) => (!o.disabled && !o.hidden ? i : -1)).filter(i => i >= 0);
+  if (!valid.length) return;
+  const pos = valid.indexOf(_ddState.hiIdx);
+  const next = pos < 0 ? valid[0] : valid[(pos + delta + valid.length) % valid.length];
+  _ddState.hiIdx = next;
+  highlightDropdownItem();
+}
+
+function enhanceSelect(sel) {
+  if (!sel || sel._ecDd || sel.multiple || sel.size > 1 || sel.dataset.nativeSelect === '1') return;
+  if (!sel.parentNode) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'ec-dd';
+  sel.parentNode.insertBefore(wrap, sel);
+  wrap.appendChild(sel);
+  sel.classList.add('ec-dd-native');
+  sel.tabIndex = -1;
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'ec-dd-trigger';
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+  const ariaLbl = sel.getAttribute('aria-label') || sel.getAttribute('title');
+  if (ariaLbl) trigger.setAttribute('aria-label', ariaLbl);
+
+  const label = document.createElement('span');
+  label.className = 'ec-dd-label';
+  const chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  chev.setAttribute('class', 'ec-dd-chev');
+  chev.setAttribute('viewBox', '0 0 24 24');
+  chev.setAttribute('aria-hidden', 'true');
+  chev.innerHTML = '<path d="m6 9 6 6 6-6"/>';
+  trigger.appendChild(label);
+  trigger.appendChild(chev);
+  wrap.appendChild(trigger);
+
+  sel._ecDd = { wrap, trigger, label };
+
+  const valDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  if (valDesc && valDesc.get && valDesc.set) {
+    Object.defineProperty(sel, 'value', {
+      configurable: true,
+      get() { return valDesc.get.call(this); },
+      set(v) { valDesc.set.call(this, v); syncDropdownUI(this); }
+    });
+  }
+
+  sel.addEventListener('change', () => syncDropdownUI(sel));
+  sel.addEventListener('focus', () => trigger.focus());
+  trigger.addEventListener('click', ev => {
+    ev.stopPropagation();
+    openDropdown(sel);
+  });
+  trigger.addEventListener('keydown', ev => {
+    const isOpen = _ddState.activeSel === sel;
+    if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      if (!isOpen) openDropdown(sel); else moveDropdownHighlight(1);
+    } else if (ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      if (!isOpen) openDropdown(sel); else moveDropdownHighlight(-1);
+    } else if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      if (!isOpen) openDropdown(sel);
+      else if (_ddState.hiIdx >= 0) selectDropdownIndex(sel, _ddState.hiIdx);
+    } else if (ev.key === 'Tab' && isOpen) {
+      closeActiveDropdown(false);
+    }
+  });
+
+  const obs = new MutationObserver(() => syncDropdownUI(sel));
+  obs.observe(sel, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style', 'class', 'disabled', 'hidden'] });
+  syncDropdownUI(sel);
+}
+
+function initEncoreDropdowns() {
+  document.querySelectorAll('select').forEach(enhanceSelect);
+  if (_ddState.bodyObs) return;
+  _ddState.bodyObs = new MutationObserver(muts => {
+    for (const m of muts) {
+      for (const n of m.addedNodes) {
+        if (n.nodeType !== 1 || n.id === 'ec-dd-portal') continue;
+        if (n.tagName === 'SELECT') enhanceSelect(n);
+        else if (n.querySelectorAll) n.querySelectorAll('select').forEach(enhanceSelect);
+      }
+    }
+  });
+  _ddState.bodyObs.observe(document.body, { childList: true, subtree: true });
+
+  document.addEventListener('click', e => {
+    if (!_ddState.activeSel) return;
+    const dd = _ddState.activeSel._ecDd;
+    const portal = _ddState.portal;
+    if (dd && dd.wrap.contains(e.target)) return;
+    if (portal && portal.contains(e.target)) return;
+    closeActiveDropdown(false);
+  });
+  window.addEventListener('resize', () => closeActiveDropdown(false));
+  window.addEventListener('scroll', e => {
+    if (_ddState.activeSel && _ddState.portal && e.target !== _ddState.portal && !_ddState.portal.contains(e.target)) {
+      closeActiveDropdown(false);
+    }
+  }, true);
+}
+
+initEncoreDropdowns();
