@@ -117,17 +117,207 @@ function clearMonitorFilters() {
   loadMonitorView();
 }
 
-/* ====== OVERVIEW: INCIDENT-FIRST + FLEET HEALTH MAP + 24H UPTIME ====== */
+/* ====== OVERVIEW: CUSTOMIZABLE 12-COL GRID + FLEET MAP + 24H UPTIME + LIVE METRICS ====== */
+const OV_LAYOUT_KEY = 'encore-ov-layout-v1';
+const OV_WIDGET_DEFAULTS = [
+  { id: 'fleet-map', label: 'Fleet Health Map', span: 7 },
+  { id: 'uptime', label: 'Distribution & 24h Uptime', span: 5 },
+  { id: 'metrics', label: 'Live Metrics (6h)', span: 12 },
+  { id: 'problems', label: 'Unhandled Problems', span: 7 },
+  { id: 'hostgroups', label: 'Hostgroups', span: 5 },
+  { id: 'activity', label: 'Recent Activity', span: 5 }
+];
+const OV_VALID_SPANS = [5, 6, 7, 12];
+let _ovLayoutState = null;
+let _ovDragId = null;
+
+function defaultOvLayout() {
+  return {
+    order: OV_WIDGET_DEFAULTS.map(w => w.id),
+    spans: Object.fromEntries(OV_WIDGET_DEFAULTS.map(w => [w.id, w.span])),
+    hidden: [],
+    autoPinProblems: true
+  };
+}
+
+function loadOvLayout() {
+  if (_ovLayoutState) return _ovLayoutState;
+  const def = defaultOvLayout();
+  try {
+    const raw = localStorage.getItem(OV_LAYOUT_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const validIds = new Set(def.order);
+      const order = Array.isArray(parsed.order) ? parsed.order.filter(id => validIds.has(id)) : [];
+      def.order.forEach(id => { if (!order.includes(id)) order.push(id); });
+      const spans = { ...def.spans };
+      if (parsed.spans && typeof parsed.spans === 'object') {
+        Object.keys(spans).forEach(id => {
+          const v = Number(parsed.spans[id]);
+          if (OV_VALID_SPANS.includes(v)) spans[id] = v;
+        });
+      }
+      const hidden = Array.isArray(parsed.hidden) ? parsed.hidden.filter(id => validIds.has(id)) : [];
+      const autoPinProblems = parsed.autoPinProblems !== false;
+      _ovLayoutState = { order, spans, hidden, autoPinProblems };
+      return _ovLayoutState;
+    }
+  } catch (e) {}
+  _ovLayoutState = def;
+  return _ovLayoutState;
+}
+
+function saveOvLayout() {
+  if (!_ovLayoutState) return;
+  try { localStorage.setItem(OV_LAYOUT_KEY, JSON.stringify(_ovLayoutState)); } catch (e) {}
+}
+
+function announceOvLayout(msg) {
+  const el = document.getElementById('ov-sr-announce');
+  if (el) el.textContent = msg;
+}
+
+function applyOvLayout(unhandCount) {
+  const grid = document.getElementById('ov-widget-grid');
+  if (!grid) return;
+  const st = loadOvLayout();
+  const autoChk = document.getElementById('ov-auto-pin-chk');
+  if (autoChk) autoChk.checked = !!st.autoPinProblems;
+
+  const unhand = typeof unhandCount === 'number'
+    ? unhandCount
+    : ((S.summary?.hosts?.unhandled || 0) + (S.summary?.services?.unhandled || 0));
+
+  st.order.forEach(id => {
+    const card = grid.querySelector(`.ov-widget[data-widget-id="${id}"]`);
+    if (!card) return;
+    grid.appendChild(card);
+    OV_VALID_SPANS.forEach(sp => card.classList.remove('span-' + sp));
+    card.classList.add('span-' + (st.spans[id] || 6));
+    const isHidden = st.hidden.includes(id) || (id === 'activity' && !isAdmin());
+    card.classList.toggle('ov-hidden', isHidden);
+    card.classList.toggle('ov-auto-pinned', id === 'problems' && st.autoPinProblems && unhand > 0 && !S.ovEditLayout && !isHidden);
+    card.draggable = !!S.ovEditLayout;
+    if (!card._ovDndBound) {
+      card._ovDndBound = true;
+      card.addEventListener('dragstart', e => {
+        if (!S.ovEditLayout) { e.preventDefault(); return; }
+        _ovDragId = id;
+        S.ovDragging = true;
+        card.classList.add('is-dragging');
+        if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); }
+      });
+      card.addEventListener('dragend', () => {
+        _ovDragId = null;
+        S.ovDragging = false;
+        grid.querySelectorAll('.ov-widget').forEach(el => el.classList.remove('is-dragging', 'is-drop-target'));
+      });
+      card.addEventListener('dragover', e => {
+        if (!S.ovEditLayout || !_ovDragId || _ovDragId === id) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+        card.classList.add('is-drop-target');
+      });
+      card.addEventListener('dragleave', () => card.classList.remove('is-drop-target'));
+      card.addEventListener('drop', e => {
+        if (!S.ovEditLayout || !_ovDragId || _ovDragId === id) return;
+        e.preventDefault();
+        card.classList.remove('is-drop-target');
+        const fromIdx = st.order.indexOf(_ovDragId);
+        const toIdx = st.order.indexOf(id);
+        if (fromIdx >= 0 && toIdx >= 0 && fromIdx !== toIdx) {
+          st.order.splice(fromIdx, 1);
+          st.order.splice(toIdx, 0, _ovDragId);
+          saveOvLayout();
+          applyOvLayout();
+          announceOvLayout(`Moved ${_ovDragId} widget`);
+        }
+      });
+    }
+  });
+
+  const tray = document.getElementById('ov-hidden-tray');
+  if (tray) {
+    const visibleHidden = st.hidden.filter(id => id !== 'activity' || isAdmin());
+    tray.innerHTML = visibleHidden.length
+      ? visibleHidden.map(id => {
+          const meta = OV_WIDGET_DEFAULTS.find(w => w.id === id);
+          return `<button type="button" class="btn btn-sm" onclick="toggleOvWidgetHidden('${id}')" title="Restore hidden widget">+ ${esc(meta ? meta.label : id)}</button>`;
+        }).join('')
+      : '';
+  }
+}
+
+function toggleOverviewLayoutEdit(force) {
+  S.ovEditLayout = typeof force === 'boolean' ? force : !S.ovEditLayout;
+  document.body.classList.toggle('ov-editing', S.ovEditLayout);
+  const btn = document.getElementById('ov-customize-btn');
+  if (btn) btn.textContent = S.ovEditLayout ? 'Done' : 'Customize';
+  applyOvLayout();
+  if (S.ovEditLayout) toast('Customize Mode active — drag widgets or use ↑/↓');
+}
+
+function moveOvWidget(id, delta) {
+  const st = loadOvLayout();
+  const visibleOrder = st.order.filter(wid => !st.hidden.includes(wid) && (wid !== 'activity' || isAdmin()));
+  const vIdx = visibleOrder.indexOf(id);
+  const nextVIdx = vIdx + delta;
+  if (vIdx < 0 || nextVIdx < 0 || nextVIdx >= visibleOrder.length) return;
+  const swapId = visibleOrder[nextVIdx];
+  const a = st.order.indexOf(id), b = st.order.indexOf(swapId);
+  [st.order[a], st.order[b]] = [st.order[b], st.order[a]];
+  saveOvLayout();
+  applyOvLayout();
+  announceOvLayout(`Moved ${id} ${delta < 0 ? 'up' : 'down'}`);
+}
+
+function cycleOvWidgetSpan(id) {
+  const st = loadOvLayout();
+  const cur = st.spans[id] || 6;
+  const nextMap = { 5: 6, 6: 7, 7: 12, 12: 6 };
+  st.spans[id] = nextMap[cur] || 6;
+  saveOvLayout();
+  applyOvLayout();
+  const lbl = st.spans[id] === 12 ? 'Full width' : (st.spans[id] === 6 ? 'Half width' : `${st.spans[id]}/12 width`);
+  toast(`Widget width: ${lbl}`);
+}
+
+function toggleOvWidgetHidden(id) {
+  const st = loadOvLayout();
+  const idx = st.hidden.indexOf(id);
+  if (idx >= 0) st.hidden.splice(idx, 1);
+  else st.hidden.push(id);
+  saveOvLayout();
+  applyOvLayout();
+}
+
+function toggleOvAutoPin(checked) {
+  const st = loadOvLayout();
+  st.autoPinProblems = !!checked;
+  saveOvLayout();
+  applyOvLayout();
+}
+
+function resetOvLayout() {
+  _ovLayoutState = defaultOvLayout();
+  saveOvLayout();
+  applyOvLayout();
+  toast('Overview layout reset to default');
+}
+
 function setOvMapMode(mode) {
-  S.ovMapMode = mode;
-  document.getElementById('ov-map-grid-btn')?.classList.toggle('active', mode === 'grid');
-  document.getElementById('ov-map-topo-btn')?.classList.toggle('active', mode === 'topo');
+  S.ovMapMode = mode === 'topo' ? 'topo' : 'grid';
+  try { localStorage.setItem('encore-ov-map-mode', S.ovMapMode); } catch (e) {}
+  document.getElementById('ov-map-grid-btn')?.classList.toggle('active', S.ovMapMode === 'grid');
+  document.getElementById('ov-map-topo-btn')?.classList.toggle('active', S.ovMapMode === 'topo');
   loadOverview();
 }
 
 function renderOverviewFleetMap(hosts) {
   const el = document.getElementById('ov-fleet-map');
   if (!el) return;
+  document.getElementById('ov-map-grid-btn')?.classList.toggle('active', S.ovMapMode === 'grid');
+  document.getElementById('ov-map-topo-btn')?.classList.toggle('active', S.ovMapMode === 'topo');
   if (!hosts.length) {
     el.innerHTML = `<div class="art-empty">${artSVG('servers')}<h4>No Hosts Monitored Yet</h4><p>Add your first host under Manage to start tracking fleet health.</p></div>`;
     return;
@@ -152,8 +342,8 @@ function renderOverviewFleetMap(hosts) {
         <line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="${lineCol}" stroke-width="${ho.current_state===1||ho.svc_crit>0?'1.6':'1'}" stroke-dasharray="${ho.current_state===1?'4 2':''}" opacity="0.75"/>
         <g style="cursor:pointer" role="button" tabindex="0" aria-label="${esc(ho.name)} (${stTxt})" onclick="focusHostFromMap('${jsEsc(ho.name)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();focusHostFromMap('${jsEsc(ho.name)}');}">
           <title>${esc(ho.name)} (${esc(ho.address)}) — ${ho.svc_ok}/${ho.svc_total} OK, ${ho.svc_warn} WARN, ${ho.svc_crit} CRIT</title>
-          <rect x="${(nx-52).toFixed(1)}" y="${(ny-12).toFixed(1)}" width="104" height="24" rx="2" fill="var(--surface)" stroke="${stroke}" stroke-width="1.4"/>
-          <rect x="${(nx-46).toFixed(1)}" y="${(ny-3).toFixed(1)}" width="6" height="6" rx="1" fill="${stroke}"/>
+          <rect x="${(nx-52).toFixed(1)}" y="${(ny-12).toFixed(1)}" width="104" height="24" rx="6" fill="var(--surface)" stroke="${stroke}" stroke-width="1.4"/>
+          <rect x="${(nx-46).toFixed(1)}" y="${(ny-3).toFixed(1)}" width="6" height="6" rx="3" fill="${stroke}"/>
           <text x="${(nx-36).toFixed(1)}" y="${(ny+3.5).toFixed(1)}" fill="var(--text)" font-family="var(--font-mono)" font-size="9.5" font-weight="600">${esc(shortName)}</text>
           <text x="${(nx+47).toFixed(1)}" y="${(ny+3.5).toFixed(1)}" text-anchor="end" fill="${stroke}" font-family="var(--font-mono)" font-size="9" font-weight="700">${stTxt}</text>
         </g>`;
@@ -220,37 +410,59 @@ async function renderOverviewMiniCharts(sum) {
   }).join('');
 
   const nowMs = Date.now();
+  let availErr = '';
   if (!S.ovTrendCache.data || nowMs - S.ovTrendCache.ts > 60000) {
     try {
       const nowS = Math.floor(nowMs / 1000);
       const d = await apiFetchJSON(`/api/v1/reports/availability?from=${nowS-86400}&to=${nowS}&target=services`);
       S.ovTrendCache = { ts: nowMs, data: d };
-    } catch (e) {}
+    } catch (e) {
+      availErr = e.message || 'Availability unavailable';
+    }
   }
   const tl = (S.ovTrendCache.data && S.ovTrendCache.data.timeline) || [];
   const ovSum = (S.ovTrendCache.data && S.ovTrendCache.data.summary) || {};
   const sla24 = ovSum.overall_sla_pct ?? 100;
-  const inc24 = ovSum.total_incidents ?? 0;
+  const critPct24 = ovSum.crit_pct || 0;
+  const critInc24 = ovSum.crit_incidents ?? (critPct24 > 0 ? (ovSum.total_incidents || 0) : 0);
+  const warnInc24 = ovSum.warn_incidents ?? (critPct24 === 0 ? (ovSum.total_incidents || 0) : 0);
   const prob24 = ovSum.total_problem_sec ?? 0;
 
-  // Update 4th KPI Card (24h Service SLA)
+  // Update 4th KPI Card (24h Service SLA) — RED only when actual critical/down exists
   const slaVal = document.getElementById('ov-sla-val');
   const slaSub = document.getElementById('ov-sla-sub');
   const slaLed = document.getElementById('kpi-sla-led');
-  if (slaVal) slaVal.textContent = sla24.toFixed(2) + '%';
-  if (slaSub) slaSub.textContent = `${inc24} HARD inc` + (prob24 > 0 ? ` · ${fmtDurationSec(prob24)} down` : ' · No downtime');
-  if (slaLed) slaLed.className = 'kpi-led ' + (sla24 >= 99.5 ? '' : (sla24 >= 95 ? 'warn' : 'crit'));
+  if (availErr && !S.ovTrendCache.data) {
+    if (slaVal) slaVal.textContent = 'N/A';
+    if (slaSub) slaSub.textContent = 'Availability unavailable';
+    if (slaLed) slaLed.className = 'kpi-led warn';
+  } else {
+    if (slaVal) slaVal.textContent = sla24.toFixed(2) + '%';
+    const durLbl = critPct24 > 0 ? 'down' : 'warn';
+    const incSummary = critInc24 > 0
+      ? `${critInc24} crit${warnInc24 > 0 ? ` · ${warnInc24} warn` : ''}`
+      : (warnInc24 > 0 ? `${warnInc24} warn` : '0 HARD inc');
+    if (slaSub) slaSub.textContent = incSummary + (prob24 > 0 ? ` · ${fmtDurationSec(prob24)} ${durLbl}` : ' · No issues');
+    const slaLedCls = sla24 >= 99.5 && critInc24 === 0 ? '' : ((critPct24 > 0 || critInc24 > 0) && sla24 < 95 ? 'crit' : 'warn');
+    if (slaLed) slaLed.className = 'kpi-led ' + slaLedCls;
+  }
 
   let sparkHTML = '';
   if (tl.length) {
     sparkHTML = `
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;margin-bottom:6px">
-          <span style="font-weight:650" title="Percentage of time services remained OK over the last 24 hours">24h Service Uptime</span>
-          <span class="mono"><b>${sla24.toFixed(2)}%</b> OK · ${inc24} HARD inc${prob24 > 0 ? ` · ${fmtDurationSec(prob24)} down` : ''}</span>
+          <span style="font-weight:650" title="Hourly service state proportion over the last 24 hours">24h Service Uptime</span>
+          <span class="trend-legend">
+            <span class="trend-legend-it"><span class="tl-sw" style="background:var(--ok)"></span>OK</span>
+            <span class="trend-legend-it"><span class="tl-sw" style="background:var(--warn)"></span>Warn</span>
+            <span class="trend-legend-it"><span class="tl-sw" style="background:var(--crit)"></span>Crit</span>
+          </span>
         </div>
-        ${renderTrendSVG(tl, 88)}
+        ${renderTrendSVG(tl, 92)}
       </div>`;
+  } else if (availErr) {
+    sparkHTML = `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="name-sub">24h trend unavailable (${esc(availErr)})</span><button class="btn btn-sm" onclick="S.ovTrendCache.ts=0;loadOverview()">Retry</button></div>`;
   }
 
   el.innerHTML = `
@@ -266,6 +478,88 @@ async function renderOverviewMiniCharts(sum) {
       </div>
     </div>
     ${sparkHTML}`;
+}
+
+/* Overview Live Metrics Widget (6h perf_data sparklines right on Overview) */
+function onOvMetricTargetChange(val) {
+  S.ovMetricTarget = val || '';
+  try { localStorage.setItem('encore-ov-metric-target', S.ovMetricTarget); } catch (e) {}
+  renderOverviewLiveMetrics();
+}
+
+function openOvMetricFull() {
+  const val = document.getElementById('ov-metric-target')?.value || S.ovMetricTarget || '';
+  if (val.includes('||')) {
+    const [h, svc] = val.split('||');
+    if (typeof openMetricsFor === 'function') { openMetricsFor(h, svc); return; }
+  }
+  setView('reports', 'metrics');
+}
+
+async function renderOverviewLiveMetrics() {
+  const box = document.getElementById('ov-live-metrics');
+  const sel = document.getElementById('ov-metric-target');
+  if (!box || !sel) return;
+  const st = loadOvLayout();
+  if (st.hidden.includes('metrics')) return;
+
+  const nowMs = Date.now();
+  if (!S.ovMetricTargetsCache.items.length || nowMs - S.ovMetricTargetsCache.ts > 60000) {
+    try {
+      const d = await apiFetchJSON('/api/v1/services?limit=200');
+      const all = (d.services || []);
+      const withPerf = all.filter(s => s.perf_data && s.perf_data.trim().length > 0);
+      const list = (withPerf.length ? withPerf : all).slice(0, 60);
+      S.ovMetricTargetsCache = { ts: nowMs, items: list };
+      const cur = S.ovMetricTarget;
+      sel.innerHTML = list.length
+        ? list.map(s => {
+            const v = `${s.host_name}||${s.description}`;
+            return `<option value="${esc(v)}">${esc(s.host_name)} / ${esc(s.description)}</option>`;
+          }).join('')
+        : '<option value="">No metric services</option>';
+      if (cur && list.some(s => `${s.host_name}||${s.description}` === cur)) {
+        sel.value = cur;
+      } else if (list.length) {
+        S.ovMetricTarget = `${list[0].host_name}||${list[0].description}`;
+        sel.value = S.ovMetricTarget;
+      }
+    } catch (e) {
+      box.innerHTML = `<div class="name-sub">Unable to load metric targets: ${esc(e.message)}</div>`;
+      return;
+    }
+  }
+
+  const target = sel.value || S.ovMetricTarget;
+  if (!target || !target.includes('||')) {
+    box.innerHTML = `<div class="empty" style="padding:18px">No services with performance metrics found yet.</div>`;
+    return;
+  }
+  const [host, service] = target.split('||');
+  try {
+    const qs = new URLSearchParams({ host, service, range: '6h' });
+    const data = await apiFetchJSON('/api/v1/metrics?' + qs);
+    const series = (data.series || []).slice(0, 2);
+    if (!series.length) {
+      box.innerHTML = `<div class="empty" style="padding:18px">No time-series samples recorded yet for <b>${esc(host)} / ${esc(service)}</b>.</div>`;
+      return;
+    }
+    box.innerHTML = `<div class="metric-grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">${series.map(ser => `
+      <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px 13px;background:var(--bg)">
+        <div class="chart-title" style="margin-bottom:6px">
+          <span>${esc(ser.label)}${ser.unit ? ` (${esc(ser.unit)})` : ''}</span>
+          <span class="mono" style="color:var(--accent);font-weight:700">${ser.last}${esc(ser.unit || '')}</span>
+        </div>
+        ${renderMetricChartSVG(ser, { width: 460, height: 145 })}
+        <div class="metric-stats" style="margin-top:6px">
+          <span>Min <b>${ser.min}${esc(ser.unit || '')}</b></span>
+          <span>Avg <b>${ser.avg}${esc(ser.unit || '')}</b></span>
+          <span>Max <b>${ser.max}${esc(ser.unit || '')}</b></span>
+        </div>
+      </div>`).join('')}</div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="name-sub">Failed to load metrics: ${esc(e.message)}</div>`;
+  }
 }
 
 async function loadOverview() {
@@ -331,6 +625,7 @@ async function loadOverview() {
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-sm danger" onclick="quickUnhandled()">Open Problems Queue</button>
           <button class="btn btn-sm" onclick="setView('inventory','byhost')">Inspect By Host</button>
+          <button class="btn btn-sm" onclick="toggleOverviewLayoutEdit()">Layout</button>
         </div>
       </div>`;
     } else if (hasWarnOnlyUnhandled) {
@@ -349,6 +644,7 @@ async function loadOverview() {
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-sm warn" onclick="quickUnhandled()">Review Warnings</button>
           <button class="btn btn-sm" onclick="setView('inventory','byhost')">Inspect By Host</button>
+          <button class="btn btn-sm" onclick="toggleOverviewLayoutEdit()">Layout</button>
         </div>
       </div>`;
     } else {
@@ -363,40 +659,57 @@ async function loadOverview() {
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-sm" onclick="setView('inventory','byhost')">Browse Inventory</button>
           <button class="btn btn-sm primary" onclick="setView('reports','sla')">SLA Reports</button>
+          <button class="btn btn-sm" onclick="toggleOverviewLayoutEdit()">Layout</button>
         </div>
       </div>
       <div class="rb-art"><img src="/assets/scenes/fleet-calm.jpg" alt=""></div>`;
     }
   }
 
-  // Incident-First Ordering: promote Unhandled Problems above Fleet Map whenever unhandled > 0
+  // Apply unified 12-col widget order, spans, visibility & auto-pin
   const probPanel = document.getElementById('ov-prob-panel');
-  const topSlot = document.getElementById('ov-incident-top');
-  const homeSlot = document.getElementById('ov-incident-home');
-  if (probPanel && topSlot && homeSlot) {
+  if (probPanel) {
     probPanel.classList.toggle('panel-alert', hasCritUnhandled);
     probPanel.classList.toggle('panel-warn', hasWarnOnlyUnhandled);
-    if (unhand > 0 && probPanel.parentElement !== topSlot) topSlot.appendChild(probPanel);
-    else if (unhand === 0 && probPanel.parentElement !== homeSlot) homeSlot.appendChild(probPanel);
   }
+  applyOvLayout(unhand);
 
   try {
-    const [pData, aData, fhData] = await Promise.all([
+    const [pData, phData, aData, fhData] = await Promise.all([
       apiFetchJSON('/api/v1/services?unhandled=1&sort=severity&limit=10'),
+      apiFetchJSON('/api/v1/hosts?unhandled=1&limit=10'),
       isAdmin() ? apiFetchJSON('/api/v1/audit?limit=5').catch(() => ({ entries: [] })) : Promise.resolve({ entries: [] }),
       apiFetchJSON('/api/v1/hosts/health')
     ]);
     const probs = pData.services || [];
+    const probHosts = phData.hosts || [];
     const fleetHosts = fhData.hosts || [];
 
     renderOverviewFleetMap(fleetHosts);
     renderOverviewMiniCharts(sum);
+    renderOverviewLiveMetrics();
 
     const pBody = document.getElementById('ov-prob-body');
-    if (!probs.length) {
+    if (!probs.length && !probHosts.length) {
       pBody.innerHTML = `<tr><td colspan="5"><div class="art-empty">${artSVG('radar-ok')}<h4>All Systems Operational</h4><p>No unhandled problems at this time.</p></div></td></tr>`;
     } else {
-      pBody.innerHTML = probs.map(s => {
+      const hostRows = probHosts.map(h => {
+        const key = regDrawerObj('host:' + h.name, h);
+        return `
+        <tr class="clickable" tabindex="0" onclick="openHostDrawerByKey('${jsEsc(key)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openHostDrawerByKey('${jsEsc(key)}');}">
+          <td>${hostBadge(h)}</td>
+          <td><div class="host-name-wrap">${hostIconBadge(h, 'sm')}<div><div class="name-primary">${esc(h.name)}${flagsHTML(h)}</div><div class="name-sub">Host · ${esc(h.address)}</div></div></div></td>
+          <td class="mono">${durStr(h.last_state_change)}</td>
+          <td class="output-cell" title="${esc(h.plugin_output)}">${esc(h.plugin_output || '-')}</td>
+          <td class="actions" onclick="event.stopPropagation()">
+            ${canOperate() ? `
+              <button class="icon-btn" title="Force check host" aria-label="Force check ${esc(h.name)}" onclick="sendCmd('SCHEDULE_FORCED_HOST_CHECK;${jsEsc(h.name)};'+Math.floor(Date.now()/1000),'Force check host',this)">${uiIcon('refresh')}</button>
+              <button class="icon-btn" title="Acknowledge host" aria-label="Acknowledge ${esc(h.name)}" onclick="openAckModal('host','${jsEsc(h.name)}','')">${uiIcon('check')}</button>
+            ` : `<span class="name-sub">Read-only</span>`}
+          </td>
+        </tr>`;
+      }).join('');
+      const svcRows = probs.map(s => {
         const key = regDrawerObj('svc:' + s.host_name + ':' + s.description, s);
         return `
         <tr class="clickable" tabindex="0" onclick="openSvcDrawerByKey('${jsEsc(key)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSvcDrawerByKey('${jsEsc(key)}');}">
@@ -412,6 +725,7 @@ async function loadOverview() {
           </td>
         </tr>`;
       }).join('');
+      pBody.innerHTML = hostRows + svcRows;
     }
 
     document.getElementById('ov-hg-list').innerHTML = S.hostgroups.length ? S.hostgroups.slice(0, 6).map(g => {
@@ -422,7 +736,7 @@ async function loadOverview() {
         </div>
         <div class="bar"><div class="bar-ok" style="width:${(g.services.ok/t)*100}%"></div><div class="bar-warn" style="width:${(g.services.warning/t)*100}%"></div><div class="bar-crit" style="width:${(g.services.critical/t)*100}%"></div></div>
       </button>`;
-    }).join('') : '<div class="empty" style="padding:14px">No hostgroups defined</div>';
+    }).join('') + (S.hostgroups.length > 6 ? `<div class="name-sub" style="text-align:right;margin-top:4px">Showing 6 of ${S.hostgroups.length} hostgroups</div>` : '') : '<div class="empty" style="padding:14px">No hostgroups defined</div>';
 
     if (isAdmin()) {
       const audits = aData.entries || [];

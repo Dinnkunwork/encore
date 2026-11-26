@@ -46,8 +46,8 @@ function onMetricChartMove(ev, id) {
   if (halo) { halo.setAttribute('cx', best.x.toFixed(1)); halo.setAttribute('cy', best.y.toFixed(1)); halo.style.display = ''; }
 
   let statusTag = '';
-  if (meta.crit != null && best.v >= meta.crit) statusTag = ' <span style="color:#f87171;font-weight:700">CRIT</span>';
-  else if (meta.warn != null && best.v >= meta.warn) statusTag = ' <span style="color:#fbbf24;font-weight:700">WARN</span>';
+  if (meta.crit != null && best.v >= meta.crit) statusTag = ' <span style="color:var(--tooltip-crit);font-weight:700">CRIT</span>';
+  else if (meta.warn != null && best.v >= meta.warn) statusTag = ' <span style="color:var(--tooltip-warn);font-weight:700">WARN</span>';
 
   const dtStr = new Date(best.ts * 1000).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
   tt.innerHTML = `<div class="tt-time">${esc(dtStr)}</div><div class="tt-val">${best.v}${esc(meta.unit)}${statusTag}</div>`;
@@ -94,6 +94,8 @@ function renderMetricChartSVG(ser, opts = {}) {
     : `${lineD} L ${mapped[mapped.length - 1].x.toFixed(1)},${padT + plotH} L ${mapped[0].x.toFixed(1)},${padT + plotH} Z`;
 
   const chartId = Math.random().toString(36).slice(2, 10);
+  const mcKeys = Object.keys(window._mcRegistry);
+  if (mcKeys.length > 36) mcKeys.slice(0, mcKeys.length - 24).forEach(k => delete window._mcRegistry[k]);
   window._mcRegistry[chartId] = { w, h, padL, padR, unit: ser.unit || '', warn: ser.warn, crit: ser.crit, pts: mapped };
   const gradId = 'mg-' + chartId;
   let threshHTML = '';
@@ -265,7 +267,7 @@ function renderDonutSVG(sum) {
     </div>`;
 }
 
-/* Interactive Pure SVG Uptime & Incident Trend Bar Chart */
+/* Interactive Pure SVG Stacked Severity-Aware Uptime & Incident Trend Bar Chart */
 window._trRegistry = window._trRegistry || {};
 
 function onTrendBarEnter(ev, id, idx) {
@@ -277,10 +279,26 @@ function onTrendBarEnter(ev, id, idx) {
   const b = meta.items[idx];
   const rect = svg.getBoundingClientRect();
   const leftPx = (b.cx / meta.w) * rect.width;
-  const clampedLeft = Math.max(76, Math.min(rect.width - 76, leftPx));
-  const col = b.ok_pct >= 99.5 ? '#34d399' : (b.ok_pct >= 95 ? '#fbbf24' : '#f87171');
-  const probDetails = (b.crit_pct || b.warn_pct) ? `<div style="font-size:11px;color:#cbd5e1">Warn: ${(b.warn_pct||0).toFixed(1)}% • Crit/Down: ${(b.crit_pct||0).toFixed(1)}%</div>` : '';
-  tt.innerHTML = `<div class="tt-time">Window: ${esc(b.label)}</div><div class="tt-val" style="color:${col}">Uptime ${b.ok_pct.toFixed(2)}%</div>${probDetails}<div style="font-size:11px;color:${b.incidents>0?'#f87171':'#94a3b8'}">${b.incidents} HARD incident(s)</div>`;
+  const clampedLeft = Math.max(82, Math.min(rect.width - 82, leftPx));
+  const critPct = b.crit_pct || 0;
+  const warnPct = (b.warn_pct || 0) + (b.unk_pct || 0);
+  const critInc = b.crit_incidents ?? (critPct > 0 ? (b.incidents || 0) : 0);
+  const warnInc = b.warn_incidents ?? (critPct === 0 ? (b.incidents || 0) : 0);
+  const hasCrit = critPct > 0 || critInc > 0;
+  const hasWarn = !hasCrit && (warnPct > 0 || warnInc > 0 || b.ok_pct < 99.5);
+  const col = hasCrit ? 'var(--tooltip-crit)' : (hasWarn ? 'var(--tooltip-warn)' : 'var(--tooltip-ok)');
+  const probDetails = (critPct > 0 || warnPct > 0)
+    ? `<div style="font-size:11px;color:var(--tooltip-muted)">Warn: ${warnPct.toFixed(1)}% · Crit/Down: ${critPct.toFixed(1)}%</div>`
+    : '';
+  let incLine = `<div style="font-size:11px;color:var(--tooltip-muted)">0 HARD transitions</div>`;
+  if (critInc > 0 && warnInc > 0) {
+    incLine = `<div style="font-size:11px;color:var(--tooltip-crit)">${critInc} critical · ${warnInc} warning HARD</div>`;
+  } else if (critInc > 0) {
+    incLine = `<div style="font-size:11px;color:var(--tooltip-crit)">${critInc} critical HARD incident(s)</div>`;
+  } else if (warnInc > 0) {
+    incLine = `<div style="font-size:11px;color:var(--tooltip-warn)">${warnInc} warning HARD transition(s)</div>`;
+  }
+  tt.innerHTML = `<div class="tt-time">Window: ${esc(b.label)}</div><div class="tt-val" style="color:${col}">Uptime ${b.ok_pct.toFixed(2)}%</div>${probDetails}${incLine}`;
   tt.classList.toggle('flip-down', rect.height < 110);
   tt.style.left = clampedLeft + 'px';
   tt.style.top = rect.height < 110 ? '20px' : '42px';
@@ -293,28 +311,62 @@ function onTrendLeave(id) {
 
 function renderTrendSVG(timeline, height = 152) {
   if (!timeline || !timeline.length) return '<div class="empty" style="padding:24px">No timeline data</div>';
-  const w = 640, h = height, padL = 36, padB = 22, padT = 14, padR = 8;
+  const w = 640, h = height, padL = 36, padB = 22, padT = 16, padR = 8;
   const plotW = w - padL - padR, plotH = h - padT - padB;
   const n = timeline.length;
   const step = plotW / n;
   const barW = Math.max(5, Math.min(28, step * 0.72));
   const labelEvery = n > 14 ? Math.ceil(n / 10) : 1;
   const tid = Math.random().toString(36).slice(2, 10);
+  const trKeys = Object.keys(window._trRegistry);
+  if (trKeys.length > 36) trKeys.slice(0, trKeys.length - 24).forEach(k => delete window._trRegistry[k]);
   const items = [];
 
   const bars = timeline.map((b, i) => {
     const x = padL + i * step + (step - barW) / 2;
     const cx = x + barW / 2;
-    const bh = Math.max(3, (b.ok_pct / 100) * plotH);
-    const y = padT + (plotH - bh);
-    const col = b.ok_pct >= 99.5 ? 'var(--ok)' : (b.ok_pct >= 95 ? 'var(--warn)' : 'var(--crit)');
-    const incDot = b.incidents > 0 ? `<circle cx="${cx.toFixed(1)}" cy="${Math.max(padT + 4, y - 5).toFixed(1)}" r="3.8" fill="var(--crit)" stroke="var(--surface)" stroke-width="1"/>` : '';
+    const okPct = Math.max(0, Math.min(100, b.ok_pct ?? 100));
+    const warnPct = Math.max(0, Math.min(100 - okPct, (b.warn_pct || 0) + (b.unk_pct || 0)));
+    const critPct = Math.max(0, Math.min(100 - okPct - warnPct, b.crit_pct || 0));
+    const critInc = b.crit_incidents ?? (critPct > 0 ? (b.incidents || 0) : 0);
+    const warnInc = b.warn_incidents ?? (critPct === 0 ? (b.incidents || 0) : 0);
+
+    // Stacked segments from bottom (padT + plotH) upward: OK (green) -> WARN (amber) -> CRIT (red ONLY when critPct > 0)
+    const okH = (okPct / 100) * plotH;
+    const warnH = warnPct > 0 ? Math.max(2.5, (warnPct / 100) * plotH) : 0;
+    const critH = critPct > 0 ? Math.max(2.5, (critPct / 100) * plotH) : 0;
+    const scale = (okH + warnH + critH) > plotH ? plotH / (okH + warnH + critH) : 1;
+    const hOk = okH * scale, hWarn = warnH * scale, hCrit = critH * scale;
+
+    const yOk = padT + plotH - hOk;
+    const yWarn = yOk - hWarn;
+    const yCrit = yWarn - hCrit;
+    const topY = critPct > 0 ? yCrit : (warnPct > 0 ? yWarn : yOk);
+
+    let segs = '';
+    if (hOk > 0.5) {
+      segs += `<rect class="chart-bar-fg" x="${x.toFixed(1)}" y="${yOk.toFixed(1)}" width="${barW.toFixed(1)}" height="${hOk.toFixed(1)}" rx="2.5" fill="var(--ok)"/>`;
+    }
+    if (hWarn > 0.5) {
+      segs += `<rect class="chart-bar-fg" x="${x.toFixed(1)}" y="${yWarn.toFixed(1)}" width="${barW.toFixed(1)}" height="${hWarn.toFixed(1)}" rx="2" fill="var(--warn)"/>`;
+    }
+    if (hCrit > 0.5) {
+      segs += `<rect class="chart-bar-fg" x="${x.toFixed(1)}" y="${yCrit.toFixed(1)}" width="${barW.toFixed(1)}" height="${hCrit.toFixed(1)}" rx="2" fill="var(--crit)"/>`;
+    }
+
+    let incDot = '';
+    if (critInc > 0) {
+      incDot = `<circle cx="${cx.toFixed(1)}" cy="${Math.max(6, topY - 5).toFixed(1)}" r="3.6" fill="var(--crit)" stroke="var(--surface)" stroke-width="1"/>`;
+    } else if (warnInc > 0) {
+      incDot = `<circle cx="${cx.toFixed(1)}" cy="${Math.max(6, topY - 5).toFixed(1)}" r="3.2" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.8"/>`;
+    }
+
     const lbl = (i % labelEvery === 0 || i === n - 1) ? `<text x="${cx.toFixed(1)}" y="${h - 6}" text-anchor="middle" fill="var(--muted)" font-size="9.5">${esc(b.label)}</text>` : '';
+    const aria = `${b.label}: ${okPct.toFixed(1)}% OK, ${warnPct.toFixed(1)}% warning, ${critPct.toFixed(1)}% critical, ${critInc} critical and ${warnInc} warning transitions`;
     items.push({ ...b, cx });
-    return `<g class="chart-bar-g" onmouseenter="onTrendBarEnter(event,'${tid}',${i})">
+    return `<g class="chart-bar-g" tabindex="0" role="graphics-symbol" aria-label="${esc(aria)}" onmouseenter="onTrendBarEnter(event,'${tid}',${i})" onfocus="onTrendBarEnter(event,'${tid}',${i})" onblur="onTrendLeave('${tid}')">
       <rect class="chart-bar-bg" x="${x.toFixed(1)}" y="${padT}" width="${barW.toFixed(1)}" height="${plotH}" rx="3" fill="var(--surface-2)"/>
-      <rect class="chart-bar-fg" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${col}"/>
-      ${incDot}${lbl}
+      ${segs}${incDot}${lbl}
     </g>`;
   }).join('');
 
@@ -323,7 +375,7 @@ function renderTrendSVG(timeline, height = 152) {
   return `<div class="chart-interactive" onmouseleave="onTrendLeave('${tid}')">
     <div class="chart-tooltip" id="tr-tt-${tid}"></div>
     <svg id="tr-svg-${tid}" viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;display:block">
-      <line x1="${padL}" y1="${padT}" x2="${w-padR}" y2="${padT}" stroke="var(--ok)" stroke-opacity="0.45" stroke-dasharray="4 3"/>
+      <line x1="${padL}" y1="${padT}" x2="${w-padR}" y2="${padT}" stroke="var(--ok)" stroke-opacity="0.4" stroke-dasharray="4 3"/>
       <line x1="${padL}" y1="${padT + plotH/2}" x2="${w-padR}" y2="${padT + plotH/2}" stroke="var(--border)" stroke-dasharray="3 3"/>
       <text x="${padL-4}" y="${padT+4}" text-anchor="end" fill="var(--ok-fg)" font-size="9.5">100%</text>
       <text x="${padL-4}" y="${padT+plotH/2+3}" text-anchor="end" fill="var(--muted)" font-size="9.5">50%</text>
@@ -375,19 +427,22 @@ async function loadReports() {
         const avgWarn = list.reduce((a, r) => a + r.warn_pct, 0) / list.length;
         const avgCrit = list.reduce((a, r) => a + r.crit_pct, 0) / list.length;
         const totInc = list.reduce((a, r) => a + r.incidents, 0);
-        return { hName, list, avgOK, avgWarn, avgCrit, totInc };
+        const totCritInc = list.reduce((a, r) => a + (r.crit_incidents ?? (r.crit_pct > 0 ? r.incidents : 0)), 0);
+        return { hName, list, avgOK, avgWarn, avgCrit, totInc, totCritInc };
       }).sort((a, b) => a.avgOK - b.avgOK);
 
       tableHTML = groups.length ? groups.map(g => {
         const open = S.repExpandedHosts.has(g.hName) || groups.length === 1;
+        const slaBadgeCls = g.avgOK >= 99.5 ? 'c-ok' : (g.avgCrit > 0 ? 'c-crit' : 'c-warn');
+        const incBadgeCls = g.totCritInc > 0 ? 'c-crit' : 'c-warn';
         return `<div class="host-acc ${open?'open':''}">
           <div class="host-acc-head" onclick="toggleRepHost('${esc(g.hName)}')">
             <div class="host-acc-left">
               <span class="host-acc-chev">▶</span>
               <b>${esc(g.hName)}</b>
               <span class="flag-tag">${g.list.length} services</span>
-              <span class="badge ${g.avgOK>=99?'c-ok':(g.avgOK>=95?'c-warn':'c-crit')}">Avg SLA ${g.avgOK.toFixed(2)}%</span>
-              ${g.totInc > 0 ? `<span class="badge c-crit">${g.totInc} incidents</span>` : ''}
+              <span class="badge ${slaBadgeCls}">Avg SLA ${g.avgOK.toFixed(2)}%</span>
+              ${g.totInc > 0 ? `<span class="badge ${incBadgeCls}">${g.totInc} ${g.totCritInc>0?'incidents':'warnings'}</span>` : ''}
             </div>
             <div style="display:flex;align-items:center;gap:10px" onclick="event.stopPropagation()">
               <div style="width:120px"><div class="bar"><div class="bar-ok" style="width:${g.avgOK}%"></div><div class="bar-warn" style="width:${g.avgWarn}%"></div><div class="bar-crit" style="width:${g.avgCrit}%"></div></div></div>
@@ -396,42 +451,52 @@ async function loadReports() {
           </div>
           <div class="host-acc-body">
             <div class="table-wrap"><table><thead><tr><th>Service</th><th>Uptime Bar</th><th>OK %</th><th>WARN %</th><th>CRIT %</th><th>Problem Time</th><th>Incidents</th><th>MTTR</th></tr></thead><tbody>
-              ${g.list.map(r => `<tr>
+              ${g.list.map(r => {
+                const probCol = r.problem_sec > 0 ? (r.crit_pct > 0 ? 'var(--crit-fg)' : 'var(--warn-fg)') : 'var(--muted)';
+                return `<tr>
                 <td><a href="#" style="color:var(--accent);text-decoration:none;font-weight:600" onclick="openReportFor('${jsEsc(r.host)}','${jsEsc(r.service)}');return false">${esc(r.service)}</a></td>
                 <td style="min-width:120px"><div class="bar"><div class="bar-ok" style="width:${r.ok_pct}%"></div><div class="bar-warn" style="width:${r.warn_pct}%"></div><div class="bar-crit" style="width:${r.crit_pct}%"></div></div></td>
                 <td class="mono" style="color:var(--ok-fg);font-weight:700">${r.ok_pct.toFixed(2)}%</td>
-                <td class="mono">${r.warn_pct.toFixed(2)}%</td>
+                <td class="mono" style="color:${r.warn_pct>0?'var(--warn-fg)':'var(--muted)'}">${r.warn_pct.toFixed(2)}%</td>
                 <td class="mono" style="color:${r.crit_pct>0?'var(--crit-fg)':'var(--muted)'}">${r.crit_pct.toFixed(2)}%</td>
-                <td class="mono" style="color:${r.problem_sec>0?'var(--crit-fg)':'var(--muted)'}">${fmtDurationSec(r.problem_sec)}</td>
+                <td class="mono" style="color:${probCol}">${fmtDurationSec(r.problem_sec)}</td>
                 <td class="mono">${r.incidents}</td>
                 <td class="mono">${r.mttr_sec ? fmtDurationSec(r.mttr_sec) : '-'}</td>
-              </tr>`).join('')}
+              </tr>`;
+              }).join('')}
             </tbody></table></div>
           </div>
         </div>`;
       }).join('') : '<div class="empty">No objects in selected scope</div>';
     } else {
       tableHTML = `<div class="table-wrap"><table><thead><tr><th>Host</th>${target==='services'?'<th>Service</th>':''}<th>Uptime Bar</th><th>UP/OK %</th><th>WARN %</th><th>CRIT/DOWN %</th><th>Problem Time</th><th>Incidents</th><th>MTTR</th></tr></thead><tbody>
-        ${rows.length ? rows.map(r => `<tr>
+        ${rows.length ? rows.map(r => {
+          const probCol = r.problem_sec > 0 ? (r.crit_pct > 0 ? 'var(--crit-fg)' : 'var(--warn-fg)') : 'var(--muted)';
+          return `<tr>
           <td><b>${esc(r.host)}</b></td>
           ${target==='services'?`<td>${esc(r.service)}</td>`:''}
           <td style="min-width:130px"><div class="bar"><div class="bar-ok" style="width:${r.ok_pct}%"></div><div class="bar-warn" style="width:${r.warn_pct}%"></div><div class="bar-crit" style="width:${r.crit_pct}%"></div></div></td>
           <td class="mono" style="color:var(--ok-fg);font-weight:700">${r.ok_pct.toFixed(2)}%</td>
-          <td class="mono">${r.warn_pct.toFixed(2)}%</td>
+          <td class="mono" style="color:${r.warn_pct>0?'var(--warn-fg)':'var(--muted)'}">${r.warn_pct.toFixed(2)}%</td>
           <td class="mono" style="color:${r.crit_pct>0?'var(--crit-fg)':'var(--muted)'}">${r.crit_pct.toFixed(2)}%</td>
-          <td class="mono" style="color:${r.problem_sec>0?'var(--crit-fg)':'var(--muted)'}">${fmtDurationSec(r.problem_sec)}</td>
+          <td class="mono" style="color:${probCol}">${fmtDurationSec(r.problem_sec)}</td>
           <td class="mono">${r.incidents}</td>
           <td class="mono">${r.mttr_sec ? fmtDurationSec(r.mttr_sec) : '-'}</td>
-        </tr>`).join('') : '<tr><td colspan="9" class="empty">No objects in selected scope</td></tr>'}
+        </tr>`;
+        }).join('') : '<tr><td colspan="9" class="empty">No objects in selected scope</td></tr>'}
       </tbody></table></div>`;
     }
 
     const scopeTag = [hg, host, service].filter(Boolean).join(' / ') || 'All Scope';
     const srcNote = sum.log_events_used > 0 ? `${sum.log_events_used} log events + live state` : 'Live state (0 alert transitions in window)';
+    const sumCritInc = sum.crit_incidents ?? ((sum.crit_pct || 0) > 0 ? (sum.total_incidents || 0) : 0);
+    const sumWarnInc = sum.warn_incidents ?? ((sum.crit_pct || 0) === 0 ? (sum.total_incidents || 0) : 0);
+    const slaLedCls = sum.overall_sla_pct >= 99.5 ? '' : ((sum.crit_pct || 0) > 0 ? 'crit' : 'warn');
+    const incLedCls = sumCritInc > 0 ? 'crit' : (sumWarnInc > 0 ? 'warn' : '');
     el.innerHTML = `
       <div class="kpi-grid" style="margin-bottom:14px;grid-template-columns:repeat(3,minmax(0,1fr))">
-        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">01 / Overall Uptime (SLA)</span><span class="kpi-led ${sum.overall_sla_pct >= 99 ? '' : (sum.overall_sla_pct >= 95 ? 'warn' : 'crit')}"></span></div><div class="kpi-val">${(sum.overall_sla_pct ?? 100).toFixed(2)}%</div><div class="kpi-sub"><span>${sum.total_objects || 0} ${esc(target)} · ${esc(scopeTag)}</span></div></div>
-        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">02 / HARD Incidents</span><span class="kpi-led ${(sum.total_incidents||0) > 0 ? 'crit' : ''}"></span></div><div class="kpi-val">${sum.total_incidents || 0}</div><div class="kpi-sub"><span>Problem time: <b>${fmtDurationSec(sum.total_problem_sec)}</b></span></div></div>
+        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">01 / Overall Uptime (SLA)</span><span class="kpi-led ${slaLedCls}"></span></div><div class="kpi-val">${(sum.overall_sla_pct ?? 100).toFixed(2)}%</div><div class="kpi-sub"><span>${sum.total_objects || 0} ${esc(target)} · ${esc(scopeTag)}</span></div></div>
+        <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">02 / HARD Transitions</span><span class="kpi-led ${incLedCls}"></span></div><div class="kpi-val">${sum.total_incidents || 0}</div><div class="kpi-sub"><span>${sumCritInc} crit · ${sumWarnInc} warn · <b>${fmtDurationSec(sum.total_problem_sec)}</b></span></div></div>
         <div class="kpi-card" style="cursor:default"><div class="kpi-top"><span class="kpi-label">03 / Avg Recovery (MTTR)</span><span class="kpi-led"></span></div><div class="kpi-val">${sum.avg_mttr_sec ? fmtDurationSec(sum.avg_mttr_sec) : '0s'}</div><div class="kpi-sub"><span>Source: ${esc(srcNote)}</span></div></div>
       </div>
       <div class="charts-row">
@@ -440,7 +505,16 @@ async function loadReports() {
           ${renderDonutSVG(sum)}
         </div>
         <div class="chart-card">
-          <div class="chart-title"><span>Uptime &amp; Incident Trend</span><span class="name-sub">Hover bar for details • Red dot = HARD incident</span></div>
+          <div class="chart-title">
+            <span>Uptime &amp; Incident Trend</span>
+            <span class="trend-legend">
+              <span class="trend-legend-it"><span class="tl-sw" style="background:var(--ok)"></span>OK</span>
+              <span class="trend-legend-it"><span class="tl-sw" style="background:var(--warn)"></span>Warn</span>
+              <span class="trend-legend-it"><span class="tl-sw" style="background:var(--crit)"></span>Crit</span>
+              <span class="trend-legend-it"><span class="tl-dot warn"></span>Warn HARD</span>
+              <span class="trend-legend-it"><span class="tl-dot crit"></span>Crit HARD</span>
+            </span>
+          </div>
           ${renderTrendSVG(timeline, 152)}
         </div>
       </div>

@@ -40,17 +40,19 @@ type LogEvent struct {
 }
 
 type AvailabilityRow struct {
-	Host        string  `json:"host"`
-	Service     string  `json:"service,omitempty"`
-	OKPct       float64 `json:"ok_pct"`
-	WarnPct     float64 `json:"warn_pct"`
-	CritPct     float64 `json:"crit_pct"`
-	UnkPct      float64 `json:"unk_pct"`
-	DowntimePct float64 `json:"downtime_pct"`
-	OKSec       float64 `json:"ok_sec"`
-	ProblemSec  float64 `json:"problem_sec"`
-	Incidents   int     `json:"incidents"`
-	MTTRSec     float64 `json:"mttr_sec"`
+	Host          string  `json:"host"`
+	Service       string  `json:"service,omitempty"`
+	OKPct         float64 `json:"ok_pct"`
+	WarnPct       float64 `json:"warn_pct"`
+	CritPct       float64 `json:"crit_pct"`
+	UnkPct        float64 `json:"unk_pct"`
+	DowntimePct   float64 `json:"downtime_pct"`
+	OKSec         float64 `json:"ok_sec"`
+	ProblemSec    float64 `json:"problem_sec"`
+	Incidents     int     `json:"incidents"`
+	CritIncidents int     `json:"crit_incidents"`
+	WarnIncidents int     `json:"warn_incidents"`
+	MTTRSec       float64 `json:"mttr_sec"`
 }
 
 type AvailabilitySummary struct {
@@ -65,17 +67,22 @@ type AvailabilitySummary struct {
 	DowntimePct     float64 `json:"downtime_pct"`
 	TotalProblemSec float64 `json:"total_problem_sec"`
 	TotalIncidents  int     `json:"total_incidents"`
+	CritIncidents   int     `json:"crit_incidents"`
+	WarnIncidents   int     `json:"warn_incidents"`
 	AvgMTTRSec      float64 `json:"avg_mttr_sec"`
 	LogEventsUsed   int     `json:"log_events_used"`
 }
 
 type TimelineBucket struct {
-	Timestamp int64   `json:"timestamp"`
-	Label     string  `json:"label"`
-	OKPct     float64 `json:"ok_pct"`
-	WarnPct   float64 `json:"warn_pct"`
-	CritPct   float64 `json:"crit_pct"`
-	Incidents int     `json:"incidents"`
+	Timestamp     int64   `json:"timestamp"`
+	Label         string  `json:"label"`
+	OKPct         float64 `json:"ok_pct"`
+	WarnPct       float64 `json:"warn_pct"`
+	CritPct       float64 `json:"crit_pct"`
+	UnkPct        float64 `json:"unk_pct"`
+	Incidents     int     `json:"incidents"`
+	CritIncidents int     `json:"crit_incidents"`
+	WarnIncidents int     `json:"warn_incidents"`
 }
 
 func collectLogFiles(nagiosLog, archivesDir string, from, to int64) []string {
@@ -310,6 +317,8 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 		unkSec          float64
 		dtSec           float64
 		incidents       int
+		critIncidents   int
+		warnIncidents   int
 		probStartTS     int64
 		mttrSum         float64
 		mttrCount       int
@@ -376,8 +385,11 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 	bOK := make([]float64, numBuckets)
 	bWarn := make([]float64, numBuckets)
 	bCrit := make([]float64, numBuckets)
+	bUnk := make([]float64, numBuckets)
 	bTot := make([]float64, numBuckets)
 	bInc := make([]int, numBuckets)
+	bCritInc := make([]int, numBuckets)
+	bWarnInc := make([]int, numBuckets)
 
 	addDuration := func(tr *objTrack, until int64) {
 		if until <= tr.lastTS {
@@ -421,6 +433,8 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 					bWarn[bIdx] += seg
 				} else if isCrit {
 					bCrit[bIdx] += seg
+				} else {
+					bUnk[bIdx] += seg
 				}
 			}
 			cur = bEnd
@@ -429,10 +443,15 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 		tr.lastTS = until
 	}
 
-	recordBucketInc := func(ts int64) {
+	recordBucketInc := func(ts int64, state string) {
 		idx := int((ts - from) / bucketSec)
 		if idx >= 0 && idx < numBuckets {
 			bInc[idx]++
+			if state == "DOWN" || state == "CRITICAL" {
+				bCritInc[idx]++
+			} else {
+				bWarnInc[idx]++
+			}
 		}
 	}
 
@@ -486,7 +505,7 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 
 	rows := make([]AvailabilityRow, 0, len(tracks))
 	var slaSum, warnSum, critSum, unkSum, dtSum, probSecSum, mttrTotalSum float64
-	var totalInc, mttrTotalCnt int
+	var totalInc, totalCritInc, totalWarnInc, mttrTotalCnt int
 
 	for _, tr := range tracks {
 		// Determine accurate initial state at t = from
@@ -517,8 +536,13 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 				tr.curState = healthyState
 				addDuration(tr, tr.lastStateChange)
 				tr.incidents++
+				if tr.liveState == "DOWN" || tr.liveState == "CRITICAL" {
+					tr.critIncidents++
+				} else {
+					tr.warnIncidents++
+				}
 				tr.probStartTS = tr.lastStateChange
-				recordBucketInc(tr.lastStateChange)
+				recordBucketInc(tr.lastStateChange, tr.liveState)
 				tr.curState = tr.liveState
 			} else {
 				tr.curState = tr.liveState
@@ -537,8 +561,13 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 				isHealthy := ev.State == healthyState
 				if wasHealthy && !isHealthy {
 					tr.incidents++
+					if ev.State == "DOWN" || ev.State == "CRITICAL" {
+						tr.critIncidents++
+					} else {
+						tr.warnIncidents++
+					}
 					tr.probStartTS = ev.Timestamp
-					recordBucketInc(ev.Timestamp)
+					recordBucketInc(ev.Timestamp, ev.State)
 				} else if !wasHealthy && isHealthy && tr.probStartTS > 0 {
 					tr.mttrSum += float64(ev.Timestamp - tr.probStartTS)
 					tr.mttrCount++
@@ -568,18 +597,22 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 		dtSum += dtPct
 		probSecSum += probSec
 		totalInc += tr.incidents
+		totalCritInc += tr.critIncidents
+		totalWarnInc += tr.warnIncidents
 		rows = append(rows, AvailabilityRow{
-			Host:        tr.host,
-			Service:     tr.service,
-			OKPct:       okPct,
-			WarnPct:     warnPct,
-			CritPct:     critPct,
-			UnkPct:      unkPct,
-			DowntimePct: dtPct,
-			OKSec:       math.Round(tr.okSec),
-			ProblemSec:  math.Round(probSec),
-			Incidents:   tr.incidents,
-			MTTRSec:     mttr,
+			Host:          tr.host,
+			Service:       tr.service,
+			OKPct:         okPct,
+			WarnPct:       warnPct,
+			CritPct:       critPct,
+			UnkPct:        unkPct,
+			DowntimePct:   dtPct,
+			OKSec:         math.Round(tr.okSec),
+			ProblemSec:    math.Round(probSec),
+			Incidents:     tr.incidents,
+			CritIncidents: tr.critIncidents,
+			WarnIncidents: tr.warnIncidents,
+			MTTRSec:       mttr,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -610,19 +643,23 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 	timeline := make([]TimelineBucket, numBuckets)
 	for i := 0; i < numBuckets; i++ {
 		ts := from + int64(i)*bucketSec
-		pct, wp, cp := 100.0, 0.0, 0.0
+		pct, wp, cp, up := 100.0, 0.0, 0.0, 0.0
 		if bTot[i] > 0 {
 			pct = round2((bOK[i] / bTot[i]) * 100.0)
 			wp = round2((bWarn[i] / bTot[i]) * 100.0)
 			cp = round2((bCrit[i] / bTot[i]) * 100.0)
+			up = round2((bUnk[i] / bTot[i]) * 100.0)
 		}
 		timeline[i] = TimelineBucket{
-			Timestamp: ts,
-			Label:     time.Unix(ts, 0).Format(labelFmt),
-			OKPct:     pct,
-			WarnPct:   wp,
-			CritPct:   cp,
-			Incidents: bInc[i],
+			Timestamp:     ts,
+			Label:         time.Unix(ts, 0).Format(labelFmt),
+			OKPct:         pct,
+			WarnPct:       wp,
+			CritPct:       cp,
+			UnkPct:        up,
+			Incidents:     bInc[i],
+			CritIncidents: bCritInc[i],
+			WarnIncidents: bWarnInc[i],
 		}
 	}
 
@@ -638,6 +675,8 @@ func computeAvailability(store *StateStore, nagiosLog, archivesDir string, from,
 		DowntimePct:     avgDT,
 		TotalProblemSec: math.Round(probSecSum),
 		TotalIncidents:  totalInc,
+		CritIncidents:   totalCritInc,
+		WarnIncidents:   totalWarnInc,
 		AvgMTTRSec:      avgMTTR,
 		LogEventsUsed:   logEventsUsed,
 	}, rows, timeline

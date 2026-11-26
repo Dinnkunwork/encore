@@ -6,7 +6,11 @@ const S = {
   sysTab: 'controls',
   guideTab: 'quick',
   ncpaOS: 'ubuntu',
-  ovMapMode: 'grid',
+  ovMapMode: localStorage.getItem('encore-ov-map-mode') || 'grid',
+  ovEditLayout: false,
+  ovDragging: false,
+  ovMetricTargetsCache: { ts: 0, items: [] },
+  ovMetricTarget: localStorage.getItem('encore-ov-metric-target') || '',
   offset: 0,
   total: 0,
   autoMs: 3000,
@@ -409,6 +413,7 @@ document.addEventListener('keydown', e => {
     document.getElementById('global-search').focus();
   } else if (e.key === 'Escape') {
     if (closeActiveDropdown(true)) return;
+    if (S.ovEditLayout && typeof toggleOverviewLayoutEdit === 'function') { toggleOverviewLayoutEdit(false); return; }
     closeDisplayMenu();
     if (S.tvMode) { toggleTVMode(); return; }
     if (document.getElementById('confirm-backdrop')?.classList.contains('open')) resolveConfirm(false);
@@ -523,6 +528,7 @@ function artSVG(kind) {
 }
 
 function isUserInteracting() {
+  if (S.ovEditLayout || S.ovDragging) return true;
   if (document.getElementById('ec-dd-portal')?.classList.contains('open')) return true;
   if (document.getElementById('modal-backdrop')?.classList.contains('open')) return true;
   if (document.getElementById('confirm-backdrop')?.classList.contains('open')) return true;
@@ -564,6 +570,7 @@ const VIEW_TITLES = {
 function setView(v, sub, fromHash) {
   const apply = () => {
     if (S.view === 'inventory' || S.view === 'problems') saveMonitorFilterState(S.view);
+    if (v !== 'overview' && S.ovEditLayout && typeof toggleOverviewLayoutEdit === 'function') toggleOverviewLayoutEdit(false);
     S.view = v;
     S.offset = 0;
     S.selectedMon.clear();
